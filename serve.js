@@ -75,6 +75,8 @@ http.createServer(async (req, res) => {
   const send = (code, body, type) => { res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
   try {
     if (url.pathname === '/api/ping') return send(200, '{"ok":true}', 'application/json');
+    // lets the portable executable stop the server it started in the background; a web page cannot send this header to us
+    if (url.pathname === '/api/quit' && req.method === 'POST' && req.headers['x-smo-quit'] === '1' && !req.headers.origin) { send(200, '{"ok":true}', 'application/json'); return setTimeout(() => process.exit(0), 100); }
     if (url.pathname === '/api/load') {
       const target = (url.searchParams.get('path') || '').trim();
       if (!target) return send(400, JSON.stringify({ error: 'No path given' }), 'application/json');

@@ -36,7 +36,8 @@ const tool = {
   name: 'Semantic Model Optimizer',
   description: 'Unused measures and columns, lineage, checks and a model diagram for the model you have open.',
   path: process.execPath,
-  arguments: `"${path.join(__dirname, 'launch.js')}" "%server%" "%database%"`,
+  // from the portable executable the button calls the executable itself
+  arguments: process.env.SMO_EXE ? 'open "%server%" "%database%"' : `"${path.join(__dirname, 'launch.js')}" "%server%" "%database%"`,
   iconData: 'data:image/png;base64,' + icon().toString('base64'),
 };
 
@@ -52,7 +53,7 @@ try {
     console.log('Installed: ' + target + '\nRestart Power BI Desktop; the button is under External Tools.');
   }
 } catch (e) {
-  const local = path.join(__dirname, NAME);
+  const local = path.join(process.env.SMO_EXE ? path.dirname(process.execPath) : __dirname, NAME);
   if (!process.argv.includes('--remove')) fs.writeFileSync(local, JSON.stringify(tool, null, 2));
   console.error('Could not write to ' + folder + ' (' + e.code + ').\nStart a terminal as administrator and run this again' +
     (process.argv.includes('--remove') ? '.' : ', or copy this file there yourself:\n  ' + local));
