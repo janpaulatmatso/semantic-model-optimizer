@@ -9,6 +9,11 @@
   const enc = new TextEncoder();
 
   async function deflate(bytes, format) {
+    // Node: use zlib, which also works on Node 18 (its CompressionStream has no raw deflate)
+    if (typeof process !== 'undefined' && process.versions && process.versions.node && typeof require === 'function') {
+      const zlib = require('zlib');
+      return new Uint8Array(format === 'deflate-raw' ? zlib.deflateRawSync(bytes) : zlib.deflateSync(bytes));
+    }
     const cs = new CompressionStream(format);
     const buf = await new Response(new Blob([bytes]).stream().pipeThrough(cs)).arrayBuffer();
     return new Uint8Array(buf);
