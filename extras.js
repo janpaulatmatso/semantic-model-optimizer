@@ -80,6 +80,31 @@
     dlg.showModal();
   });
 
+  // ------------------------------------------------------------ bus matrix: business processes against dimensions
+
+  addView('bus', 'Bus matrix',
+    '<div class="count" id="busInfo"></div><div class="tablewrap busw" id="busGrid"></div>' +
+    '<div class="legend dlegend"><span><b>X</b> related</span><span><b>X×3</b> three relationships to the same dimension (role-playing)</span><span><b>○</b> only through an inactive relationship</span>' +
+    '<span><b>·</b> reached through another dimension</span><span>Coloured columns are conformed dimensions. Click a name to open the table; hover a mark for the columns.</span></div>',
+    function renderBus() {
+      const a = state.analysis, bm = SMO.busMatrix(model().model, a);
+      if (!bm.facts.length || !bm.dims.length) {
+        $('busInfo').textContent = '';
+        $('busGrid').innerHTML = '<p class="muted" style="padding:10px">No bus matrix to show: the model has no fact table with relationships to dimensions.</p>';
+        return;
+      }
+      const conf = bm.dims.filter(d => d.conformed).length, sel = state.selected && state.selected.startsWith('T|') ? state.selected.slice(2) : '';
+      $('busInfo').textContent = `${bm.facts.length} business process${bm.facts.length === 1 ? '' : 'es'} · ${bm.dims.length} dimensions, ${conf} of them conformed (used by more than one process)`;
+      $('busGrid').innerHTML = '<table class="bm"><thead><tr><th class="corner">Business process</th>' +
+        bm.dims.map(d => `<th class="v${d.conformed ? ' conf' : ''}${d.name === sel ? ' sel' : ''}" data-id="${esc('T|' + d.name)}" title="${esc(d.description || d.name)}"><span>${esc(d.name)}</span></th>`).join('') +
+        '<th class="v tot"><span>Dimensions</span></th></tr></thead><tbody>' +
+        bm.facts.map(f => `<tr class="${f.name === sel ? 'sel' : ''}"><th data-id="${esc('T|' + f.name)}" title="${esc(f.description)}">${esc(f.name)}<div class="muted small">${f.measures} measure${f.measures === 1 ? '' : 's'}${f.rows != null ? ' · ' + App.int(f.rows) + ' rows' : ''}</div></th>` +
+          bm.dims.map(d => { const c = bm.cell(f.name, d.name); return `<td class="${!c ? '' : c.via ? 'via' : c.active ? 'x' : 'ina'}${d.name === sel ? ' sel' : ''}" title="${esc(!c ? '' : c.via ? 'through ' + c.via : c.columns.join('\n'))}">${SMO.busMark(c)}</td>`; }).join('') +
+          `<td class="tot">${f.dims}</td></tr>`).join('') +
+        '<tr class="totrow"><th>Business processes</th>' + bm.dims.map(d => `<td>${d.facts}</td>`).join('') + '<td></td></tr></tbody></table>';
+    });
+  $('busGrid').onclick = e => { const x = e.target.closest('[data-id]'); if (x && state.analysis.nodes.has(x.dataset.id)) { App.select(x.dataset.id); App.views.bus(); } };
+
   // ------------------------------------------------------------ pages: what is on each report page
 
   const visLabel = u => u.visualTitle || u.visualType || u.visual || '(page or report filter)';

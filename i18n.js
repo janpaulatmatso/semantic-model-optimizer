@@ -14,7 +14,7 @@
     'Load selected': 'Selectie laden', 'Load model': 'Model laden', 'Rescan': 'Opnieuw zoeken', 'Remove': 'Verwijderen', 'Read reports': 'Rapporten lezen', 'Read report views': 'Rapportweergaven lezen',
     '+ Add report': '+ Rapport toevoegen', 'Reports:': 'Rapporten:', 'Model': 'Model',
     // tabs and actions
-    'Objects': 'Objecten', 'Model diagram': 'Modeldiagram', 'Checks': 'Controles', 'Pages': "Pagina's", 'Performance': 'Prestaties', 'History': 'Geschiedenis', 'Compare': 'Vergelijken', 'Values': 'Waarden',
+    'Objects': 'Objecten', 'Model diagram': 'Modeldiagram', 'Bus matrix': 'Busmatrix', 'Business process': 'Bedrijfsproces', 'Business processes': 'Bedrijfsprocessen', 'Dimensions': 'Dimensies', 'Checks': 'Controles', 'Pages': "Pagina's", 'Performance': 'Prestaties', 'History': 'Geschiedenis', 'Compare': 'Vergelijken', 'Values': 'Waarden',
     'Export…': 'Exporteren…', 'Documentation (.html)': 'Documentatie (.html)', 'Select all unused': 'Selecteer alle ongebruikte', 'Folder…': 'Map…', 'Edit': 'Wijzigen', 'Save': 'Opslaan', 'Restore': 'Terugzetten',
     'Delete…': 'Verwijderen…', 'Tabular Editor script': 'Tabular Editor-script', 'Clear selection': 'Selectie wissen', 'Fit': 'Passend',
     // tiles
