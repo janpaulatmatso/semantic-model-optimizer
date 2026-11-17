@@ -149,3 +149,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .rep { display: inline-block; border: 1px solid var(--direct); color: var(--direct); border-radius: 4px; padding: 0 5px; font-size: 12px; margin: 0 3px 2px 0; white-space: nowrap; }
 .rep.ind { border-color: var(--line); color: var(--muted); }
 .bar, .tiles, #msgs { flex-shrink: 0; }
+
+.repopanel { background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 16px; max-height: 60vh; overflow: auto; flex-shrink: 0; }
+.repopanel[hidden] { display: none; }
+.repo { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--bg); }
+.repohead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.repohead button { padding: 2px 8px; font-size: 12px; }
+.repogroup { margin: 8px 0 0 4px; }
+.repitem { display: block; padding: 3px 0 3px 12px; cursor: pointer; }
+.repitem.off { opacity: .55; cursor: default; }
+.repitem input { margin-right: 6px; vertical-align: -1px; }

@@ -12,6 +12,7 @@
   <div class="load">
     <button id="btnDir" class="primary">Open folder</button>
     <button id="btnFile">Open file</button>
+    <button id="btnRepos" hidden title="Connect local repositories and pick reports from the Power BI projects found in them">Repositories ▾</button>
     <button id="btnDesktop" hidden title="Reads the number of rows and MB per table and column from the file that is open in Power BI Desktop right now">Sizes from Power BI Desktop</button>
     <form id="pathForm" hidden>
       <input id="pathInput" type="text" placeholder="Or paste a path: C:\…\MyReport" spellcheck="false">
@@ -21,6 +22,15 @@
     <input id="inFile" type="file" accept=".pbix,.pbit,.vpax,.bim,.json,.tmdl" multiple hidden>
   </div>
 </header>
+
+<section id="repoPanel" class="repopanel" hidden>
+  <div id="repoList"></div>
+  <form id="repoForm" class="addrep">
+    <input id="repoPath" type="text" placeholder="Path to a local repository: C:\repos\power-bi" spellcheck="false">
+    <button>Connect</button>
+  </form>
+  <div class="dlgbtn"><span id="repoInfo" class="muted small grow"></span><button type="button" id="repoClose">Close</button><button type="button" id="repoLoad" class="primary" disabled>Load selected</button></div>
+</section>
 
 <div id="msgs"></div>
 
@@ -34,6 +44,7 @@
       <li><b>.pbix</b> — report only; the model inside a .pbix cannot be read. Combine it with the model as .pbip or .pbit.</li>
     </ul>
     <p><b>Rows and MB per table?</b> Afterwards load a <b>.vpax</b> (DAX Studio › Advanced › Export Metrics), or start the tool with <code>node serve.js</code> and read the sizes straight from Power BI Desktop.</p>
+    <p><b>Working from a Git repository?</b> Start the tool with <code>node serve.js</code>, choose <b>Repositories</b> and connect the local folder. The tool finds every Power BI project in it and lets you pick the reports.</p>
     <p class="hint">Several reports on one model? Open the folder that holds them all, or add more reports after loading. Everything stays on this computer.</p>
   </div>
 </main>

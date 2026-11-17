@@ -9,6 +9,7 @@ const { loadPath, modelRootAbs } = require('./loader.js');
 const { execFile } = require('child_process');
 const { removeObjects } = require('./remove.js');
 const { editObject } = require('./edit.js');
+const { scanRepo } = require('./scan.js');
 
 /** Rows and MB from a file open in Power BI Desktop (Windows only, read-only). */
 function desktopStats(port) {
@@ -60,6 +61,10 @@ http.createServer(async (req, res) => {
       const j = JSON.parse(body);
       if (!j.path || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
       try { return send(200, JSON.stringify(removeObjects(modelRootAbs(await loadPath(String(j.path)), j.modelRoot), j.items)), 'application/json'); }
+      catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
+    }
+    if (url.pathname === '/api/scan') {
+      try { return send(200, JSON.stringify(scanRepo(url.searchParams.get('path') || '')), 'application/json'); }
       catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
     if (url.pathname === '/api/desktop') {

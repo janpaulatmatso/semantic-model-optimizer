@@ -18,6 +18,15 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
 
+## Local repositories
+
+Run `node serve.js`, choose **Repositories** and paste the path of a local Git repository (or any folder). The tool searches it for Power BI projects (`.pbip`) and report folders, reads from each report which semantic model it points to, and shows them grouped per model with the current branch.
+
+- Tick one or more reports and choose *Load selected*. Reports must share a model; ticking a report on another model starts a new selection.
+- Connected repositories and your selection are remembered in the browser. *Rescan* searches a repository again, *Remove* disconnects it (nothing is deleted).
+- Reports with a live connection (model not in the repository) are listed but cannot be loaded.
+- Everything loaded this way can be edited and deleted from, like any project loaded by path.
+
 ## Multiple reports
 
 Reports in the same folder as the model are loaded together with it. Add reports from another folder with *+ Add report* (paste a path, or pick a folder or file). The path field also accepts several paths separated by a semicolon.

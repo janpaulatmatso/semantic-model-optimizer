@@ -163,7 +163,11 @@
 
   // via serve.js: paste a path and read sizes from Power BI Desktop
   if (location.protocol.startsWith('http')) {
-    fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) { $('pathForm').hidden = false; $('btnDesktop').hidden = false; } }).catch(() => {});
+    fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
+      $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false;
+      renderRepos();
+      Promise.all(repos.paths.map(scanRepoPath)).then(renderRepos);
+    } }).catch(() => {});
   }
 
   function setStats(stats) {
@@ -200,9 +204,119 @@
     if (!state.project) return msg('Load the model first (Open folder), then the sizes.', true);
     loadDesktop();
   };
-  $('pathForm').onsubmit = async e => {
-    e.preventDefault();
-    const p = $('pathInput').value.trim();
+  $('pathForm').onsubmit = e => { e.preventDefault(); loadFromPath($('pathInput').value.trim()); };
+
+  // ------------------------------------------------------------ repositories
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+  };
+  const repos = { paths: store.get('smo.repos', []), scans: new Map(), pick: new Set(store.get('smo.pick', [])) };
+
+  async function scanRepoPath(p) {
+    try {
+      const r = await fetch('api/scan?path=' + encodeURIComponent(p)).then(x => x.json());
+      repos.scans.set(p, r);
+      return r;
+    } catch (e) { const r = { error: e.message }; repos.scans.set(p, r); return r; }
+  }
+
+  const pickedItems = () => {
+    const out = [];
+    for (const p of repos.paths) for (const it of (repos.scans.get(p) || {}).items || []) if (repos.pick.has(it.report)) out.push(it);
+    return out;
+  };
+
+  function renderRepos() {
+    const picked = pickedItems();
+    $('btnRepos').textContent = 'Repositories' + (repos.paths.length ? ' (' + repos.paths.length + ')' : '') + ' ▾';
+    let h = '';
+    if (!repos.paths.length) h = '<p class="muted">No repository connected yet. Paste the path of a local repository (or any folder) below; the tool searches it for Power BI projects (.pbip).</p>';
+    for (const p of repos.paths) {
+      const s = repos.scans.get(p);
+      h += `<div class="repo"><div class="repohead"><b>${esc(s && s.name ? s.name : p.split(/[\\/]/).pop())}</b>${s && s.branch ? ` <span class="rep ind">${esc(s.branch)}</span>` : ''}
+        <span class="muted small">${esc(p)}</span><span class="grow"></span>
+        <button data-rescan="${esc(p)}" title="Search this repository again">Rescan</button><button data-drop="${esc(p)}" title="Disconnect this repository (nothing is deleted)">Remove</button></div>`;
+      if (!s) h += '<div class="muted small">Scanning…</div>';
+      else if (s.error) h += `<div class="warn small">${esc(s.error)}</div>`;
+      else if (!s.items.length) h += '<div class="muted small">No Power BI projects (.pbip) found here.</div>';
+      else {
+        const groups = new Map();
+        for (const it of s.items) {
+          const k = it.model || (it.live ? 'live' : 'none');
+          if (!groups.has(k)) groups.set(k, []);
+          groups.get(k).push(it);
+        }
+        for (const [k, items] of groups) {
+          const title = k === 'live' ? 'Live connection (model is not in this repository)' : k === 'none' ? 'Model not found' : 'Model ' + items[0].modelName;
+          h += `<div class="repogroup"><div class="small"><b>${esc(title)}</b>${items[0].modelRel ? ` <span class="muted">${esc(items[0].modelRel)}</span>` : ''}</div>` +
+            items.map(it => `<label class="repitem${it.model ? '' : ' off'}"><input type="checkbox" data-report="${esc(it.report)}"${repos.pick.has(it.report) ? ' checked' : ''}${it.model ? '' : ' disabled'}> ${esc(it.name)} <span class="muted small">${esc(it.rel)}</span></label>`).join('') + '</div>';
+        }
+        if (s.truncated) h += '<div class="warn small">This folder is very large; the search stopped early.</div>';
+      }
+      h += '</div>';
+    }
+    $('repoList').innerHTML = h;
+    $('repoInfo').textContent = picked.length ? picked.length + ' report' + (picked.length === 1 ? '' : 's') + ' on model ' + picked[0].modelName : 'Tick one or more reports that share a model.';
+    $('repoLoad').disabled = !picked.length;
+  }
+
+  async function connectRepo(p) {
+    p = p.trim().replace(/^"|"$/g, '');
+    if (!p) return;
+    if (!repos.paths.some(x => x.toLowerCase() === p.toLowerCase())) repos.paths.push(p);
+    store.set('smo.repos', repos.paths);
+    repos.scans.delete(p);
+    renderRepos();
+    const r = await scanRepoPath(p);
+    if (r.repo && r.repo !== p) { // keep the normalised path
+      repos.paths = repos.paths.map(x => (x === p ? r.repo : x)).filter((x, i, a) => a.findIndex(y => y.toLowerCase() === x.toLowerCase()) === i);
+      repos.scans.delete(p); repos.scans.set(r.repo, r);
+      store.set('smo.repos', repos.paths);
+    }
+    renderRepos();
+  }
+
+  $('btnRepos').onclick = () => {
+    $('repoPanel').hidden = !$('repoPanel').hidden;
+    if (!$('repoPanel').hidden) { renderRepos(); $('repoPath').focus(); }
+  };
+  $('repoForm').onsubmit = e => { e.preventDefault(); const p = $('repoPath').value; $('repoPath').value = ''; connectRepo(p); };
+  $('repoPanel').onclick = e => {
+    const d = e.target.dataset || {};
+    if (d.rescan) return connectRepo(d.rescan);
+    if (d.drop) {
+      repos.paths = repos.paths.filter(x => x !== d.drop);
+      repos.scans.delete(d.drop);
+      store.set('smo.repos', repos.paths);
+      return renderRepos();
+    }
+    if (e.target.id === 'repoClose') $('repoPanel').hidden = true;
+  };
+  $('repoPanel').onchange = e => {
+    const rep = e.target.dataset && e.target.dataset.report;
+    if (!rep) return;
+    if (e.target.checked) {
+      // reports must share one model: ticking a report on another model starts a new selection
+      let model = null;
+      for (const p of repos.paths) for (const it of (repos.scans.get(p) || {}).items || []) if (it.report === rep) model = it.model;
+      for (const it of pickedItems()) if (it.model !== model) repos.pick.delete(it.report);
+      repos.pick.add(rep);
+    } else repos.pick.delete(rep);
+    store.set('smo.pick', [...repos.pick]);
+    renderRepos();
+  };
+  $('repoLoad').onclick = () => {
+    const picked = pickedItems();
+    if (!picked.length) return;
+    $('repoPanel').hidden = true;
+    const p = [picked[0].model].concat(picked.map(it => it.report)).join(';');
+    $('pathInput').value = p;
+    loadFromPath(p);
+  };
+
+  async function loadFromPath(p) {
     if (!p) return;
     document.body.style.cursor = 'progress';
     try {
