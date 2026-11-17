@@ -50,12 +50,23 @@ fs.writeFileSync(path.join(work, 'bundle.js'), bundle);
 const assets = {};
 for (const a of ASSETS) assets[a] = path.join(root, a);
 assets['exe-help.txt'] = path.join(work, 'exe-help.txt');
-const config = { main: path.join(work, 'bundle.js'), output: path.join(work, 'sea.blob'), disableExperimentalSEAWarning: true, useCodeCache: false, assets };
+// The path of the main script ends up inside the executable. On Windows, map the build folder to a drive letter
+// for the duration of the build, so the path of this checkout (with the user name in it) is not published with it.
+let drive = '';
+if (process.platform === 'win32') {
+  for (const l of 'STUVWXYZ') {
+    if (fs.existsSync(l + ':/')) continue;
+    try { execFileSync('subst', [l + ':', work]); drive = l + ':'; break; } catch (e) { /* try the next letter */ }
+  }
+}
+const mainPath = drive ? drive + '/bundle.js' : path.join(work, 'bundle.js');
+const config = { main: mainPath, output: path.join(work, 'sea.blob'), disableExperimentalSEAWarning: true, useCodeCache: false, assets };
 fs.writeFileSync(path.join(work, 'sea-config.json'), JSON.stringify(config, null, 2));
 
 const exe = path.join(out, 'SemanticModelOptimizer' + (process.platform === 'win32' ? '.exe' : ''));
 console.log('Packing…');
-execFileSync(process.execPath, ['--experimental-sea-config', path.join(work, 'sea-config.json')], { stdio: 'inherit' });
+try { execFileSync(process.execPath, ['--experimental-sea-config', path.join(work, 'sea-config.json')], { stdio: 'inherit' }); }
+finally { if (drive) execFileSync('subst', [drive, '/d']); }
 fs.copyFileSync(process.execPath, exe);
 console.log('Injecting into a copy of ' + path.basename(process.execPath) + '…');
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
