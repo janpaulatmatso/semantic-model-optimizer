@@ -98,15 +98,54 @@ jobs:
           project=$(node -e "console.log(require('./test/fixture.js').makeProject())")
           "$exe" cli "$project" --check
 
-      - name: Publish the release
+      - name: Install Inno Setup
         if: steps.changed.outputs.release == 'yes'
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build the installer
+        if: steps.changed.outputs.release == 'yes'
+        env:
+          SMO_VERSION: ${{ steps.version.outputs.tag }}
+        run: node build-installer.js
+
+      - name: Check the installer (install, run, uninstall)
+        if: steps.changed.outputs.release == 'yes'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'smo-install'
+          $p = Start-Process dist\SemanticModelOptimizer-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/NORESTART', "/DIR=$dir", "/LOG=$env:RUNNER_TEMP\setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "Setup exited with $($p.ExitCode)" }
+          $v = & "$dir\SemanticModelOptimizer.exe" version
+          Write-Output $v
+          $tag = '${{ steps.version.outputs.tag }}'
+          if ($v -ne "Semantic Model Optimizer $($tag.TrimStart('v'))") { throw "Installed version is '$v'" }
+          if (-not (Test-Path "$dir\unins000.exe")) { throw 'No uninstaller was installed' }
+          $u = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          for ($i = 0; $i -lt 30 -and (Test-Path "$dir\SemanticModelOptimizer.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$dir\SemanticModelOptimizer.exe") { throw 'The uninstaller left the program behind' }
+          Write-Output 'Install and uninstall OK'
+
+      - name: Keep the build (not on main)
+        if: steps.changed.outputs.release == 'yes' && github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            dist/SemanticModelOptimizer.exe
+            dist/SemanticModelOptimizer-Setup.exe
+
+      - name: Publish the release
+        if: steps.changed.outputs.release == 'yes' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           LAST: ${{ steps.version.outputs.last }}
         run: |
           {
-            echo "Portable build for Windows: one file that contains Node and the tool, so nothing needs to be installed."
+            echo "Two downloads for Windows:"
+            echo
+            echo '- **`SemanticModelOptimizer-Setup.exe`**: installs the tool, with a shortcut in the Start menu, an uninstaller under *Apps*, and (when installed for all users) the button in Power BI Desktop. No administrator rights needed for yourself.'
+            echo '- **`SemanticModelOptimizer.exe`**: the portable version, one file that runs without installing.'
             echo
             echo "## Changes since $LAST"
             echo
@@ -114,10 +153,10 @@ jobs:
             echo
             echo "## Use"
             echo
-            echo '- Double-click `SemanticModelOptimizer.exe` to start the tool in your browser. It keeps running in the background; stop it with `SemanticModelOptimizer.exe stop`.'
+            echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`. It opens in your browser and keeps running in the background; stop it with *Stop Semantic Model Optimizer* in the Start menu or `SemanticModelOptimizer.exe stop`.'
             echo '- Command line: `SemanticModelOptimizer.exe cli <folder> --check`'
-            echo '- Button in Power BI Desktop: `SemanticModelOptimizer.exe install-tool` (in a terminal started as administrator)'
+            echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer.exe install-tool` in a terminal started as administrator.'
             echo
-            echo 'The executable is not signed, so Windows may ask for confirmation the first time. Built automatically by GitHub Actions from commit ${{ github.sha }}.'
+            echo 'The files are not signed, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*). Built automatically by GitHub Actions from commit ${{ github.sha }}.'
           } > notes.md
-          gh release create "$TAG" dist/SemanticModelOptimizer.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
