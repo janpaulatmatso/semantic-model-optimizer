@@ -159,3 +159,32 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .repitem { display: block; padding: 3px 0 3px 12px; cursor: pointer; }
 .repitem.off { opacity: .55; cursor: default; }
 .repitem input { margin-right: 6px; vertical-align: -1px; }
+
+.tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.tabs button { border: 0; border-radius: 0; background: var(--panel); padding: 5px 14px; }
+.tabs button.on { background: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .tabs button.on { color: #0d1220; } }
+.left[hidden] { display: none; }
+.split.wide { grid-template-columns: minmax(480px, 66fr) minmax(320px, 34fr); }
+@media (max-width: 980px) { .split.wide { grid-template-columns: 1fr; } }
+.inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.inline[hidden] { display: none; }
+.diagram { background: var(--bg); padding: 4px; }
+.diagram svg { display: block; }
+.dlegend { padding: 6px 10px; border-top: 1px solid var(--line); margin: 0; }
+.tcard { cursor: pointer; }
+.tcard rect.box { fill: var(--panel); stroke: var(--line); }
+.tcard:hover rect.box { stroke: var(--accent); }
+.tcard.sel rect.box { stroke: var(--accent); stroke-width: 2.5; }
+.tcard.center rect.box { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.tcard.dim { opacity: .35; }
+.tcard .tname { font-weight: 600; font-size: 13px; }
+.tcard .sub.bad { fill: var(--unused); }
+.r-fact .stripe { fill: var(--measure); } .r-dimension .stripe { fill: var(--column); } .r-bridge .stripe { fill: var(--calc); } .r-other .stripe { fill: var(--table); }
+.rel line { stroke: var(--muted); stroke-width: 1.3; stroke-opacity: .6; }
+.rel.inactive line { stroke-dasharray: 5 4; }
+.rel.hot line { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
+.rel.dim { opacity: .18; }
+.rel text.card { font-size: 12px; font-weight: 600; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; }
+.rel.hot text.card { fill: var(--accent); }
+.rel .badgebg { fill: var(--bg); stroke: var(--line); }

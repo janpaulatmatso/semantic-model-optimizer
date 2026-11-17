@@ -18,6 +18,16 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
 
+## Model diagram
+
+Switch from *Objects* to **Model diagram** for an overview of the semantic model as a star schema: tables as cards, relationships as lines.
+
+- **Whole model:** fact tables in the middle, dimensions above and below, tables without relationships at the bottom.
+- **Star around one table:** pick a table under *Centre on*, or double-click a card. The table sits in the middle with every related table around it; snowflaked tables sit one ring further out.
+- Each card shows the role (fact, dimension, bridge), the number of measures and how many columns are unused, or rows and MB once sizes are loaded. The dot is the usage status.
+- Lines show cardinality (`1` / `*`), are dashed when the relationship is inactive, and carry `×n` when two tables have several relationships and `⇄` when filtering goes both ways. Hover a line to see the columns.
+- Click a card to select the table; its details appear on the right and its relationships light up.
+
 ## Local repositories
 
 Run `node serve.js`, choose **Repositories** and paste the path of a local Git repository (or any folder). The tool searches it for Power BI projects (`.pbip`) and report folders, reads from each report which semantic model it points to, and shows them grouped per model with the current branch.

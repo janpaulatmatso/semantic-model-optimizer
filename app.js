@@ -450,7 +450,63 @@
     if (state.selected && !state.analysis.nodes.has(state.selected)) state.selected = null;
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
+    if (state.view === 'model') renderDiagram();
   }
+
+  // ------------------------------------------------------------ model diagram
+
+  function setView(v) {
+    state.view = v;
+    for (const b of $('viewTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.view === v);
+    $('listView').hidden = v !== 'list';
+    $('modelView').hidden = v !== 'model';
+    $('split').classList.toggle('wide', v === 'model');
+    if (v === 'model') { state.zoom = null; renderDiagram(); }
+  }
+  $('viewTabs').onclick = e => { const b = e.target.closest('[data-view]'); if (b && state.project) setView(b.dataset.view); };
+
+  function renderDiagram() {
+    const model = state.project.models[state.modelIdx].model;
+    const d = SMODiagram.render({
+      model, analysis: state.analysis, center: state.center || '', selected: state.selected,
+      showOther: $('dOther').checked, fmt: { int, mb },
+    });
+    if (state.center && !d.center) state.center = '';
+    const box = $('diagram');
+    const fit = Math.min(1, Math.max(0.45, (box.clientWidth - 8) / d.width));
+    if (state.zoom == null) state.zoom = fit;
+    state.fit = fit;
+    box.innerHTML = d.svg;
+    const svg = box.querySelector('svg');
+    svg.style.width = Math.round(d.width * state.zoom) + 'px';
+    svg.style.height = Math.round(d.height * state.zoom) + 'px';
+    $('dCenter').innerHTML = '<option value="">Whole model</option>' +
+      d.centers.map(c => `<option value="${esc(c.name)}"${c.name === state.center ? ' selected' : ''}>${esc(c.name)} (${c.role})</option>`).join('');
+    $('dOther').parentElement.hidden = !!state.center;
+    const s = d.stats;
+    $('dInfo').textContent = `${s.fact} fact table${s.fact === 1 ? '' : 's'} · ${s.dimension} dimension${s.dimension === 1 ? '' : 's'}` +
+      (s.bridge ? ` · ${s.bridge} bridge table${s.bridge === 1 ? '' : 's'} (both a "many" and a "one" side)` : '') +
+      (s.other ? ` · ${s.other} without relationships` : '') + ` · ${d.relationships} relationships`;
+  }
+  $('dCenter').onchange = e => { state.center = e.target.value; state.zoom = null; renderDiagram(); };
+  $('dOther').onchange = () => { state.zoom = null; renderDiagram(); };
+  $('dIn').onclick = () => { state.zoom = Math.min(2, (state.zoom || 1) * 1.2); renderDiagram(); };
+  $('dOut').onclick = () => { state.zoom = Math.max(0.25, (state.zoom || 1) / 1.2); renderDiagram(); };
+  $('dFit').onclick = () => { state.zoom = null; renderDiagram(); };
+  $('diagram').onclick = e => {
+    const c = e.target.closest('[data-table]');
+    if (!c) return;
+    const top = $('diagram').scrollTop, left = $('diagram').scrollLeft;
+    select('T|' + c.dataset.table);
+    $('diagram').scrollTop = top; $('diagram').scrollLeft = left;
+  };
+  $('diagram').ondblclick = e => {
+    const c = e.target.closest('[data-table]');
+    if (!c) return;
+    state.center = state.center === c.dataset.table ? '' : c.dataset.table;
+    state.zoom = null;
+    renderDiagram();
+  };
 
   function renderBar() {
     const p = state.project;
@@ -660,6 +716,7 @@
     if (tr) tr.classList.add('sel');
     renderDetail();
     $('detail').scrollTop = 0;
+    if (state.view === 'model') renderDiagram();
   }
 
   const label = n => n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']';

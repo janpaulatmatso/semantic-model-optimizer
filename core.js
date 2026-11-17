@@ -173,7 +173,7 @@
         model.relationships.push({
           name: n.name, fromTable: ft, fromColumn: fc, toTable: tt, toColumn: tc,
           isActive: String(n.props.isActive) !== 'false',
-          crossFilter: n.props.crossFilteringBehavior || '',
+          crossFilter: n.props.crossFilteringBehavior || '', fromCardinality: n.props.fromCardinality || 'many', toCardinality: n.props.toCardinality || 'one',
         });
       } else if (n.kw === 'role') {
         const role = { name: n.name, permissions: [] };
@@ -297,7 +297,7 @@
     for (const r of src.relationships || []) {
       model.relationships.push({
         name: r.name, fromTable: r.fromTable, fromColumn: r.fromColumn, toTable: r.toTable, toColumn: r.toColumn,
-        isActive: r.isActive !== false, crossFilter: r.crossFilteringBehavior || '',
+        isActive: r.isActive !== false, crossFilter: r.crossFilteringBehavior || '', fromCardinality: r.fromCardinality || 'many', toCardinality: r.toCardinality || 'one',
       });
     }
     for (const r of src.roles || []) {

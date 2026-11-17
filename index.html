@@ -51,6 +51,10 @@
 
 <main id="app" hidden>
   <section class="bar">
+    <div class="tabs" id="viewTabs">
+      <button type="button" data-view="list" class="on">Objects</button>
+      <button type="button" data-view="model">Model diagram</button>
+    </div>
     <label id="modelPick" hidden>Model <select id="selModel"></select></label>
     <div id="reports" class="chips"></div>
     <form id="addRep" class="addrep" hidden>
@@ -62,8 +66,24 @@
     </form>
   </section>
   <section id="tiles" class="tiles"></section>
-  <section class="split">
-    <div class="left">
+  <section class="split" id="split">
+    <div class="left" id="modelView" hidden>
+      <div class="filters">
+        <label class="inline">Centre on <select id="dCenter"></select></label>
+        <label class="inline"><input type="checkbox" id="dOther" checked> Tables without relationships</label>
+        <span class="grow"></span>
+        <button type="button" id="dOut" title="Zoom out">−</button>
+        <button type="button" id="dFit" title="Fit to width">Fit</button>
+        <button type="button" id="dIn" title="Zoom in">+</button>
+      </div>
+      <div class="count" id="dInfo"></div>
+      <div class="tablewrap diagram" id="diagram"></div>
+      <div class="legend dlegend"><span><i style="background:var(--measure)"></i>fact</span><span><i style="background:var(--column)"></i>dimension</span>
+        <span><i style="background:var(--calc)"></i>bridge</span><span><i style="background:var(--table)"></i>not related</span>
+        <span>1 / * = cardinality</span><span>dashed = inactive</span><span>×n = several relationships</span><span>⇄ = filters both ways</span>
+        <span>Click a table to select it, double-click to centre the star on it.</span></div>
+    </div>
+    <div class="left" id="listView">
       <div class="filters">
         <input id="q" type="search" placeholder="Search by name, table or DAX">
         <select id="fType">
@@ -97,6 +117,7 @@
 
 <dialog id="dlg"></dialog>
 <script src="core.js"></script>
+<script src="diagram.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
