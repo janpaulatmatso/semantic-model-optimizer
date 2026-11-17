@@ -8,6 +8,12 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 - **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
 - **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
 
+### Other ways to start
+
+- **Without cloning:** `npx github:janpaulatmatso/semantic-model-optimizer <folder> --check` runs the command line straight from GitHub. `npm start` in a clone starts the server and opens the browser.
+- **From Power BI Desktop:** `node install-external-tool.js` (in a terminal started as administrator) adds a *Semantic Model Optimizer* button to the **External Tools** ribbon. The button opens the tool on the file you have open: a Power BI project (`.pbip`) is loaded as a whole, so reports count and everything can be edited; for a `.pbix` only the model is read. `--remove` takes the button away again.
+- **Language:** the *Nederlands* / *English* button at the top right switches the interface. Labels, buttons, statuses and headings are translated; long explanations in dialogs stay in English.
+
 ## What you can load
 
 | Input | Model | Report |
@@ -33,6 +39,10 @@ After connecting you pick a model and load it. Load your thin reports before or 
 - A cloud server opens a sign-in window. Reading the definition needs admin or write permission on the model; a viewer cannot query the schema.
 - Windows only, and it needs ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS.
 
+### Report views from the activity log
+
+*Read report views* reads the Power BI activity log of the last 30 days and shows per report how often it was opened. A report nobody opens is a candidate to retire, together with the measures only it uses. Needs the Fabric administrator role. Use `*` as workspace to read the reports of every workspace you can open.
+
 ### Reports from a workspace
 
 In the same panel you can read every report in a Power BI workspace that uses the model, so reports you do not have as files count too. Fill in the workspace and, optionally, the model. It uses the Azure CLI sign-in (`az login`), lists the reports with the Power BI REST API and fetches each definition with the Fabric REST API. Read-only; you need permission to edit a report to read its definition.
@@ -47,7 +57,8 @@ The **Checks** tab lists what the tool finds against a set of best-practice rule
 |---|---|
 | Error | Broken formulas · Broken references in reports |
 | Warning | Many-to-many relationships · Relationships that filter both ways · Key columns that are not hidden · Calculated columns that could be measures · Measures with the same formula · Measures without a format · Auto date/time is on |
-| Note | Measures without a description · Measures defined in a report · Column references without a table name · Measure references with a table name · Inactive relationships · Floating-point columns |
+| Warning (more) | Dimensions joined on different keys · Columns with one value or no values (needs sizes) · Names that do not follow the convention (when `naming` is set in `smo.config.json`) |
+| Note | No table is marked as date table · Names with stray spaces · Measures without a description · Measures defined in a report · Column references without a table name · Measure references with a table name · Inactive relationships · Floating-point columns |
 
 The findings are also a sheet in the Excel export.
 
@@ -66,15 +77,30 @@ For **Measures without a description** there is *Suggest descriptions*: the tool
 Put a `smo.config.json` in the project folder to switch a rule off or change how heavy it counts:
 
 ```json
-{ "rules": { "inactive-relationship": "off", "measure-no-description": "warning", "measure-no-format": "error" } }
+{
+  "rules": { "inactive-relationship": "off", "measure-no-description": "warning", "measure-no-format": "error" },
+  "naming": { "measure": "^[A-Z#]", "column": "^[A-Z]" }
+}
 ```
 
 The rule ids are the ones `node cli.js <path> --rules` works with: `broken-formula`, `broken-reference`, `many-to-many`, `bidirectional`, `key-visible`, `calc-column-as-measure`, `duplicate-measure`, `measure-no-format`, `measure-no-description`, `report-only-measure`, `unqualified-column`, `qualified-measure`, `inactive-relationship`, `auto-date-time`, `double-data-type`.
+
+## Values: what the measures return
+
+**Values** calculates the grand total of every measure on the model that is open in Power BI Desktop. Take a snapshot before you change formulas or merge duplicate measures, then compare afterwards: you see which results changed and which measures Power BI cannot calculate at all. That last list is a real check of the DAX by the engine, where the *Checks* tab only looks at names. Read-only; on a DirectQuery model it queries the source.
+
+When the model was loaded from an open Power BI Desktop file (and not from files), *Edit* on a measure changes the description and formula **in the open model**, without closing Power BI Desktop. Save the file there to keep it. Only measures, and not their names: that is what Power BI Desktop supports from external tools.
 
 ## History and compare
 
 - **History** lists the backups the tool made before each change. *Restore* puts those files back; the current files are backed up first, so a restore can be undone as well.
 - **Compare** shows what is added, removed, changed or newly broken in the files on disk compared with a Git branch, tag or commit of the same repository.
+
+## Lineage to the source, security and display folders
+
+- **Source:** the tool reads from the Power Query of each table where the data comes from (connector, server, database, schema and table, or the native query) and follows column renames. A column shows for example `dbo.FactSales.customer_id`. It recognises the common patterns; an unusual query gives the connector only.
+- **Security:** for each role the documentation lists what it filters, which tables that reaches through the relationships and how many measures it touches. A table or measure shows the roles that affect it.
+- **Display folders:** *Folder…* puts every measure in the current list in one display folder. Narrow the list first with the search box and the filters.
 
 ## Pages and performance
 
@@ -122,7 +148,7 @@ The **Export…** dropdown above the list exports what you see, with the current
 
 - **Excel (.xlsx):** a workbook with the sheets *Objects* (including description and DAX), *Report usage* (one row per place a field is used), *Relationships* and, if there are any, *Broken references*. Header row frozen, filter buttons on.
 - **CSV:** the object list, comma-separated, UTF-8.
-- **Documentation (.html):** a readable description of the whole model. It starts with the **enterprise data warehouse bus matrix**: one row per business process (fact table), one column per dimension, conformed dimensions first. Marks: `X` related, `X×3` three relationships to the same dimension (role-playing), `○` only through an inactive relationship, `·` reached through another dimension. Then the relationships and every table with its description, measures with their DAX and columns. Print it to PDF or open it in Word. The bus matrix is also a sheet in the Excel export.
+- **Documentation (.html):** a readable description of the whole model. It starts with the **enterprise data warehouse bus matrix**: one row per business process (fact table), one column per dimension, conformed dimensions first. Marks: `X` related, `X×3` three relationships to the same dimension (role-playing), `○` only through an inactive relationship, `·` reached through another dimension. Then the **grain per business process** (what one row is, and its dimension keys), the **security** roles, the relationships and every table with its source, with its description, measures with their DAX and columns. Print it to PDF or open it in Word. The bus matrix is also a sheet in the Excel export.
 - **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
 
 All three are generated in the browser; nothing is uploaded.
@@ -195,6 +221,10 @@ Click a measure, column or table and choose *Edit*. You can change the name, the
 - Only the loaded reports count. The tool cannot see usage in other reports, Excel (Analyze in Excel), dashboards or external DAX queries.
 - A column that another query reads in Power Query counts as *Model only*. The tool recognises this by name, so an unusual M pattern can be missed.
 - The model inside a `.pbix` cannot be read; save as `.pbip` or `.pbit`.
+
+## Tests
+
+`npm test` (or `node --test test/smo.test.js`) builds a small project in a temporary folder and checks the analysis and everything that writes: delete, rename, edit, fix, table operations, restore, compare, export and the command line. The same tests run on GitHub for every push, on Windows and Linux.
 
 ## License
 

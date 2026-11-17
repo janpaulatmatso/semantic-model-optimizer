@@ -18,8 +18,12 @@ function Get-Instances {
       Where-Object { $_.LocalAddress -in '127.0.0.1', '::1' } | Select-Object -First 1 -ExpandProperty LocalPort
     if (-not $port) { continue }
     $title = $parent.MainWindowTitle -replace '\s+-\s+Power BI Desktop.*$', ''
+    $file = ''
+    $cl = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -ErrorAction SilentlyContinue).CommandLine
+    if ($cl -match '"([^"]+\.(pbip|pbix|pbit))"') { $file = $Matches[1] } elseif ($cl -match '\s(\S+\.(pbip|pbix|pbit))\s*$') { $file = $Matches[1] }
+    if ($file) { $title = [System.IO.Path]::GetFileNameWithoutExtension($file) }
     if (-not $title) { $title = "Power BI Desktop ($($parent.Id))" }
-    [pscustomobject]@{ port = [int]$port; name = $title }
+    [pscustomobject]@{ port = [int]$port; name = $title; file = $file }
   }
 }
 

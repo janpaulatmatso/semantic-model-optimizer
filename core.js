@@ -191,7 +191,7 @@
 
   function tableFromTmdl(n) {
     const t = {
-      name: n.name, description: n.description, isHidden: !!n.props.isHidden,
+      name: n.name, description: n.description, isHidden: !!n.props.isHidden, dataCategory: n.props.dataCategory || '',
       kind: 'table', expression: '', sourceType: '', mode: '',
       columns: [], measures: [], hierarchies: [], calcItems: [],
     };
@@ -249,7 +249,7 @@
     const model = emptyModel();
     for (const t of src.tables || []) {
       const out = {
-        name: t.name, description: joinExpr(t.description), isHidden: !!t.isHidden,
+        name: t.name, description: joinExpr(t.description), isHidden: !!t.isHidden, dataCategory: t.dataCategory || '',
         kind: 'table', expression: '', sourceType: '', mode: '', source: '',
         columns: [], measures: [], hierarchies: [], calcItems: [],
       };
@@ -637,7 +637,7 @@
       const tn = mk('T|' + t.name, {
         type: 'table', kind: t.kind, name: t.name, table: t.name, expression: t.expression,
         description: t.description, hidden: t.isHidden, system: isAutoDate(t.name),
-        source: t.source || '', mode: t.mode || '',
+        source: t.source || '', mode: t.mode || '', dataCategory: t.dataCategory || '', sourceInfo: t.source && t.kind === 'table' ? parseSource(t.source, model.expressions) : null,
       });
       tableIdx.set(lc(t.name), tn);
       for (const c of t.columns) {
@@ -646,7 +646,7 @@
           type: 'column', kind: c.isCalculated ? 'calculated column' : 'column', name: c.name, table: t.name,
           expression: c.isCalculated ? c.expression : '', description: c.description, hidden: c.isHidden,
           dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder, tableKind: t.kind,
-          system: tn.system, sortByColumn: c.sortByColumn,
+          system: tn.system, sortByColumn: c.sortByColumn, sourceRef: sourceRefOf(tn.sourceInfo, c),
         });
         colIdx.set(lc(t.name) + '|' + lc(c.name), cn);
       }
@@ -1336,6 +1336,13 @@
       if (n.field && count > before && typeof n.nativeQueryRef === 'string' && lc(n.nativeQueryRef) === old) n.nativeQueryRef = newName;
     };
     walk(json, {});
+    for (const ent of (json && Array.isArray(json.entities) ? json.entities : [])) {
+      for (const m of ent.measures || []) {
+        if (typeof m.expression !== 'string') continue;
+        const out = daxRename(m.expression, r => lc(r.name) === old && (target.type === 'measure' ? true : r.t === 'q' ? lc(r.table) === T : lc(ent.name) === T), newName);
+        if (out !== m.expression) { m.expression = out; count++; }
+      }
+    }
     if (count) {
       const from = entity + '.' + target.name, to = entity + '.' + newName;
       const strings = n => {
@@ -1472,8 +1479,91 @@
       }
     };
     walk(json);
+    for (const ent of (json && Array.isArray(json.entities) ? json.entities : [])) {
+      for (const m of ent.measures || []) {
+        if (typeof m.expression !== 'string') continue;
+        let out = m.expression;
+        for (const r of daxRefs(out).filter(x => (x.t === 'q' || x.t === 't') && x.ts != null && lc(x.table) === old).sort((a, b) => b.ts - a.ts)) out = out.slice(0, r.ts) + daxTable(newName) + out.slice(r.te);
+        if (out !== m.expression) { m.expression = out; count++; }
+      }
+    }
     return count;
   }
+
+  // ---------------------------------------------------------------- Lineage to the source
+
+  const mStrings = s => { const out = []; const re = /"((?:[^"]|"")*)"/g; let m; while ((m = re.exec(s))) out.push(m[1].replace(/""/g, '"')); return out; };
+
+  /**
+   * Reads from the Power Query of a table where the data comes from.
+   * → {connector, server, database, schema, object, query, renames: {new name: source name}, label}
+   * Recognises the common patterns (database connectors with navigation, native queries, files); anything else gives the connector only.
+   */
+  function parseSource(text, expressions) {
+    const m = String(text || '');
+    const params = new Map((expressions || []).map(e => [e.name, (mStrings(e.expression || '')[0]) || '']));
+    const arg = a => { a = a.trim(); const s = mStrings(a); if (s.length) return s[0]; const id = a.replace(/^#"|"$/g, ''); return params.has(id) ? params.get(id) : ''; };
+    const info = { connector: '', server: '', database: '', schema: '', object: '', query: '', renames: {} };
+    let c = /\b([A-Z][A-Za-z0-9]*)\.(Databases?|Contents|Feed|Tables|Files|Workbook|Document|Catalogs|Dataflows|Lakehouse)\s*\(([^)]*)\)/.exec(m);
+    if (c) {
+      info.connector = c[1] === 'File' || c[1] === 'Web' ? c[1] : c[1];
+      const args = c[3].split(',');
+      if (/Database/.test(c[2])) { info.server = arg(args[0] || ''); info.database = arg(args[1] || ''); }
+      else info.server = arg(args[0] || '');
+      const wrap = /\b(Csv|Excel|Json|Xml|Parquet)\.(Document|Workbook)\s*\(/.exec(m);
+      if (wrap) info.connector = wrap[1];
+    }
+    let n = /\{\s*\[\s*Schema\s*=\s*"((?:[^"]|"")*)"\s*,\s*Item\s*=\s*"((?:[^"]|"")*)"\s*\]\s*\}/.exec(m);
+    if (n) { info.schema = n[1]; info.object = n[2]; }
+    else if ((n = /\{\s*\[\s*(?:Name|Item|Id)\s*=\s*"((?:[^"]|"")*)"[^\]]*\]\s*\}\s*\[(?:Data|Content)\]/.exec(m))) info.object = n[1];
+    const q = /Value\.NativeQuery\s*\([^,]+,\s*"((?:[^"]|"")*)"/.exec(m) || /\[\s*Query\s*=\s*"((?:[^"]|"")*)"/.exec(m);
+    if (q) info.query = q[1].replace(/""/g, '"').replace(/#\(lf\)|#\(cr\)/g, ' ').trim();
+    for (const call of m.split('Table.RenameColumns').slice(1)) {
+      const seg = call.slice(0, call.indexOf('})') < 0 ? call.length : call.indexOf('})') + 2);
+      const re = /\{\s*"((?:[^"]|"")*)"\s*,\s*"((?:[^"]|"")*)"\s*\}/g; let p;
+      while ((p = re.exec(seg))) info.renames[p[2]] = info.renames[p[1]] || p[1];
+    }
+    const where = [info.server, info.database].filter(Boolean).join(' / ');
+    const what = info.query ? 'query' : [info.schema, info.object].filter(Boolean).join('.');
+    info.label = [info.connector, where, what].filter(Boolean).join(' › ');
+    return info.connector || info.object || info.query ? info : null;
+  }
+  function sourceRefOf(info, c) {
+    if (!info || c.isCalculated) return '';
+    const src = unquoteValue(c.sourceColumn || '');
+    if (!src || /^\[.*\]$/.test(src)) return '';
+    const orig = info.renames[src] || src;
+    return (info.query ? 'query' : [info.schema, info.object].filter(Boolean).join('.')) + (orig ? '.' + orig : '');
+  }
+
+  // ---------------------------------------------------------------- Security (row-level security)
+
+  /**
+   * Per role: the tables it filters, the tables that filter reaches through the relationships, and the measures it touches.
+   * A filter on a table flows to the "many" side of its relationships, and both ways where a relationship filters both ways.
+   */
+  function securityOverview(model, analysis) {
+    const tables = analysis.list.filter(n => n.type === 'table' && !n.system);
+    const canon = new Map(tables.map(n => [lc(n.name), n.name]));
+    const flow = new Map(tables.map(n => [n.name, new Set()])); // filter on key flows to these tables
+    for (const r of model.relationships || []) {
+      if (!r.isActive) continue;
+      let a = canon.get(lc(r.fromTable)), b = canon.get(lc(r.toTable));
+      if (!a || !b) continue;
+      if ((r.fromCardinality || 'many') === 'one' && (r.toCardinality || 'one') === 'many') [a, b] = [b, a];
+      flow.get(b).add(a);
+      if (/both/i.test(r.crossFilter || '')) flow.get(a).add(b);
+    }
+    return (model.roles || []).map(role => {
+      const direct = (role.permissions || []).filter(p => String(p.expression || '').trim() && canon.has(lc(p.table))).map(p => ({ table: canon.get(lc(p.table)), expression: p.expression }));
+      const reach = new Set(direct.map(d => d.table));
+      const todo = [...reach];
+      while (todo.length) for (const t of flow.get(todo.pop()) || []) if (!reach.has(t)) { reach.add(t); todo.push(t); }
+      const measures = analysis.list.filter(n => n.type === 'measure' && [...layerIds(analysis, n.id)].some(id => { const x = analysis.nodes.get(id); return x && reach.has(x.table); }));
+      return { name: role.name, filters: direct, reaches: [...reach].filter(t => !direct.some(d => d.table === t)).sort(), measures: measures.map(n => n.id) };
+    });
+  }
+  function layerIds(analysis, id) { const out = new Set(); for (const l of layers(analysis, id, 'deps')) for (const x of l) out.add(x); return out; }
 
   // ---------------------------------------------------------------- Bus matrix
 
@@ -1523,7 +1613,8 @@
     const byName = new Map(nodes.map(n => [n.name, n]));
     const dims = [...dimCount.keys()].sort((x, y) => dimCount.get(y) - dimCount.get(x) || x.localeCompare(y))
       .map(d => ({ name: d, description: byName.get(d).description || '', facts: dimCount.get(d), conformed: dimCount.get(d) > 1 }));
-    const facts = factNames.map(f => ({ name: f, description: byName.get(f).description || '', measures: measures.get(f), dims: cells.get(f).size, rows: byName.get(f).rows }));
+    const keyCols = f => { const out = []; for (const [d, rels] of one.get(f)) for (const r of rels) out.push({ dim: d, column: (/\[(.*?)\] →/.exec(r.text) || [])[1] || '', active: r.active }); return out; };
+    const facts = factNames.map(f => ({ name: f, description: byName.get(f).description || '', measures: measures.get(f), dims: cells.get(f).size, rows: byName.get(f).rows, keys: keyCols(f) }));
     return { facts, dims, cell: (f, d) => (cells.get(f) && cells.get(f).get(d)) || null };
   }
   /** The mark shown in a cell: X, X×3 for several relationships (role-playing), ○ when only inactive, · when reached through another dimension. */
@@ -1614,6 +1705,11 @@
     { id: 'qualified-measure', severity: 'info', title: 'Measure references with a table name', help: 'Write measures as [Measure], without the table. A measure reference with a table name looks like a column.' },
     { id: 'inactive-relationship', severity: 'info', title: 'Inactive relationships', help: 'Only used through USERELATIONSHIP. Listed so you can check that each one is still needed.' },
     { id: 'auto-date-time', severity: 'warning', title: 'Auto date/time is on', help: 'Power BI created a hidden date table for every date column. That costs memory; use one shared date table and turn Auto date/time off.' },
+    { id: 'dimension-keys-differ', severity: 'warning', title: 'Dimensions joined on different keys', help: 'A conformed dimension should be joined on the same key from every fact table. Here the same dimension is joined on more than one of its columns.' },
+    { id: 'no-date-table', severity: 'info', title: 'No table is marked as date table', help: 'Mark the date dimension as date table (Table tools › Mark as date table). Time intelligence functions rely on it.' },
+    { id: 'constant-column', severity: 'warning', title: 'Columns with one value or no values', help: 'These columns hold a single value (or only blanks) in every row, so they cannot slice anything. Needs sizes to be loaded.' },
+    { id: 'name-whitespace', severity: 'info', title: 'Names with stray spaces', help: 'A leading, trailing or double space in a name is easy to miss and makes formulas fail on a typo.' },
+    { id: 'naming-convention', severity: 'warning', title: 'Names that do not follow the convention', help: 'Checked against the patterns under "naming" in smo.config.json.' },
     { id: 'double-data-type', severity: 'info', title: 'Columns with a floating-point data type', help: 'Decimal number (double) can give rounding differences in totals. Fixed decimal number is exact for amounts with up to four decimals.' },
   ];
 
@@ -1673,6 +1769,25 @@
         if (group.length < 2) continue;
         for (const n of group) add('duplicate-measure', n, 'same formula as ' + group.filter(x => x !== n).map(objLabel).join(', '));
       }
+      const keysOf = new Map();
+      for (const r of model.relationships || []) {
+        const many = (r.fromCardinality || 'many') === 'one' && (r.toCardinality || 'one') === 'many';
+        const t = many ? r.fromTable : r.toTable, c = many ? r.fromColumn : r.toColumn;
+        if (!keysOf.has(lc(t))) keysOf.set(lc(t), new Map());
+        keysOf.get(lc(t)).set(lc(c), { table: t, column: c });
+      }
+      for (const m of keysOf.values()) if (m.size > 1) { const v = [...m.values()]; add('dimension-keys-differ', col(v[0].table, v[0].column), 'joined on ' + v.map(x => x.table + '[' + x.column + ']').join(' and ')); }
+      if ((model.relationships || []).length && !list.some(n => n.type === 'table' && /^time$/i.test(n.dataCategory || ''))) found.get('no-date-table').push({ id: null, label: model.tables.length + ' tables', detail: 'none has the data category Time' });
+      const naming = (config && config.naming) || {};
+      const pattern = {};
+      for (const k of ['measure', 'column', 'table']) if (naming[k]) { try { pattern[k] = new RegExp(naming[k]); } catch (e) { /* invalid pattern: ignored */ } }
+      for (const n of list) {
+        if (n.type === 'column' && n.cardinality != null && n.cardinality <= 1 && n.rows > 0) add('constant-column', n, n.cardinality === 0 ? 'no values' : 'one value in ' + n.rows + ' rows');
+        if (['measure', 'column', 'table'].includes(n.type) && n.kind !== 'report measure') {
+          if (n.name !== n.name.trim() || /\s{2,}/.test(n.name)) add('name-whitespace', n, '"' + n.name + '"');
+          if (pattern[n.type] && !pattern[n.type].test(n.name)) add('naming-convention', n, 'does not match ' + naming[n.type]);
+        }
+      }
       const auto = analysis.list.filter(n => n.type === 'table' && n.system);
       if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
     }
@@ -1687,7 +1802,7 @@
   const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
 
   return {
-    checkRules, RULES, parsePerformance, compareAnalyses, busMatrix, busMark, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
+    checkRules, RULES, parsePerformance, compareAnalyses, busMatrix, busMark, parseSource, securityOverview, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,

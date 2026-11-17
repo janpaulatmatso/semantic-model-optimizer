@@ -54,6 +54,16 @@ async function workspaceReports(opts) {
   const want = String(opts.workspace || '').trim();
   if (!want) throw new Error('Give the name or id of the workspace.');
   const groups = (await (await call(PBI + '/groups?$top=5000', pbi)).json()).value || [];
+  if (want === '*') {
+    // every workspace you can open: the model is then matched by id or name per workspace
+    const out = { workspace: groups.length + ' workspaces', reports: [], files: [], warnings: [], skipped: 0 };
+    for (const g of groups.slice(0, 500)) {
+      try { const r = await workspaceReports({ workspace: g.id, dataset: opts.dataset, quiet: true }); out.reports.push(...r.reports.map(n => g.name + ' / ' + n)); out.files.push(...r.files); out.warnings.push(...r.warnings); }
+      catch (e) { out.warnings.push(g.name + ': ' + e.message); }
+    }
+    if (groups.length > 500) out.warnings.push('Only the first 500 workspaces were read.');
+    return out;
+  }
   const ws = groups.find(g => g.id.toLowerCase() === want.toLowerCase()) || groups.find(g => String(g.name).toLowerCase() === want.toLowerCase());
   if (!ws) throw new Error('Workspace "' + want + '" not found among the ' + groups.length + ' workspaces you can open.');
 
@@ -80,8 +90,32 @@ async function workspaceReports(opts) {
       names.push(r.name);
     } catch (e) { warnings.push(r.name + ': ' + e.message); }
   }
-  if (opts.dataset && !reports.length) warnings.push('No reports in ' + ws.name + ' use the model "' + opts.dataset + '".');
+  if (opts.dataset && !reports.length && !opts.quiet) warnings.push('No reports in ' + ws.name + ' use the model "' + opts.dataset + '".');
   return { workspace: ws.name, reports: names, files, warnings, skipped: all.length - reports.length };
 }
 
-module.exports = { workspaceReports };
+/**
+ * How often each report was opened, from the Power BI activity log. Needs the Fabric administrator role.
+ * days: how far back (the log keeps about 30 days). → {days, views: {report name: count}, users: {report name: distinct users}}
+ */
+async function reportViews(days) {
+  const pbi = token('https://analysis.windows.net/powerbi/api', 'SMO_POWERBI_TOKEN');
+  days = Math.min(30, Math.max(1, Number(days) || 30));
+  const views = {}, users = {};
+  for (let d = 0; d < days; d++) {
+    const day = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+    let url = `${PBI}/admin/activityevents?startDateTime='${day}T00:00:00'&endDateTime='${day}T23:59:59'&$filter=Activity eq 'ViewReport'`;
+    for (let page = 0; url && page < 200; page++) {
+      const j = await (await call(url, pbi)).json();
+      for (const e of j.activityEventEntities || []) {
+        const name = e.ReportName || e.ArtifactName; if (!name) continue;
+        views[name] = (views[name] || 0) + 1;
+        (users[name] = users[name] || new Set()).add(e.UserId || '');
+      }
+      url = j.lastResultSet ? null : j.continuationUri;
+    }
+  }
+  return { days, views, users: Object.fromEntries(Object.entries(users).map(([k, v]) => [k, v.size])) };
+}
+
+module.exports = { workspaceReports, reportViews };

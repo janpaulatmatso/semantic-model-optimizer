@@ -150,6 +150,26 @@ async function fixRule(target, modelRoot, ruleId, ids) {
   return { changed: r.changed, files: r.files, backup: r.backup, fixed: done.length };
 }
 
+/** Puts measures in a display folder (an empty folder name takes them out of their folder). */
+async function setFolder(target, modelRoot, ids, folder) {
+  folder = String(folder == null ? '' : folder).trim().replace(/\//g, '\\');
+  if (/[\r\n]/.test(folder)) throw new Error('Invalid folder name.');
+  let done = 0;
+  const r = await transact(target, modelRoot, ctx => {
+    const nodes = (ids || []).map(id => ctx.before.nodes.get(id)).filter(n => n && n.kind === 'measure');
+    for (const n of nodes) {
+      let hit = false;
+      editModelFiles(ctx, text => { if (hit) return null; const o = SMO.setTmdlProps(text, key(n), { displayFolder: folder }); if (o.found) { hit = true; return o.text; } return null; });
+      if (hit) done++;
+    }
+    return (before, an) => {
+      sameOrThrow(signature(before), signature(an));
+      for (const n of nodes) { const x = an.nodes.get(n.id); if (x && String(x.displayFolder || '') !== folder) throw new Error('Check failed: the folder of ' + n.name + ' did not come back as expected. Nothing was changed.'); }
+    };
+  });
+  return { changed: r.changed, files: r.files, backup: r.backup, moved: done };
+}
+
 /** Deletes whole tables that nothing uses. */
 async function removeTables(target, modelRoot, tables) {
   const names = new Set(tables.map(t => String(t).toLowerCase()));
@@ -253,4 +273,4 @@ async function restoreBackup(target, modelRoot, stampName) {
   return { restored: files.length, removed: created.length, undo };
 }
 
-module.exports = { newBackupDir, fixRule, removeTables, renameTable, listBackups, restoreBackup, FIXABLE, transact, signature };
+module.exports = { newBackupDir, setFolder, fixRule, removeTables, renameTable, listBackups, restoreBackup, FIXABLE, transact, signature };

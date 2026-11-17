@@ -194,12 +194,22 @@
         '<tr class="totrow"><th>Business processes</th>' + bm.dims.map(d => `<td>${d.facts}</td>`).join('') + '<td></td></tr></tbody></table></div>' +
         '<p class="m"><b>X</b> related · <b>X×3</b> three relationships to the same dimension (role-playing, for example order date and ship date) · <b>○</b> only through an inactive relationship · <b>·</b> reached through another dimension (snowflake). Hover a mark for the columns.</p>';
     }
+    if (bm.facts.length) {
+      h += '<h2 id="grain">Grain per business process</h2><p>What one row of each fact table stands for, and the dimension keys that identify it. Keys marked with * belong to an inactive relationship.</p><table><tr><th>Business process</th><th>One row is</th><th>Dimension keys</th></tr>' +
+        bm.facts.map(f => `<tr><td><b>${e(f.name)}</b></td><td>${e(f.description) || '<span class="m">not described</span>'}</td><td>${f.keys.map(k => e(k.dim) + ' <span class="m">(' + e(k.column) + (k.active ? '' : ' *') + ')</span>').join(', ')}</td></tr>`).join('') + '</table>';
+    }
+    const sec = SMO.securityOverview(m.model, a);
+    if (sec.length) {
+      h += '<h2 id="security">Security</h2><p>Row-level security: what each role filters, which tables that reaches through the relationships, and how many measures it touches.</p><table><tr><th>Role</th><th>Filters</th><th>Also reaches</th><th>Measures affected</th></tr>' +
+        sec.map(r => `<tr><td><b>${e(r.name)}</b></td><td>${r.filters.map(f => e(f.table) + '<pre>' + e(f.expression) + '</pre>').join('') || '<span class="m">nothing</span>'}</td><td>${e(r.reaches.join(', '))}</td><td>${r.measures.length}</td></tr>`).join('') + '</table>';
+    }
     h += '<h2>Relationships</h2><table><tr><th>From (many)</th><th>To (one)</th><th>Cardinality</th><th>Active</th><th>Filter</th></tr>' +
       rels.map(r => `<tr><td>${e(r.fromTable)}[${e(r.fromColumn)}]</td><td>${e(r.toTable)}[${e(r.toColumn)}]</td><td>${e(r.fromCardinality)} to ${e(r.toCardinality)}</td><td>${r.isActive ? 'yes' : 'no'}</td><td>${/both/i.test(r.crossFilter || '') ? 'both ways' : 'single'}</td></tr>`).join('') + '</table>';
     for (const t of tables) {
       const ms = of(t, 'measure'), cs = of(t, 'column');
       h += `<h2 id="t-${encodeURIComponent(t.name)}">${e(t.name)} <span class="tag">${e(t.kind)}</span>${t.hidden ? ' <span class="tag">hidden</span>' : ''}</h2>` +
         (t.description ? `<p>${e(t.description)}</p>` : '') +
+        (t.sourceInfo ? `<p class="m">Source: ${e(t.sourceInfo.label)}</p>` : '') +
         (t.rows != null ? `<p class="m">${App.int(t.rows)} rows${t.size ? ' · ' + App.mb(t.size) + ' MB' : ''}</p>` : '') +
         (t.expression ? `<pre>${e(t.expression)}</pre>` : '');
       if (ms.length) {
@@ -207,8 +217,8 @@
         for (const n of ms) h += `<p><b>${e(n.name)}</b> <span class="tag">${e(S[n.status])}</span>${n.kind === 'report measure' ? ` <span class="tag">only in report ${e(n.report)}</span>` : ''}${n.broken ? ' <span class="tag">broken</span>' : ''}${n.formatString ? ` <span class="m">format ${e(n.formatString)}</span>` : ''}<br>${n.description ? e(n.description) : '<span class="m">No description.</span>'}</p><pre>${e(n.expression)}</pre>`;
       }
       if (cs.length) {
-        h += '<h3>Columns</h3><table><tr><th>Column</th><th>Type</th><th>Description</th><th>Usage</th></tr>' +
-          cs.map(n => `<tr><td>${e(n.name)}${n.hidden ? ' <span class="tag">hidden</span>' : ''}${n.kind === 'calculated column' ? ' <span class="tag">calculated</span>' : ''}</td><td>${e(n.dataType || '')}</td><td>${e(n.description || '')}${n.expression ? `<pre>${e(n.expression)}</pre>` : ''}</td><td>${e(S[n.status])}</td></tr>`).join('') + '</table>';
+        h += '<h3>Columns</h3><table><tr><th>Column</th><th>Type</th><th>Description</th><th>Source</th><th>Usage</th></tr>' +
+          cs.map(n => `<tr><td>${e(n.name)}${n.hidden ? ' <span class="tag">hidden</span>' : ''}${n.kind === 'calculated column' ? ' <span class="tag">calculated</span>' : ''}</td><td>${e(n.dataType || '')}</td><td>${e(n.description || '')}${n.expression ? `<pre>${e(n.expression)}</pre>` : ''}</td><td class="m">${e(n.sourceRef || '')}</td><td>${e(S[n.status])}</td></tr>`).join('') + '</table>';
       }
     }
     return h + '</body></html>';
@@ -328,6 +338,195 @@
     };
     dlg.showModal();
   }, true);
+
+  // ------------------------------------------------------------ detail: where the data comes from, and security
+
+  const security = () => (state._sec && state._sec.a === state.analysis ? state._sec.v : (state._sec = { a: state.analysis, v: SMO.securityOverview(model().model, state.analysis) }).v);
+  App.detailExtras = [
+    (a, n) => {
+      if (n.type === 'table' && n.sourceInfo) return `<h3>Source</h3><div>${esc(n.sourceInfo.label)}</div>` + (n.sourceInfo.query ? `<pre class="dax">${esc(n.sourceInfo.query)}</pre>` : '');
+      if (n.type === 'column' && n.sourceRef) { const t = a.nodes.get('T|' + n.table); return `<h3>Source</h3><div><code>${esc(n.sourceRef)}</code>${t && t.sourceInfo ? ` <span class="muted">in ${esc([t.sourceInfo.connector, t.sourceInfo.server, t.sourceInfo.database].filter(Boolean).join(' › '))}</span>` : ''}</div>`; }
+      return '';
+    },
+    (a, n) => {
+      const roles = security().filter(r => (n.type === 'table' && (r.filters.some(f => f.table === n.name) || r.reaches.includes(n.name))) || (n.type === 'measure' && r.measures.includes(n.id)));
+      if (!roles.length) return '';
+      return '<h3>Security</h3><table class="uses">' + roles.map(r => { const f = r.filters.find(x => x.table === n.name); return `<tr><td>role ${esc(r.name)}</td><td class="muted">${f ? 'filters this table: ' + esc(f.expression) : n.type === 'measure' ? 'its result depends on who is looking' : 'filtered through a relationship'}</td></tr>`; }).join('') + '</table>';
+    },
+  ];
+
+  // ------------------------------------------------------------ the model that is open in Power BI Desktop
+
+  const isLocal = () => !!(state.xmla && /^(localhost|127\.0\.0\.1):\d+$/.test(state.xmla.server));
+  App.canLive = n => isLocal() && n.kind === 'measure' && !App.canWrite();
+
+  /** Reads the model again from the server it came from and swaps it into the loaded project. */
+  async function reloadXmla(selectId) {
+    const r = await App.apiPost('api/xmla', { server: state.xmla.server, database: state.xmla.database, name: model().name });
+    if (r.error) return msg(r.error, true);
+    const keep = state.xmla;
+    const files = state.files.filter(f => !/^server\//.test(f.path)).concat(r.files);
+    App.reloadKeep(files, [], { base: null, path: null });
+    state.xmla = keep;
+    if (selectId && state.analysis.nodes.has(selectId)) App.select(selectId);
+  }
+  App.liveEdit = async (n, changes) => {
+    const op = { op: 'edit', table: n.table, name: n.name };
+    if (changes.description !== undefined && changes.description.trim() !== String(n.description || '').trim()) op.description = changes.description.trim();
+    if (changes.expression !== undefined && changes.expression.trim() !== String(n.expression || '').trim()) op.expression = changes.expression.trim();
+    if (Object.keys(op).length === 3) return { changed: false };
+    const r = await App.apiPost('api/live', { server: state.xmla.server, database: state.xmla.database, ops: [op] });
+    if (r.error) return r;
+    if (!r.changed) return { error: 'The measure was not found in the open model.' };
+    state.editing = null;
+    $('msgs').innerHTML = '';
+    msg('Changed in the model that is open in Power BI Desktop. Save the file there to keep it.');
+    await reloadXmla(n.id);
+    return { changed: true, live: true };
+  };
+
+  /** Opened from the External Tools ribbon of Power BI Desktop: ?server=localhost:port&database=… */
+  async function openFromDesktop(server, database) {
+    const port = (/:(\d+)$/.exec(server) || [])[1];
+    let inst = null;
+    try { inst = ((await fetch('api/desktop').then(x => x.json())).instances || []).find(i => String(i.port) === port); } catch (e) { /* not available */ }
+    if (inst && /\.pbip$/i.test(inst.file || '')) {
+      // a Power BI project: load its folder, so reports count and everything can be edited
+      $('pathInput').value = inst.file.replace(/[\\/][^\\/]+$/, '');
+      await App.loadFromPath($('pathInput').value);
+      state.xmla = { server, database };
+      $('btnDesktop').textContent = 'Sizes from Power BI Desktop';
+      return msg('Opened from Power BI Desktop: project ' + inst.name + '.');
+    }
+    const r = await App.apiPost('api/xmla', { server, database, name: inst ? inst.name : '' });
+    if (r.error) return msg(r.error, true);
+    App.setProject(r.files, []);
+    state.xmla = { server, database };
+    msg('Opened from Power BI Desktop: model ' + r.name + '. This file is a .pbix, so the report in it cannot be read here; add reports with "+ Add report", or save the file as a Power BI project (.pbip).');
+  }
+  App.openFromDesktop = openFromDesktop;
+
+  // ------------------------------------------------------------ values: what the measures return, before and after
+
+  const valBtn = el('button', { type: 'button', id: 'btnValues', title: 'Calculate the measures on the model open in Power BI Desktop, and compare with an earlier snapshot' }, 'Values');
+  cmpBtn.after(valBtn);
+  App.onRun.push(() => { valBtn.hidden = $('pathForm').hidden; });
+  const snapKey = () => 'smo.values.' + model().name;
+  const fmtVal = v => (v == null ? '(blank)' : typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 4 }) : String(v));
+  valBtn.onclick = () => busy(async () => {
+    const dlg = $('dlg');
+    let list = [];
+    try { list = (await fetch('api/desktop').then(x => x.json())).instances || []; } catch (e) { /* none */ }
+    const snap = App.store.get(snapKey(), null);
+    const measures = state.analysis.list.filter(n => n.kind === 'measure');
+    dlg.innerHTML = `<h2>Values of the measures</h2><p class="small">Calculates the grand total of all ${measures.length} measures on the model that is open in Power BI Desktop. Take a snapshot before you change formulas, then compare afterwards: you see which results changed and which measures Power BI cannot calculate. Read-only. On a DirectQuery model this queries the source and can take a while.</p>
+      <label class="inline">Open file <select id="valInst">${list.map(i => `<option value="${i.port}"${i.name === model().name ? ' selected' : ''}>${esc(i.name)} (port ${i.port})</option>`).join('')}</select></label>
+      ${list.length ? '' : '<p class="warn small">No file is open in Power BI Desktop.</p>'}
+      <p class="small muted" id="valSnap">${snap ? 'Snapshot from ' + esc(snap.at) + ' with ' + snap.values.length + ' measures.' : 'No snapshot yet for this model.'}</p>
+      <div id="valOut" class="cmpout"></div>
+      <div class="dlgbtn"><button data-act="cancel">Close</button><button data-act="snap"${list.length ? '' : ' disabled'}>Take snapshot</button><button class="primary" data-act="cmp"${list.length && snap ? '' : ' disabled'}>Compare with snapshot</button></div>`;
+    const calc = async () => {
+      const server = 'localhost:' + dlg.querySelector('#valInst').value;
+      dlg.querySelector('#valOut').innerHTML = '<p class="muted">Calculating…</p>';
+      const cats = await App.apiPost('api/xmla', { server });
+      if (cats.error) return cats;
+      return App.apiPost('api/values', { server, database: (cats.catalogs || [])[0] || '', measures: measures.map(n => ({ table: n.table, name: n.name })) });
+    };
+    const errorsHtml = vals => { const bad = vals.filter(v => v.error); return bad.length ? `<h3 class="s-unused">Power BI cannot calculate ${bad.length} measure${bad.length === 1 ? '' : 's'}</h3><table class="uses">${bad.map(v => `<tr><td><span class="link" data-id="${esc('M|' + v.table + '|' + v.name)}">[${esc(v.name)}]</span></td><td class="muted">${esc(v.error)}</td></tr>`).join('')}</table>` : ''; };
+    dlg.onclick = e => {
+      const x = e.target.closest('[data-id]');
+      if (x && state.analysis.nodes.has(x.dataset.id)) { dlg.close(); return App.select(x.dataset.id); }
+      const act = e.target.dataset && e.target.dataset.act;
+      if (!act) return;
+      if (act === 'cancel') return dlg.close();
+      busy(async () => {
+        const r = await calc(), out = dlg.querySelector('#valOut');
+        if (r.error) { out.innerHTML = `<p class="warn">${esc(r.error)}</p>`; return; }
+        if (act === 'snap') {
+          const s = { at: new Date().toISOString().slice(0, 16).replace('T', ' '), values: r.values };
+          App.store.set(snapKey(), s);
+          dlg.querySelector('#valSnap').textContent = 'Snapshot from ' + s.at + ' with ' + s.values.length + ' measures.';
+          dlg.querySelector('[data-act=cmp]').disabled = false;
+          out.innerHTML = `<p>Snapshot taken: ${r.values.filter(v => !v.error).length} measures calculated.</p>` + errorsHtml(r.values);
+          return;
+        }
+        const old = new Map(App.store.get(snapKey(), { values: [] }).values.map(v => [v.table + '|' + v.name, v]));
+        const same = (p, q) => (typeof p === 'number' && typeof q === 'number' ? Math.abs(p - q) <= 1e-9 * Math.max(1, Math.abs(p), Math.abs(q)) : p === q);
+        const changed = [], fresh = [], broke = [];
+        for (const v of r.values) {
+          const o = old.get(v.table + '|' + v.name);
+          if (!o) fresh.push(v);
+          else if (v.error && !o.error) broke.push(v);
+          else if (!v.error && !o.error && !same(o.value, v.value)) changed.push({ v, o });
+        }
+        const gone = [...old.values()].filter(o => !r.values.some(v => v.table === o.table && v.name === o.name));
+        const link = v => `<span class="link" data-id="${esc('M|' + v.table + '|' + v.name)}">[${esc(v.name)}]</span>`;
+        out.innerHTML = `<p><b>${changed.length}</b> changed · <b>${broke.length}</b> broke · <b>${fresh.length}</b> new · <b>${gone.length}</b> gone · ${r.values.length - changed.length - broke.length - fresh.length} the same</p>` +
+          (changed.length ? `<h3>Result changed</h3><table class="uses"><tr><th>Measure</th><th class="num">Before</th><th class="num">After</th></tr>${changed.map(c => `<tr><td>${link(c.v)}</td><td class="num">${esc(fmtVal(c.o.value))}</td><td class="num">${esc(fmtVal(c.v.value))}</td></tr>`).join('')}</table>` : '') +
+          (broke.length ? `<h3 class="s-unused">Could be calculated before, not anymore</h3><table class="uses">${broke.map(v => `<tr><td>${link(v)}</td><td class="muted">${esc(v.error)}</td></tr>`).join('')}</table>` : '') +
+          (gone.length ? `<h3>No longer in the model</h3><p class="small">${gone.map(v => esc('[' + v.name + ']')).join(', ')}</p>` : '') +
+          (!changed.length && !broke.length ? '<p class="s-direct">Every measure returns the same result as in the snapshot.</p>' : '');
+      });
+    };
+    dlg.showModal();
+  });
+
+  // ------------------------------------------------------------ display folders in bulk
+
+  const folderBtn = el('button', { type: 'button', id: 'btnFolder', title: 'Put every measure in the current list in one display folder' }, 'Folder…');
+  $('btnUnused').after(folderBtn);
+  App.onRun.push(() => { folderBtn.hidden = !App.canWrite(); });
+  folderBtn.onclick = () => {
+    const nodes = App.filtered().filter(n => n.kind === 'measure');
+    const dlg = $('dlg');
+    const folders = [...new Set(state.analysis.list.filter(n => n.kind === 'measure' && n.displayFolder).map(n => n.displayFolder))].sort();
+    dlg.innerHTML = `<h2>Display folder</h2><p>${nodes.length ? `Puts the <b>${nodes.length}</b> measure${nodes.length === 1 ? '' : 's'} in the current list in one display folder. Narrow the list first with the search box and the filters.` : 'There are no measures in the current list. Set the filters so the list shows the measures you want to move.'}</p>
+      <form id="fdForm" class="addrep"><input id="fdName" type="text" list="fdList" placeholder="Folder, for example Sales\\KPIs (empty = no folder)" spellcheck="false"><datalist id="fdList">${folders.map(f => `<option value="${esc(f)}">`).join('')}</datalist><button class="primary"${nodes.length ? '' : ' disabled'}>Move ${nodes.length}</button></form>
+      <p class="small muted">Use a backslash for a subfolder. Each changed file is first copied to smo-backup. Close the project in Power BI Desktop first.</p>
+      <div class="dlgbtn"><button type="button" data-act="cancel">Cancel</button></div>`;
+    dlg.onclick = e => { if (e.target.dataset && e.target.dataset.act) dlg.close(); };
+    dlg.querySelector('#fdForm').onsubmit = e => {
+      e.preventDefault();
+      const folder = dlg.querySelector('#fdName').value;
+      dlg.close();
+      busy(async () => {
+        const r = await App.apiPost('api/folder', { path: state.loadedPath, modelRoot: model().root, ids: nodes.map(n => n.id), folder });
+        $('msgs').innerHTML = '';
+        if (r.error) return msg(r.error, true);
+        msg(`${r.moved} measure${r.moved === 1 ? '' : 's'} moved to ${folder.trim() ? 'folder ' + folder.trim() : 'the top level'}. Copy of the old files: ${r.backup}`);
+        await App.reloadFromDisk();
+      });
+    };
+    dlg.showModal();
+  };
+
+  // ------------------------------------------------------------ report views from the activity log
+
+  const actBox = el('div', {}, `<p class="small" style="margin:10px 0 6px"><b>How often reports are opened.</b> Reads the Power BI activity log of the last 30 days. Needs the Fabric administrator role and the Azure CLI signed in. A report nobody opens is a candidate to retire, together with the measures only it uses.</p>
+    <button type="button" id="actBtn">Read report views</button> <span class="muted small">Tip: use <code>*</code> as workspace above to read the reports of every workspace you can open.</span>`);
+  wsBox.after(actBox);
+  $('actBtn').onclick = () => busy(async () => {
+    $('xmlaInfo').textContent = 'Reading the activity log… one request per day, this takes a moment.';
+    const r = await App.apiPost('api/activity', { days: 30 });
+    if (r.error) { $('xmlaInfo').textContent = r.error; return; }
+    state.reportViews = r;
+    $('xmlaInfo').textContent = Object.keys(r.views).length + ' reports were opened in the last ' + r.days + ' days.';
+    showViews();
+  });
+  function showViews() {
+    const r = state.reportViews;
+    if (!r || !state.project) return;
+    for (const c of $('reports').querySelectorAll('.chip[data-root]')) {
+      const name = c.firstChild.textContent.trim(), n = r.views[name] || 0;
+      if (!c.querySelector('.views')) c.appendChild(el('span', { className: 'views muted' }, ''));
+      c.querySelector('.views').textContent = ' · ' + n + (n === 1 ? ' view' : ' views');
+      c.classList.toggle('stale', !n);
+    }
+  }
+  App.onRun.push(showViews);
+
+  // opened from Power BI Desktop
+  { const q = new URLSearchParams(location.search), srv = q.get('server'); if (srv) setTimeout(() => openFromDesktop(srv, q.get('database') || ''), 400); }
 
   App.el = el; App.busy = busy; App.model = model;
   window.dispatchEvent(new Event('smo-extras'));

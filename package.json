@@ -4,13 +4,26 @@
   "description": "Find which measures and columns your Power BI reports use, which they don't, and see their lineage.",
   "license": "MIT",
   "private": true,
-  "bin": { "smo": "cli.js" },
-  "scripts": {
-    "start": "node serve.js",
-    "check": "node cli.js --check"
+  "bin": {
+    "smo": "cli.js",
+    "smo-serve": "serve.js",
+    "smo-open": "launch.js"
   },
-  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node launch.js",
+    "serve": "node serve.js",
+    "test": "node --test test/smo.test.js",
+    "check": "node cli.js --check",
+    "install-external-tool": "node install-external-tool.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janpaulatmatso/semantic-model-optimizer.git"
   }
 }

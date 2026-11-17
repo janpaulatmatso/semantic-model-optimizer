@@ -230,3 +230,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .sg textarea { display: block; width: 100%; margin-top: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical; }
 #sgOut { max-height: 46vh; overflow: auto; }
 .wsbox input { flex: 1 1 200px; }
+
+#btnValues, #btnFolder { padding: 5px 12px; }
+#btnValues[hidden], #btnFolder[hidden] { display: none; }
+.chip.stale { border-color: var(--model); }
+.cmpout th.num, .cmpout td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#btnLang { margin-left: auto; }

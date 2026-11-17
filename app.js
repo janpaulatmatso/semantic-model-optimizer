@@ -861,10 +861,10 @@
     const indirect = n => n.reports.filter(r => !r.direct).map(r => r.name).join(', ');
     const objects = {
       name: 'Objects',
-      head: ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Defined in', 'Problems', 'Description', 'Expression'],
+      head: ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Defined in', 'Problems', 'Display folder', 'Source', 'Description', 'Expression'],
       rows: rows.map(n => [n.kind, n.type === 'table' ? '' : n.table, n.name, STATUS[n.status], direct(n), indirect(n), n.hidden ? 'yes' : '', n.rows, n.cardinality, n.size,
         n.reportUses.length, n.depCount, n.usedByCount, [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.kind === 'report measure' ? 'report ' + n.report : 'model',
-        n.problems.map(p => p.ref + ': ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + label(a.nodes.get(id)))).join('; '), n.description || '', n.expression || '']),
+        n.problems.map(p => p.ref + ': ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + label(a.nodes.get(id)))).join('; '), n.displayFolder || '', n.type === 'table' ? (n.sourceInfo ? n.sourceInfo.label : '') : n.sourceRef || '', n.description || '', n.expression || '']),
     };
     const usage = { name: 'Report usage', head: ['Type', 'Table', 'Name', 'Report', 'Page', 'Visual', 'Visual type', 'Role'], rows: [] };
     for (const n of rows) for (const u of n.reportUses) usage.rows.push([n.kind, n.table, n.name, u.report, u.page, u.visualTitle || u.visual, u.visualType, u.role]);
@@ -989,7 +989,7 @@
       .map(x => `<span class="link" data-id="${esc(x.id)}" title="${esc(x.kind)} · ${STATUS[x.status]}"><span class="k-${kindClass(x)}">●</span> ${esc(label(x))}</span>`).join('') + '</div>' : '<span class="muted">—</span>';
     if (state.editing === n.id) { el.innerHTML = editForm(a, n); wireEdit(a, n); return; }
     const editable = n.kind !== 'report measure' && ['measure', 'column', 'table'].includes(n.type) && !n.system;
-    let h = (editable ? (canWrite()
+    let h = (editable ? (canWrite() || (App.canLive && App.canLive(n))
       ? '<button class="editbtn" data-edit="1">Edit</button>'
       : '<button class="editbtn" disabled title="Editing works for a Power BI project (TMDL) that you loaded through the path field, with node serve.js">Edit</button>') : '') +
       `<h2>${esc(n.name)}</h2>
@@ -998,6 +998,7 @@
         ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">created in report ' + esc(n.report) + '</span>' : ''}</div>`;
     if (n.description) h += `<div class="muted">${esc(n.description)}</div>`;
     h += `<p class="why">${esc(why(a, n))}</p>`;
+    for (const fn of App.detailExtras || []) h += fn(a, n) || '';
     if (n.kind === 'report measure') h += `<p class="note">This measure exists only in report <b>${esc(n.report)}</b>. It is not part of the semantic model, so other reports on the same model cannot use it.</p>`;
     if (n.broken) {
       h += '<h3>Problems</h3><table class="uses">' + n.problems.map(p => `<tr><td class="s-unused"><code>${esc(p.ref)}</code></td><td>${esc(p.reason)}</td></tr>`).join('') +
@@ -1006,7 +1007,7 @@
     if (a.stats.hasStats && (n.type === 'table' || n.type === 'column')) h += sizeBlock(a, n);
     h += '<h3>Lineage</h3>' + graph(a, n);
     if (n.expression) h += `<h3>${n.type === 'table' ? 'Table expression' : 'DAX'}</h3><pre class="dax">${esc(n.expression)}</pre>`;
-    else if (n.type === 'column' && n.sourceColumn) h += `<h3>Source</h3><div>Source column <code>${esc(n.sourceColumn)}</code> of table ${esc(n.table)}</div>`;
+    else if (n.type === 'column' && n.sourceColumn && !n.sourceRef) h += `<h3>Source</h3><div>Source column <code>${esc(n.sourceColumn)}</code> of table ${esc(n.table)}</div>`;
     else if (n.type === 'table' && n.source) h += `<h3>Source query${n.mode ? ' (' + esc(n.mode) + ')' : ''}</h3><pre class="dax">${esc(n.source)}</pre>`;
     h += '<h3>Depends directly on</h3>' + links([...n.deps]);
     h += '<h3>Used directly by</h3>' + links([...n.usedBy]);
@@ -1023,6 +1024,7 @@
 
   /** Can the name be changed safely? Only if every report that uses the field is stored on disk as PBIR. */
   function renameBlock(n) {
+    if (!canWrite()) return 'On a model that is open in Power BI Desktop only the description and the formula can be changed, not the name.';
     const bad = new Set();
     for (const u of n.reportUses) {
       const r = state.project.reports.find(x => x.name === u.report);
@@ -1077,7 +1079,8 @@
         const root = state.project.models[state.modelIdx].root;
         const newTable = n.type === 'table' && changes.name !== undefined && changes.name.trim() !== n.name ? changes.name.trim() : '';
         if (n.type === 'table') delete changes.name;
-        let r = await apiPost('api/edit', { path: state.loadedPath, modelRoot: root, sel: { type: n.type, table: n.table, name: n.name }, changes });
+        let r = !canWrite() && App.canLive && App.canLive(n) ? await App.liveEdit(n, changes)
+          : await apiPost('api/edit', { path: state.loadedPath, modelRoot: root, sel: { type: n.type, table: n.table, name: n.name }, changes });
         if (!r.error && newTable) {
           const t = await apiPost('api/table', { op: 'rename', path: state.loadedPath, modelRoot: root, table: n.name, name: newTable });
           r = t.error ? t : { changed: true, files: (r.files || 0) + t.files, backup: t.backup, renamed: true, reportFields: t.reportFields, id: t.id };
@@ -1086,6 +1089,7 @@
         if (r.error) return msg(r.error, true);
         state.editing = null;
         if (!r.changed) return renderDetail();
+        if (r.live) return;
         msg(`Saved in ${r.files} file${r.files === 1 ? '' : 's'}` + (r.renamed ? ` (${r.reportFields} fields in reports updated)` : '') + `. Copy of the old files: ${r.backup}`);
         const keepIdx = state.modelIdx, off = state.off, sel = state.sel, path = state.loadedPath;
         const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
@@ -1201,7 +1205,7 @@
   }
 
   // what extras.js builds on
-  Object.assign(App, { state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath });
+  Object.assign(App, { reloadKeep, renderDetail, renderGrid, state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath });
   window.dispatchEvent(new Event('smo-ready'));
 
   // test hook: load a project from the address bar (?path=...) when serve.js is running
