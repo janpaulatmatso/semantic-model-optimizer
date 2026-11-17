@@ -32,12 +32,16 @@ function scanRepo(root) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
     for (const e of entries) {
-      if (e.isFile()) { if (/\.pbip$/i.test(e.name)) pbips.push(path.join(dir, e.name)); }
+      if (e.isFile()) {
+        if (/\.pbip$/i.test(e.name)) pbips.push(path.join(dir, e.name));
+        else if (/\.bim$/i.test(e.name)) modelPaths.push(path.join(dir, e.name));
+      }
+      else if (e.isDirectory() && /\.(SemanticModel|Dataset)$/i.test(e.name)) modelPaths.push(path.join(dir, e.name));
       else if (e.isDirectory() && /\.Report$/i.test(e.name)) reportDirs.push(path.join(dir, e.name));
       else if (e.isDirectory() && !SKIP.has(e.name) && !/\.(SemanticModel|Dataset)$/i.test(e.name)) walk(path.join(dir, e.name), depth + 1);
     }
   };
-  const reportDirs = [];
+  const reportDirs = [], modelPaths = [];
   walk(root, 0);
 
   // reports named in a .pbip first, then report folders that have no .pbip of their own
@@ -72,7 +76,9 @@ function scanRepo(root) {
       });
     }
   }
-  return { repo: root, name: path.basename(root), branch: gitBranch(root), items, truncated: dirs > MAX_DIRS };
+  // every model in the folder, so a report with a live connection can be checked against one of them
+  const models = modelPaths.sort().map(p => ({ name: strip(path.basename(p)).replace(/\.bim$/i, ''), path: p, rel: path.relative(root, p).replace(/\\/g, '/') }));
+  return { repo: root, name: path.basename(root), branch: gitBranch(root), items, models, truncated: dirs > MAX_DIRS };
 }
 
 module.exports = { scanRepo };

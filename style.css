@@ -189,3 +189,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .rel.hot text.card { fill: var(--accent); }
 .rel .badgebg { fill: var(--bg); stroke: var(--line); }
 .filters select#selExport { max-width: 120px; }
+
+.brk { display: inline-block; border: 1px solid var(--unused); color: var(--unused); border-radius: 4px; padding: 0 5px; font-size: 12px; font-weight: 400; margin-left: 4px; }
+.note { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--model); background: var(--bg); border-radius: 0 6px 6px 0; }
+#noModel[hidden] { display: none; }
+#noModel { margin: 0; }

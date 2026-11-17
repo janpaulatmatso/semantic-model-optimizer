@@ -588,7 +588,10 @@
     }
     // a model from a .vpax is only a fallback when no real model is loaded
     const real = models.filter(m => !/\.vpax$/i.test(m.root));
-    return { models: real.length ? real : models, reports, warnings, stats };
+    const out = real.length ? real : models;
+    // thin reports whose model lives elsewhere (for example on Analysis Services): still show what the reports define and use
+    if (!out.length && reports.length) out.push({ name: '(model not loaded)', root: '', model: emptyModel(), format: 'none', missing: true });
+    return { models: out, reports, warnings, stats };
   }
 
   // ---------------------------------------------------------------- Analysis
@@ -601,7 +604,8 @@
    * Status: 'direct' (in a report), 'indirect' (via something that is in a report),
    *         'model' (only needed by the model: relationship, RLS, hierarchy), 'unused'.
    */
-  function analyze(model, reports) {
+  function analyze(model, reports, opts) {
+    const noModel = !!(opts && opts.noModel); // reports loaded without their model: nothing can be checked against it
     const nodes = new Map();
     const tableIdx = new Map(), colIdx = new Map(), measIdx = new Map(), measByName = new Map(), fnIdx = new Map();
     const hierIdx = new Map();
@@ -609,7 +613,7 @@
 
     const mk = (id, o) => {
       const n = Object.assign({
-        id, deps: new Set(), usedBy: new Set(), depKinds: {}, reportUses: [], modelUses: [],
+        id, deps: new Set(), usedBy: new Set(), depKinds: {}, reportUses: [], modelUses: [], problems: [], brokenVia: [],
         expression: '', description: '', hidden: false, status: 'unused',
       }, o);
       nodes.set(id, n);
@@ -680,8 +684,30 @@
       if (ref.t === 'f') return fnIdx.get(lc(ref.name)) || null;
       return null;
     };
+    // column names across all tables, to tell a broken reference from a bare column of another table
+    const colNames = new Set();
+    for (const k of colIdx.keys()) colNames.add(k.slice(k.indexOf('|') + 1));
     const linkExpr = (node, expr, homeTable) => {
-      for (const r of daxRefs(expr)) link(node, resolve(r, homeTable));
+      const text = String(expr || '');
+      for (const r of daxRefs(text)) {
+        const hit = resolve(r, homeTable);
+        if (hit) { link(node, hit); continue; }
+        if (noModel || (r.t !== 'q' && r.t !== 'b')) continue;
+        // not found: decide whether this is really broken
+        let reason = '';
+        if (r.t === 'q') {
+          reason = tableIdx.has(lc(r.table)) ? 'not found in table ' + r.table : 'table ' + r.table + ' does not exist';
+        } else {
+          const name = lc(r.name);
+          if (text[r.ns - 2] === '.') continue;                       // Table[Date].[Year]
+          if (/^value\d*$/.test(name) || name.startsWith('@')) continue; // { … } table constructors
+          if (lc(text).includes('"' + name + '"')) continue;          // a column the formula creates itself
+          if (colNames.has(name)) continue;                           // bare column of another table
+          reason = 'no measure or column with this name';
+        }
+        const ref = r.t === 'q' ? r.table + '[' + r.name + ']' : '[' + r.name + ']';
+        if (!node.problems.some(p => p.ref === ref)) node.problems.push({ ref, reason });
+      }
     };
 
     for (const t of model.tables) {
@@ -791,6 +817,22 @@
       n.usedByCount = n.usedBy.size;
     }
 
+    // a formula is also broken when something it depends on is broken
+    const brokenState = new Map();
+    const isBroken = n => {
+      if (brokenState.has(n.id)) return brokenState.get(n.id);
+      brokenState.set(n.id, n.problems.length > 0); // guards against cycles
+      let b = n.problems.length > 0;
+      if (n.expression) {
+        for (const d of n.deps) {
+          const x = nodes.get(d);
+          if (x && x.expression && x.type !== 'table' && isBroken(x)) { b = true; if (!n.brokenVia.includes(d)) n.brokenVia.push(d); }
+        }
+      }
+      brokenState.set(n.id, b);
+      return b;
+    };
+    for (const n of all) n.broken = isBroken(n);
     const count = (f) => all.filter(n => !n.system && f(n)).length;
     const stats = {
       measures: count(n => n.type === 'measure'),
@@ -806,6 +848,11 @@
       visuals: reports.reduce((a, r) => a + r.visualCount, 0),
       pages: reports.reduce((a, r) => a + r.pages.length, 0),
       broken: broken.length,
+      noModel,
+      reportMeasures: count(n => n.kind === 'report measure'),
+      modelMeasures: count(n => n.kind === 'measure'),
+      brokenFormulas: count(n => n.problems.length > 0),
+      brokenAffected: count(n => n.broken && !n.problems.length),
     };
     return { nodes, list: all, broken, stats, resolve };
   }

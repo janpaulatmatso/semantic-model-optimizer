@@ -18,6 +18,16 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
 
+## Report measures and broken formulas
+
+**Measures that only exist in a report.** A thin report can define its own measures. They are not part of the semantic model, so no other report can use them. The tool lists them as *report measure* with a *report only* tag; filter on *Measures only in a report* (or *Measures in the model*) or click the *Report measures* tile.
+
+**Broken formulas.** For every measure, calculated column and calculated table the tool checks what the DAX refers to. A formula is broken when it refers to a table that does not exist, to a column or measure that is not in the named table, or to a bare `[Name]` that is neither a measure nor a column anywhere. A formula that depends on a broken one is marked as broken too. Filter on *Broken formulas* or click the tile; the detail panel lists each problem.
+
+Names a formula creates itself (`ADDCOLUMNS ( …, "Name", … )`, `SELECTCOLUMNS`, `SUMMARIZE`) and the `[Value]` columns of a table constructor are not reported. The check is done on names only: it does not run the DAX, so it cannot find wrong argument types or syntax errors.
+
+**Model on Analysis Services.** If the model is not in your project (live connection), you can still load the thin reports on their own. You then see the measures the reports define and every field they use from the model; nothing can be checked against the model. To check them, load the model next to the reports as `model.bim`, a Power BI project or a `.pbit`. In the *Repositories* panel, reports with a live connection can be ticked and paired with any model found in the connected repositories.
+
 ## Export
 
 The **Export…** dropdown above the list exports what you see, with the current filters and sort order:
@@ -44,7 +54,7 @@ Run `node serve.js`, choose **Repositories** and paste the path of a local Git r
 
 - Tick one or more reports and choose *Load selected*. Reports must share a model; ticking a report on another model starts a new selection.
 - Connected repositories and your selection are remembered in the browser. *Rescan* searches a repository again, *Remove* disconnects it (nothing is deleted).
-- Reports with a live connection (model not in the repository) are listed but cannot be loaded.
+- Reports with a live connection (model not in the repository) can be loaded on their own, or checked against a model you choose.
 - Everything loaded this way can be edited and deleted from, like any project loaded by path.
 
 ## Multiple reports

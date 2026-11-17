@@ -19,13 +19,14 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
   warnings.push(...proj.warnings);
   if (!proj.models.length) { console.error('No model found.\n' + warnings.join('\n')); process.exit(2); }
   if (proj.models.length > 1) console.log('Several models found, using the first: ' + proj.models.map(m => m.name).join(', '));
-  const a = SMO.analyze(proj.models[0].model, proj.reports);
+  const a = SMO.analyze(proj.models[0].model, proj.reports, { noModel: !!proj.models[0].missing });
   const s = a.stats;
 
   console.log(`Model: ${proj.models[0].name}   Reports: ${proj.reports.map(r => r.name).join(', ') || '(none)'}`);
   console.log(`Tables ${s.tables} (${s.tablesUnused} unused) · measures ${s.measures} (${s.measuresUnused} unused) · columns ${s.columns} (${s.columnsUnused} unused, ${s.columnsModelOnly} model only)`);
-  console.log(`Pages ${s.pages} · visuals ${s.visuals} · broken references ${s.broken}`);
+  console.log(`Pages ${s.pages} · visuals ${s.visuals} · ${s.noModel ? 'fields used from the model' : 'broken references'} ${s.broken}`);
   for (const w of warnings) console.log('! ' + w);
+  if (s.noModel) console.log('! Model not loaded: report measures and used fields are listed, but nothing can be checked against the model.');
 
   const label = n => (n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.table + '[' + n.name + ']');
   if (lin) {
@@ -38,6 +39,12 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
     }
     if (!hits.length) console.log('Nothing found with the name ' + lin);
   } else {
+    const rm = a.list.filter(n => n.kind === 'report measure');
+    console.log(`\nMeasures only in a report (${rm.length}):`);
+    for (const n of rm) console.log('  [' + n.name + ']  (report ' + n.report + ', table ' + n.table + ')');
+    const br = a.list.filter(n => n.broken && !n.system);
+    console.log(`\nBroken formulas (${br.length}):`);
+    for (const n of br) console.log('  ' + label(n) + ': ' + n.problems.map(p => p.ref + ' — ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + label(a.nodes.get(id)))).join('; '));
     for (const type of ['measure', 'column']) {
       const un = a.list.filter(n => n.type === type && n.status === 'unused' && !n.system);
       console.log(`\nUnused ${type === 'measure' ? 'measures' : 'columns'} (${un.length}):`);

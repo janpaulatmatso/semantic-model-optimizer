@@ -29,6 +29,7 @@
     <input id="repoPath" type="text" placeholder="Path to a local repository: C:\repos\power-bi" spellcheck="false">
     <button>Connect</button>
   </form>
+  <label class="inline" id="liveModelWrap" hidden>Check these reports against <select id="liveModel"></select></label>
   <div class="dlgbtn"><span id="repoInfo" class="muted small grow"></span><button type="button" id="repoClose">Close</button><button type="button" id="repoLoad" class="primary" disabled>Load selected</button></div>
 </section>
 
@@ -65,6 +66,7 @@
       <button type="button" data-pick="cancel">Cancel</button>
     </form>
   </section>
+  <div id="noModel" class="msg" hidden>The model is not loaded (for example because it lives on Analysis Services). You see the measures the reports define themselves and the fields they use; whether those fields exist cannot be checked. Load the model next to it as <code>model.bim</code>, a Power BI project or a .pbit to check everything.</div>
   <section id="tiles" class="tiles"></section>
   <section class="split" id="split">
     <div class="left" id="modelView" hidden>
@@ -90,6 +92,8 @@
           <option value="mc">Measures and columns</option>
           <option value="measure">Measures</option>
           <option value="column">Columns</option>
+          <option value="modelm">Measures in the model</option>
+          <option value="repm">Measures only in a report</option>
           <option value="calc">Calculated columns and tables</option>
           <option value="table">Tables</option>
           <option value="all">Everything</option>
@@ -100,6 +104,7 @@
           <option value="model">Model only</option>
           <option value="indirect">Used indirectly</option>
           <option value="direct">In report</option>
+          <option value="brokenf">Broken formulas</option>
           <option value="broken">Broken references</option>
         </select>
         <select id="fTable"></select>

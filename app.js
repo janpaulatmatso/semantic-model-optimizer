@@ -73,8 +73,10 @@
     for (const w of warnings.concat(project.warnings)) msg(w, false);
     const onlyStats = project.stats && !project.reports.length && files.every(f => /\.vpax\//i.test(f.path));
     if (onlyStats && state.project) { setStats(project.stats); return; }
-    const adding = state.adding || (!project.models.length && project.reports.length > 0);
-    if (state.project && adding && !(src && src.keep)) { state.adding = false; return addFiles(files); }
+    const noModel = project.models.every(m => m.missing);
+    const adding = state.adding || (noModel && project.reports.length > 0);
+    const completes = state.project && state.project.models.every(m => m.missing) && !noModel && !project.reports.length;
+    if (state.project && (adding || completes) && !(src && src.keep)) { state.adding = false; return addFiles(files); }
     if (!project.models.length) {
       msg(project.reports.length
         ? 'Found a report, but no model. Also load the model as a Power BI project (.pbip folder) or .pbit.'
@@ -113,8 +115,9 @@
       }
       return { path: renamed.get(top) + p.slice(top.length), text: f.text };
     });
-    const before = state.project.reports.length, hadBase = !!state.base;
+    const before = state.project.reports.length, hadBase = !!state.base, hadModel = !state.project.models.every(m => m.missing);
     reloadKeep(state.files.concat(add), [], { base: null, path: null });
+    if (!hadModel && !state.project.models.every(m => m.missing)) return msg('Model loaded: the reports are now checked against it.');
     const n = state.project.reports.length - before;
     if (n > 0) msg(n + ' report' + (n === 1 ? '' : 's') + ' added.' + (hadBase ? ' Editing and deleting are now turned off, because this report was not added through a path. Add it through the path field to keep them.' : ''));
     else msg('No report found in this selection.', true);
@@ -212,7 +215,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
   };
-  const repos = { paths: store.get('smo.repos', []), scans: new Map(), pick: new Set(store.get('smo.pick', [])) };
+  const repos = { paths: store.get('smo.repos', []), scans: new Map(), pick: new Set(store.get('smo.pick', [])), liveModel: store.get('smo.liveModel', '') };
 
   async function scanRepoPath(p) {
     try {
@@ -249,16 +252,23 @@
           groups.get(k).push(it);
         }
         for (const [k, items] of groups) {
-          const title = k === 'live' ? 'Live connection (model is not in this repository)' : k === 'none' ? 'Model not found' : 'Model ' + items[0].modelName;
+          const title = k === 'live' ? 'Live connection (model is not in this project, for example on Analysis Services)' : k === 'none' ? 'Model not found' : 'Model ' + items[0].modelName;
           h += `<div class="repogroup"><div class="small"><b>${esc(title)}</b>${items[0].modelRel ? ` <span class="muted">${esc(items[0].modelRel)}</span>` : ''}</div>` +
-            items.map(it => `<label class="repitem${it.model ? '' : ' off'}"><input type="checkbox" data-report="${esc(it.report)}"${repos.pick.has(it.report) ? ' checked' : ''}${it.model ? '' : ' disabled'}> ${esc(it.name)} <span class="muted small">${esc(it.rel)}</span></label>`).join('') + '</div>';
+            items.map(it => `<label class="repitem${it.model || it.live ? '' : ' off'}"><input type="checkbox" data-report="${esc(it.report)}"${repos.pick.has(it.report) ? ' checked' : ''}${it.model || it.live ? '' : ' disabled'}> ${esc(it.name)} <span class="muted small">${esc(it.rel)}</span></label>`).join('') + '</div>';
         }
         if (s.truncated) h += '<div class="warn small">This folder is very large; the search stopped early.</div>';
       }
       h += '</div>';
     }
     $('repoList').innerHTML = h;
-    $('repoInfo').textContent = picked.length ? picked.length + ' report' + (picked.length === 1 ? '' : 's') + ' on model ' + picked[0].modelName : 'Tick one or more reports that share a model.';
+    const models = [];
+    for (const p of repos.paths) for (const m of (repos.scans.get(p) || {}).models || []) models.push(m);
+    const live = picked.length > 0 && !picked[0].model;
+    if (repos.liveModel && !models.some(m => m.path === repos.liveModel)) repos.liveModel = '';
+    $('liveModelWrap').hidden = !live;
+    $('liveModel').innerHTML = '<option value="">No model: show report measures only</option>' + models.map(m => `<option value="${esc(m.path)}"${m.path === repos.liveModel ? ' selected' : ''}>${esc(m.name)} — ${esc(m.rel)}</option>`).join('');
+    $('repoInfo').textContent = !picked.length ? 'Tick one or more reports that share a model.'
+      : picked.length + ' report' + (picked.length === 1 ? '' : 's') + (live ? ' with a live connection' : ' on model ' + picked[0].modelName);
     $('repoLoad').disabled = !picked.length;
   }
 
@@ -307,11 +317,12 @@
     store.set('smo.pick', [...repos.pick]);
     renderRepos();
   };
+  $('liveModel').onchange = e => { repos.liveModel = e.target.value; store.set('smo.liveModel', repos.liveModel); };
   $('repoLoad').onclick = () => {
     const picked = pickedItems();
     if (!picked.length) return;
     $('repoPanel').hidden = true;
-    const p = [picked[0].model].concat(picked.map(it => it.report)).join(';');
+    const p = [picked[0].model || repos.liveModel].filter(Boolean).concat(picked.map(it => it.report)).join(';');
     $('pathInput').value = p;
     loadFromPath(p);
   };
@@ -321,8 +332,15 @@
     document.body.style.cursor = 'progress';
     try {
       const r = await fetch('api/load?path=' + encodeURIComponent(p)).then(x => x.json());
-      if (r.error) { $('msgs').innerHTML = ''; msg(r.error, true); }
-      else setProject(r.files, r.warnings || [], { base: r.base, path: p });
+      if (r.error) { $('msgs').innerHTML = ''; return msg(r.error, true); }
+      // a model loaded after model-less reports: load both together, so editing keeps working
+      const np = SMO.loadProject(r.files);
+      if (state.project && state.loadedPath && state.project.models.every(m => m.missing) && !np.models.every(m => m.missing) && !np.reports.length) {
+        const joined = p + ';' + state.loadedPath;
+        const r2 = await fetch('api/load?path=' + encodeURIComponent(joined)).then(x => x.json());
+        if (!r2.error) { $('pathInput').value = r2.target; setProject(r2.files, r2.warnings || [], { base: r2.base, path: r2.target, keep: true }); return msg('Model loaded: the reports are now checked against it.'); }
+      }
+      setProject(r.files, r.warnings || [], { base: r.base, path: p });
     } catch (err) { msg('Loading failed: ' + err.message, true); }
     finally { document.body.style.cursor = ''; }
   };
@@ -446,7 +464,9 @@
   function run() {
     const p = state.project;
     const reports = p.reports.filter(r => !state.off.has(r.root));
-    state.analysis = SMO.applyStats(SMO.analyze(p.models[state.modelIdx].model, reports), state.stats);
+    const cur = p.models[state.modelIdx];
+    state.analysis = SMO.applyStats(SMO.analyze(cur.model, reports, { noModel: !!cur.missing }), state.stats);
+    $('noModel').hidden = !cur.missing;
     if (state.selected && !state.analysis.nodes.has(state.selected)) state.selected = null;
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
@@ -564,7 +584,9 @@
       tile('Calculated columns', s.calcColumns, s.calcColumnsUnused + ' unused', 'calc', 'unused', !s.calcColumnsUnused) +
       tile('Tables', s.tables, s.tablesUnused + ' unused', 'table', 'unused', !s.tablesUnused) +
       (s.hasStats ? tile('Model size', mb(s.totalSize) + ' MB', mb(s.unusedSize) + ' MB in unused columns', 'column', 'unused', !s.unusedSize) : '') +
-      tile('Report', s.visuals + ' visuals', s.pages + ' pages' + (s.broken ? ' · ' + s.broken + ' broken references' : ''), 'mc', s.broken ? 'broken' : '', !s.broken);
+      (s.reportMeasures || s.noModel ? tile('Report measures', s.reportMeasures, 'defined in a report, not in the model', 'repm', '', true) : '') +
+      (s.brokenFormulas || s.brokenAffected ? tile('Broken formulas', s.brokenFormulas, s.brokenAffected ? s.brokenAffected + ' more depend on a broken one' : 'refer to something that does not exist', 'all', 'brokenf', false) : '') +
+      tile(s.noModel ? 'Report (model not loaded)' : 'Report', s.visuals + ' visuals', s.pages + ' pages' + (s.broken ? ' · ' + s.broken + (s.noModel ? ' fields used' : ' broken references') : ''), 'mc', s.broken ? 'broken' : '', !s.broken || s.noModel);
   }
   $('tiles').onclick = e => {
     const t = e.target.closest('.tile');
@@ -596,8 +618,11 @@
       if (t === 'measure' && n.type !== 'measure') return false;
       if (t === 'column' && n.type !== 'column') return false;
       if (t === 'table' && n.type !== 'table') return false;
+      if (t === 'repm' && n.kind !== 'report measure') return false;
+      if (t === 'modelm' && n.kind !== 'measure') return false;
       if (t === 'calc' && !(n.kind === 'calculated column' || n.kind === 'calculated table' || n.kind === 'calculation group')) return false;
-      if (state.status && n.status !== state.status) return false;
+      if (state.status === 'brokenf') { if (!n.broken) return false; }
+      else if (state.status && n.status !== state.status) return false;
       if (state.table && n.table !== state.table) return false;
       if (state.report === '__none' && n.reports.length) return false;
       if (state.report && state.report !== '__none' && !n.reports.some(r => r.name === state.report)) return false;
@@ -633,7 +658,7 @@
       const b = state.analysis.broken;
       thead.innerHTML = '<tr><th>Field</th><th>Table</th><th>Report</th><th>Page</th><th>Visual</th><th>Role</th></tr>';
       tbody.innerHTML = b.map(u => `<tr><td class="nm">${esc(u.name)}</td><td>${esc(u.table)}</td><td>${esc(u.report)}</td><td>${esc(u.page)}</td><td>${esc(u.visualTitle || u.visualType || u.visual)}</td><td>${esc(u.role)}</td></tr>`).join('');
-      $('count').textContent = b.length + ' references in reports to fields that do not exist in the model';
+      $('count').textContent = state.analysis.stats.noModel ? b.length + ' fields the reports use from the model (the model is not loaded, so they cannot be checked)' : b.length + ' references in reports to fields that do not exist in the model';
       return;
     }
     const rows = filtered();
@@ -655,7 +680,7 @@
     const MAX = 3000;
     tbody.innerHTML = rows.slice(0, MAX).map(n => `<tr data-id="${esc(n.id)}" class="${n.id === state.selected ? 'sel' : ''}">
       <td class="chk">${canSel(n) ? `<input type="checkbox" data-sel="${esc(n.id)}"${state.sel.has(n.id) ? ' checked' : ''}>` : ''}</td>
-      <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">hidden</span>' : ''}</td>
+      <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">hidden</span>' : ''}${n.kind === 'report measure' ? ` <span class="rep ind" title="Defined in report ${esc(n.report)}, not in the semantic model">report only</span>` : ''}${n.broken ? ` <span class="brk" title="${esc(n.problems.length ? n.problems.map(p => p.ref + ': ' + p.reason).join('; ') : 'Depends on a broken formula')}">broken</span>` : ''}</td>
       <td>${n.type === 'table' ? '' : esc(n.table)}</td>
       <td class="k k-${kindClass(n)}">${esc(n.kind)}</td>
       <td><span class="badge s-${n.status}">${STATUS[n.status]}</span></td>
@@ -703,9 +728,10 @@
     const indirect = n => n.reports.filter(r => !r.direct).map(r => r.name).join(', ');
     const objects = {
       name: 'Objects',
-      head: ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Description', 'Expression'],
+      head: ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Defined in', 'Problems', 'Description', 'Expression'],
       rows: rows.map(n => [n.kind, n.type === 'table' ? '' : n.table, n.name, STATUS[n.status], direct(n), indirect(n), n.hidden ? 'yes' : '', n.rows, n.cardinality, n.size,
-        n.reportUses.length, n.depCount, n.usedByCount, [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.description || '', n.expression || '']),
+        n.reportUses.length, n.depCount, n.usedByCount, [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.kind === 'report measure' ? 'report ' + n.report : 'model',
+        n.problems.map(p => p.ref + ': ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + label(a.nodes.get(id)))).join('; '), n.description || '', n.expression || '']),
     };
     const usage = { name: 'Report usage', head: ['Type', 'Table', 'Name', 'Report', 'Page', 'Visual', 'Visual type', 'Role'], rows: [] };
     for (const n of rows) for (const u of n.reportUses) usage.rows.push([n.kind, n.table, n.name, u.report, u.page, u.visualTitle || u.visual, u.visualType, u.role]);
@@ -834,6 +860,11 @@
         ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">created in report ' + esc(n.report) + '</span>' : ''}</div>`;
     if (n.description) h += `<div class="muted">${esc(n.description)}</div>`;
     h += `<p class="why">${esc(why(a, n))}</p>`;
+    if (n.kind === 'report measure') h += `<p class="note">This measure exists only in report <b>${esc(n.report)}</b>. It is not part of the semantic model, so other reports on the same model cannot use it.</p>`;
+    if (n.broken) {
+      h += '<h3>Problems</h3><table class="uses">' + n.problems.map(p => `<tr><td class="s-unused"><code>${esc(p.ref)}</code></td><td>${esc(p.reason)}</td></tr>`).join('') +
+        n.brokenVia.map(id => a.nodes.get(id)).filter(Boolean).map(x => `<tr><td><span class="link" data-id="${esc(x.id)}">${esc(label(x))}</span></td><td>is broken, and this formula depends on it</td></tr>`).join('') + '</table>';
+    }
     if (a.stats.hasStats && (n.type === 'table' || n.type === 'column')) h += sizeBlock(a, n);
     h += '<h3>Lineage</h3>' + graph(a, n);
     if (n.expression) h += `<h3>${n.type === 'table' ? 'Table expression' : 'DAX'}</h3><pre class="dax">${esc(n.expression)}</pre>`;
