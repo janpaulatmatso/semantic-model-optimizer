@@ -1,5 +1,5 @@
-/* Leest een map of bestand van schijf in als [{path, text, abs}] voor core.js (Node).
- * Meerdere paden kunnen in één keer, gescheiden door een puntkomma. */
+/* Reads a folder or file from disk as [{path, text, abs}] for core.js (Node).
+ * Several paths can be loaded at once, separated by a semicolon. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -21,11 +21,11 @@ async function readZip(file) {
   } finally { fs.closeSync(fd); }
 }
 
-/** Eén map, .pbip, .pbix, .pbit of .vpax. Bestanden op schijf krijgen 'abs'; bestanden uit een zip niet. */
+/** One folder, .pbip, .pbix, .pbit or .vpax. Files on disk get 'abs'; files from a zip do not. */
 async function loadOne(target) {
   const files = [], warnings = [];
   let st;
-  try { st = fs.statSync(target); } catch (e) { throw new Error('Pad niet gevonden: ' + target); }
+  try { st = fs.statSync(target); } catch (e) { throw new Error('Path not found: ' + target); }
   if (st.isFile() && /\.pbip$/i.test(target)) { target = path.dirname(target); st = fs.statSync(target); }
   const base = path.dirname(path.resolve(target));
 
@@ -34,7 +34,7 @@ async function loadOne(target) {
       const z = await readZip(file);
       for (const f of z.files) files.push({ path: rel + '/' + f.path, text: f.text });
       if (/\.pbix$/i.test(file) && z.names.includes('DataModel') && !z.names.includes('DataModelSchema')) {
-        warnings.push(path.basename(file) + ': het rapport is gelezen, maar het model in een .pbix is niet leesbaar. Sla het bestand op als Power BI-project (.pbip) of als sjabloon (.pbit) en laad dat.');
+        warnings.push(path.basename(file) + ': the report was read, but the model inside a .pbix cannot be read. Save the file as a Power BI project (.pbip) or as a template (.pbit) and load that.');
       }
     } catch (e) { warnings.push(path.basename(file) + ': ' + e.message); }
   };
@@ -61,7 +61,7 @@ async function loadOne(target) {
 
 const splitPaths = t => (Array.isArray(t) ? t : String(t).split(';')).map(s => String(s).trim().replace(/^"|"$/g, '')).filter(Boolean);
 
-/** targets: één pad, meerdere met ';' ertussen, of een lijst → {files, warnings, base, target} */
+/** targets: one path, several separated by ';', or a list → {files, warnings, base, target} */
 async function loadPath(targets) {
   const list = splitPaths(targets);
   const seen = new Set(list.map(p => path.resolve(p).toLowerCase()));
@@ -80,11 +80,11 @@ async function loadPath(targets) {
   return out;
 }
 
-/** Absolute map van een model (relatief pad uit het project) aan de hand van de geladen bestanden. */
+/** Absolute folder of a model (relative path from the project), derived from the loaded files. */
 function modelRootAbs(loaded, modelRoot) {
   const rootRel = String(modelRoot).replace(/\\/g, '/').replace(/\/$/, '');
   const f = loaded.files.find(x => x.abs && x.path.startsWith(rootRel + '/'));
-  if (!f) throw new Error('Model niet gevonden op schijf: ' + rootRel);
+  if (!f) throw new Error('Model not found on disk: ' + rootRel);
   return f.abs.slice(0, f.abs.length - (f.path.length - rootRel.length));
 }
 

@@ -1,6 +1,6 @@
-/* Wijzigt naam, beschrijving of formule van een measure, kolom of tabel in een Power BI-project (Node).
- * Bij hernoemen worden verwijzingen in formules en in het rapport (PBIR) bijgewerkt.
- * Schrijft alleen als het model na de wijziging nog precies hetzelfde in elkaar zit. */
+/* Changes the name, description or formula of a measure, column or table in a Power BI project (Node).
+ * On rename, references in formulas and in the report (PBIR) are updated.
+ * Only writes if the model still has exactly the same structure after the change. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -12,7 +12,7 @@ function stamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-/** Zet van elk te wijzigen bestand eerst een kopie in smo-backup en schrijft dan. changed: Map(absPad → tekst) */
+/** Copies every file about to change into smo-backup first, then writes. changed: Map(absPath → text) */
 function backupAndWrite(modelRootAbs, changed, relOf) {
   if (!changed.size) return '';
   const backup = path.join(path.dirname(modelRootAbs), 'smo-backup', stamp());
@@ -25,25 +25,25 @@ function backupAndWrite(modelRootAbs, changed, relOf) {
   return backup;
 }
 
-/** Vingerafdruk van het model: objecten, afhankelijkheden en rapportgebruik. */
+/** Fingerprint of the model: objects, dependencies and report usage. */
 function signature(analysis, mapId, skipDepsOf) {
   const m = id => (mapId && mapId[id]) || id;
   const out = new Set();
   for (const n of analysis.list) {
     out.add('object ' + m(n.id));
-    out.add('rapportgebruik ' + m(n.id) + ' ×' + n.reportUses.length);
-    if (n.id !== skipDepsOf) for (const d of n.deps) out.add('verwijzing ' + m(n.id) + ' → ' + m(d));
+    out.add('report use ' + m(n.id) + ' ×' + n.reportUses.length);
+    if (n.id !== skipDepsOf) for (const d of n.deps) out.add('reference ' + m(n.id) + ' → ' + m(d));
   }
-  out.add('kapotte verwijzingen ×' + analysis.broken.length);
+  out.add('broken references ×' + analysis.broken.length);
   return out;
 }
 
 /**
- * target: het pad dat in de tool geladen is; modelRoot: relatief pad van het model;
+ * target: the path loaded in the tool; modelRoot: relative path of the model;
  * sel: {type, table, name}; changes: {name?, description?, expression?}
  */
 async function editObject(target, modelRoot, sel, changes) {
-  if (!['measure', 'column', 'table'].includes(sel.type)) throw new Error('Dit soort object kan niet gewijzigd worden.');
+  if (!['measure', 'column', 'table'].includes(sel.type)) throw new Error('This kind of object cannot be edited.');
   const loaded = await loadPath(target);
   const rootRel = String(modelRoot).replace(/\\/g, '/').replace(/\/$/, '');
   const absOf = new Map(loaded.files.filter(f => f.abs).map(f => [f.path, f.abs]));
@@ -51,7 +51,7 @@ async function editObject(target, modelRoot, sel, changes) {
   const onDisk = f => !!f.abs && !/\.(pbix|pbit|vpax)\//i.test(f.path);
   const isModelFile = f => f.path.replace(/\\/g, '/').startsWith(rootRel + '/definition/') && /\.tmdl$/i.test(f.path);
 
-  // werk met de ruwe bestandsinhoud (BOM en regeleinden blijven zoals ze zijn)
+  // work with the raw file contents (BOM and line endings stay as they are)
   const texts = new Map();
   for (const f of loaded.files) if (onDisk(f)) texts.set(f.path, fs.readFileSync(abs(f.path), 'utf8'));
   const fileList = t => loaded.files.map(f => ({ path: f.path, text: t.has(f.path) ? t.get(f.path) : f.text }));
@@ -59,31 +59,31 @@ async function editObject(target, modelRoot, sel, changes) {
   const pick = proj => proj.models.find(m => m.root === rootRel);
   const projBefore = SMO.loadProject(fileList(texts));
   const mBefore = pick(projBefore);
-  if (!mBefore || mBefore.format !== 'tmdl') throw new Error('Geen TMDL-model gevonden op ' + rootRel);
+  if (!mBefore || mBefore.format !== 'tmdl') throw new Error('No TMDL model found at ' + rootRel);
   const before = SMO.analyze(mBefore.model, projBefore.reports);
   const prefix = sel.type === 'measure' ? 'M|' : sel.type === 'column' ? 'C|' : 'T|';
   const node = [...before.nodes.values()].find(n => n.id.startsWith(prefix) && n.table.toLowerCase() === String(sel.table).toLowerCase() &&
     (sel.type === 'table' || n.name.toLowerCase() === String(sel.name).toLowerCase()));
-  if (!node || node.kind === 'rapportmeasure') throw new Error('Object niet gevonden in het model.');
+  if (!node || node.kind === 'report measure') throw new Error('Object not found in the model.');
 
   const ch = {};
   if (changes.description !== undefined && String(changes.description).trim() !== String(node.description || '').trim()) ch.description = String(changes.description);
   if (changes.expression !== undefined && String(changes.expression).trim() !== String(node.expression || '').trim()) {
-    if (sel.type === 'table' || !node.expression) throw new Error('Dit object heeft geen formule die hier te wijzigen is.');
-    if (!String(changes.expression).trim()) throw new Error('De formule mag niet leeg zijn.');
+    if (sel.type === 'table' || !node.expression) throw new Error('This object has no formula that can be edited here.');
+    if (!String(changes.expression).trim()) throw new Error('The formula cannot be empty.');
     ch.expression = String(changes.expression);
   }
   let newName = null;
   if (changes.name !== undefined && String(changes.name).trim() !== node.name) {
     newName = String(changes.name).trim();
-    if (sel.type === 'table') throw new Error('Tabellen hernoemen kan nog niet.');
-    if (!newName || /[\r\n\t]/.test(newName)) throw new Error('Ongeldige naam.');
+    if (sel.type === 'table') throw new Error('Renaming tables is not supported yet.');
+    if (!newName || /[\r\n\t]/.test(newName)) throw new Error('Invalid name.');
     const low = newName.toLowerCase();
     if (low !== node.name.toLowerCase()) {
       for (const n of before.list) {
         if (n.type !== 'measure' && n.type !== 'column') continue;
         const clash = n.name.toLowerCase() === low && (n.table.toLowerCase() === node.table.toLowerCase() || (n.type === 'measure' && sel.type === 'measure'));
-        if (clash) throw new Error('Er bestaat al een ' + n.kind + ' met de naam ' + newName + (n.table ? ' in ' + n.table : '') + '.');
+        if (clash) throw new Error('A ' + n.kind + ' named ' + newName + ' already exists' + (n.table ? ' in ' + n.table : '') + '.');
       }
     }
     ch.name = newName;
@@ -117,28 +117,28 @@ async function editObject(target, modelRoot, sel, changes) {
     const r = SMO.editTmdlObject(after.get(f.path), tgt, ch);
     if (r.found) { after.set(f.path, r.text); found = true; break; }
   }
-  if (!found) throw new Error('De declaratie van ' + node.name + ' is niet gevonden in de TMDL-bestanden.');
+  if (!found) throw new Error('The declaration of ' + node.name + ' was not found in the TMDL files.');
 
-  // controle: hetzelfde model, alleen met de gevraagde wijziging
+  // check: same model, with only the requested change
   const projAfter = SMO.loadProject(fileList(after));
   const mAfter = pick(projAfter);
-  if (!mAfter) throw new Error('Controle mislukt: het model is na de wijziging niet meer leesbaar. Er is niets gewijzigd.');
+  if (!mAfter) throw new Error('Check failed: the model can no longer be read after the change. Nothing was changed.');
   const an = SMO.analyze(mAfter.model, projAfter.reports);
   const newId = newName ? prefix + node.table + '|' + newName : node.id;
   const a = signature(before, newName ? { [node.id]: newId } : null, ch.expression !== undefined ? node.id : null);
   const b = signature(an, null, ch.expression !== undefined ? newId : null);
   const diff = [...a].filter(x => !b.has(x)).concat([...b].filter(x => !a.has(x)));
   if (diff.length) {
-    throw new Error('Controle mislukt, er is niets gewijzigd. Na de wijziging zou het model anders in elkaar zitten: ' + diff.slice(0, 3).join('; ') +
-      (newName ? '. Staat een rapport dat dit veld gebruikt in het oude formaat of in een .pbix? Dat kan de tool niet bijwerken.' : ''));
+    throw new Error('Check failed, nothing was changed. After the change the model would have a different structure: ' + diff.slice(0, 3).join('; ') +
+      (newName ? '. Is a report that uses this field in the legacy format or in a .pbix? The tool cannot update those.' : ''));
   }
   const got = an.nodes.get(newId);
-  if (!got) throw new Error('Controle mislukt: het object is na de wijziging niet terug te vinden. Er is niets gewijzigd.');
+  if (!got) throw new Error('Check failed: the object cannot be found after the change. Nothing was changed.');
   if (ch.description !== undefined && String(got.description || '').trim() !== ch.description.trim().split(/\r?\n/).map(l => l.trim()).join('\n')) {
-    throw new Error('Controle mislukt: de beschrijving komt niet goed terug. Er is niets gewijzigd.');
+    throw new Error('Check failed: the description does not read back correctly. Nothing was changed.');
   }
   if (ch.expression !== undefined && got.expression.replace(/\s+/g, '') !== ch.expression.replace(/\s+/g, '')) {
-    throw new Error('Controle mislukt: de formule komt niet goed terug. Er is niets gewijzigd.');
+    throw new Error('Check failed: the formula does not read back correctly. Nothing was changed.');
   }
 
   const changed = new Map();

@@ -1,73 +1,73 @@
 # Semantic Model Optimizer
 
-Laat zien welke measures en kolommen van een Power BI-model in rapporten gebruikt worden, welke niet, en de lineage van elke measure en berekende kolom. Alles draait lokaal; er gaat niets naar buiten.
+Shows which measures and columns of a Power BI model are used in reports and which are not, plus the lineage of every measure and calculated column. Everything runs locally; nothing leaves your computer.
 
-## Starten
+## Getting started
 
-- **Zonder installatie:** dubbelklik `index.html` en kies *Map openen* (of sleep een map op de pagina).
-- **Met pad plakken:** `node serve.js` en open http://127.0.0.1:5273. Dan kun je een pad naar de map plakken.
-- **Opdrachtregel:** `node cli.js <map> [--csv uit.csv] [--json uit.json] [--lineage "Naam measure"]`
+- **No install:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
+- **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
+- **Command line:** `node cli.js <folder> [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
 
-## Wat je kunt laden
+## What you can load
 
-| Invoer | Model | Rapport |
+| Input | Model | Report |
 |---|---|---|
-| Power BI-project (`.pbip`-map, TMDL of `model.bim`) | ja | ja (PBIR en oud formaat) |
-| `.pbit` | ja | ja |
-| `.pbix` | nee (binair) | ja |
+| Power BI project (`.pbip` folder, TMDL or `model.bim`) | yes | yes (PBIR and legacy format) |
+| `.pbit` | yes | yes |
+| `.pbix` | no (binary) | yes |
 
-Meerdere rapporten op één model: open de map waar ze samen in staan. Per rapport kun je aan- en uitzetten of het meetelt.
+Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
 
-## Meerdere rapporten
+## Multiple reports
 
-Staan de rapporten in dezelfde map als het model, dan worden ze samen geladen. Rapporten uit een andere map voeg je toe met *+ Rapport toevoegen* (pad plakken, of een map of bestand kiezen). In het padveld kun je ook meerdere paden zetten met een puntkomma ertussen.
+Reports in the same folder as the model are loaded together with it. Add reports from another folder with *+ Add report* (paste a path, or pick a folder or file). The path field also accepts several paths separated by a semicolon.
 
-Bij twee of meer rapporten krijgt de lijst een kolom **Rapport**: per measure of kolom zie je in welke rapporten die gebruikt wordt. Gedimd betekent alleen indirect, via een measure of kolom die er wel in staat. Je kunt ook filteren op rapport, of op *In geen rapport*. Per rapport kun je bovenaan aan- en uitzetten of het meetelt.
+With two or more reports the list gets a **Report** column: for each measure or column you see which reports use it. Dimmed means indirect only, through a measure or column that is in that report. You can also filter by report, or on *In no report*. At the top you can switch each report on or off to decide whether it counts.
 
-## Aantal regels en MB per tabel
+## Row counts and MB per table
 
-Groottes staan niet in een Power BI-project; die komen uit het geladen model. Laad eerst het model en daarna een van deze twee:
+Sizes are not part of a Power BI project; they come from the loaded model. Load the model first, then one of these:
 
-- **Een `.vpax`** uit DAX Studio (Advanced › Export Metrics). Openen of op de pagina slepen. Werkt ook zonder server.
-- **Rechtstreeks uit Power BI Desktop:** start `node serve.js`, open het rapport in Power BI Desktop en klik *Groottes uit Power BI Desktop*. Alleen Windows, alleen lezen. Hiervoor is ADOMD.NET nodig; dat wordt meegeleverd met DAX Studio, Tabular Editor en SSMS.
+- **A `.vpax`** from DAX Studio (Advanced › Export Metrics). Open it or drag it onto the page. Works without the server too.
+- **Straight from Power BI Desktop:** run `node serve.js`, open the report in Power BI Desktop and click *Sizes from Power BI Desktop*. Windows only, read-only. This needs ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS.
 
-Je ziet dan per tabel het aantal regels, de MB en het aandeel in het model, per kolom de MB en het aantal unieke waarden, en hoeveel MB er in ongebruikte kolommen zit. DirectQuery-tabellen hebben geen grootte.
+You then see the row count, MB and share of the model for each table, the MB and number of distinct values for each column, and how many MB sit in unused columns. DirectQuery tables have no size.
 
-## Selecteren en verwijderen
+## Selecting and deleting
 
-Vink ongebruikte measures en kolommen aan (het vakje in de kop pakt de hele gefilterde lijst, shift-klik een reeks, of gebruik *Selecteer alle ongebruikte*) en kies *Verwijderen…*.
+Tick unused measures and columns (the box in the header takes the whole filtered list, shift-click selects a range, or use *Select all unused*) and choose *Delete…*.
 
-- Alleen objecten met status **Niet gebruikt** zijn aan te vinken. Roept iets buiten je selectie een object nog aan, dan blijft het staan en zie je waardoor.
-- **Rechtstreeks verwijderen** werkt bij een Power BI-project in TMDL dat via het padveld is geladen (`node serve.js`). De tool past de `.tmdl`-bestanden aan en zet van elk gewijzigd bestand eerst een kopie in `smo-backup` naast het model.
-- Bij kolommen komt er een stap `Table.RemoveColumns` in de Power Query van de tabel, zodat de kolom ook niet meer geladen wordt.
-- **Sluit het project eerst in Power BI Desktop.** Desktop leest de bestanden alleen bij openen; sla je daar daarna op, dan komt alles terug.
-- In alle andere gevallen (pbit, `model.bim`, geladen via *Map openen*) kun je een **Tabular Editor-script** downloaden dat dezelfde objecten verwijdert.
+- Only objects with status **Unused** can be ticked. If something outside your selection still calls an object, it is left in place and you see what calls it.
+- **Deleting directly** works for a Power BI project in TMDL loaded through the path field (`node serve.js`). The tool edits the `.tmdl` files and first puts a copy of every changed file in `smo-backup` next to the model.
+- For columns, a `Table.RemoveColumns` step is added to the table's Power Query, so the column is no longer loaded either.
+- **Close the project in Power BI Desktop first.** Desktop only reads the files when opening; if you save there afterwards, everything comes back.
+- In all other cases (pbit, `model.bim`, loaded through *Open folder*) you can download a **Tabular Editor script** that deletes the same objects.
 
-Tabellen verwijderen kan nog niet.
+Deleting tables is not supported yet.
 
-## Naam, beschrijving en formule wijzigen
+## Editing name, description and formula
 
-Klik op een measure, kolom of tabel en kies *Wijzigen*. Je kunt de naam, de beschrijving en (bij measures en berekende kolommen) de DAX-formule aanpassen.
+Click a measure, column or table and choose *Edit*. You can change the name, the description and (for measures and calculated columns) the DAX formula.
 
-- Werkt bij een Power BI-project in TMDL dat via het padveld is geladen (`node serve.js`). Van elk gewijzigd bestand komt eerst een kopie in `smo-backup`.
-- **Hernoemen** werkt alle verwijzingen bij: in formules, sorteerkolommen, hiërarchieën, relaties, perspectieven en in de visuals en filters van rapporten in PBIR-formaat. Gebruikt een rapport in het oude formaat of een `.pbix` het veld, dan wordt hernoemen geweigerd.
-- De tool schrijft alleen als het model na de wijziging nog precies hetzelfde in elkaar zit (zelfde objecten, afhankelijkheden en rapportgebruik).
-- De formule wordt niet door Power BI gecontroleerd; een fout in de DAX zie je pas bij het openen. De tool waarschuwt wel voor namen die niet in het model voorkomen.
-- Tabellen hernoemen kan nog niet. Gebruik buiten de geladen map (andere rapporten, Excel) breekt bij hernoemen.
+- Works for a Power BI project in TMDL loaded through the path field (`node serve.js`). A copy of every changed file goes into `smo-backup` first.
+- **Renaming** updates all references: in formulas, sort-by columns, hierarchies, relationships, perspectives, and in the visuals and filters of reports in PBIR format. If a report in the legacy format or a `.pbix` uses the field, the rename is refused.
+- The tool only writes if the model still has exactly the same structure after the change (same objects, dependencies and report usage).
+- The formula is not checked by Power BI; you only see a DAX error when you open the project. The tool does warn about names that do not exist in the model.
+- Renaming tables is not supported yet. Usage outside the loaded folder (other reports, Excel) breaks on rename.
 
 ## Status
 
-- **In rapport** — staat direct in een visual, filter, opmaakregel, sortering of bladwijzer.
-- **Indirect gebruikt** — nodig voor iets dat in een rapport staat (bijv. een kolom onder een gebruikte measure, of een sorteerkolom).
-- **Alleen model** — in geen rapport, maar wel in een relatie, RLS-regel of hiërarchie.
-- **Niet gebruikt** — nergens nodig. Een measure die alleen door andere ongebruikte measures wordt aangeroepen valt hier ook onder.
+- **In report** — directly in a visual, filter, formatting rule, sort or bookmark.
+- **Used indirectly** — needed by something that is in a report (for example a column under a used measure, or a sort-by column).
+- **Model only** — in no report, but in a relationship, RLS rule or hierarchy.
+- **Unused** — not needed anywhere. A measure that is only called by other unused measures falls under this too.
 
-## Beperkingen
+## Limitations
 
-- Alleen de geladen rapporten tellen. Gebruik in andere rapporten, Excel (Analyseren in Excel), dashboards of externe DAX-query's ziet de tool niet.
-- Kolommen die alleen in Power Query (M) gebruikt worden tellen niet als gebruikt.
-- Het model in een `.pbix` is niet leesbaar; sla op als `.pbip` of `.pbit`.
+- Only the loaded reports count. The tool cannot see usage in other reports, Excel (Analyze in Excel), dashboards or external DAX queries.
+- Columns that are only used in Power Query (M) do not count as used.
+- The model inside a `.pbix` cannot be read; save as `.pbip` or `.pbit`.
 
-## Licentie
+## License
 
-MIT — zie [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

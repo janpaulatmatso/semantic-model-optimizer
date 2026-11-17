@@ -1,9 +1,9 @@
-/* Semantic Model Optimizer — interface */
+/* Semantic Model Optimizer — user interface */
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const STATUS = { direct: 'In rapport', indirect: 'Indirect gebruikt', model: 'Alleen model', unused: 'Niet gebruikt' };
+  const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model only', unused: 'Unused' };
   const STATUS_RANK = { unused: 0, model: 1, indirect: 2, direct: 3 };
 
   const state = {
@@ -12,7 +12,7 @@
     sel: new Set(), base: null, loadedPath: null, stats: null,
   };
 
-  // ------------------------------------------------------------ laden
+  // ------------------------------------------------------------ loading
 
   function msg(text, err) {
     const d = document.createElement('div');
@@ -37,7 +37,7 @@
           const z = await SMO.readZipTexts(reader, inflateRaw, want);
           for (const f of z.files) out.push({ path: path + '/' + f.path, text: f.text });
           if (/\.pbix$/i.test(path) && z.names.includes('DataModel') && !z.names.includes('DataModelSchema')) {
-            warnings.push(file.name + ': het rapport is gelezen, maar het model in een .pbix is niet leesbaar. Sla het bestand op als Power BI-project (.pbip) of als sjabloon (.pbit) en laad dat erbij.');
+            warnings.push(file.name + ': the report was read, but the model inside a .pbix cannot be read. Save the file as a Power BI project (.pbip) or as a template (.pbit) and load that as well.');
           }
         } catch (e) { warnings.push(file.name + ': ' + e.message); }
       } else if (SMO.wantsFile(path)) {
@@ -77,8 +77,8 @@
     if (state.project && adding && !(src && src.keep)) { state.adding = false; return addFiles(files); }
     if (!project.models.length) {
       msg(project.reports.length
-        ? 'Wel een rapport gevonden, maar geen model. Laad het model erbij als Power BI-project (.pbip-map) of .pbit.'
-        : 'Geen Power BI-model of -rapport gevonden in deze selectie.', true);
+        ? 'Found a report, but no model. Also load the model as a Power BI project (.pbip folder) or .pbit.'
+        : 'No Power BI model or report found in this selection.', true);
       if (!state.project) return;
       return;
     }
@@ -92,7 +92,7 @@
     run();
   }
 
-  /** Laadt een project opnieuw en houdt modelkeuze, uitgezette rapporten en selectie vast. */
+  /** Reloads a project and keeps the model choice, disabled reports and selection. */
   function reloadKeep(files, warnings, src) {
     const idx = state.modelIdx, off = state.off, sel = state.sel, selected = state.selected;
     setProject(files, warnings, Object.assign({ keep: true }, src));
@@ -100,7 +100,7 @@
     run();
   }
 
-  /** Voegt bestanden (rapporten) toe aan het geladen project. */
+  /** Adds files (reports) to the loaded project. */
   function addFiles(files) {
     const tops = new Set(state.files.map(f => f.path.replace(/\\/g, '/').split('/')[0].toLowerCase()));
     const renamed = new Map();
@@ -116,8 +116,8 @@
     const before = state.project.reports.length, hadBase = !!state.base;
     reloadKeep(state.files.concat(add), [], { base: null, path: null });
     const n = state.project.reports.length - before;
-    if (n > 0) msg(n + ' rapport' + (n === 1 ? '' : 'en') + ' toegevoegd.' + (hadBase ? ' Wijzigen en verwijderen staan nu uit, omdat dit rapport niet via een pad is toegevoegd. Voeg het toe via het padveld om dat te behouden.' : ''));
-    else msg('Geen rapport gevonden in deze selectie.', true);
+    if (n > 0) msg(n + ' report' + (n === 1 ? '' : 's') + ' added.' + (hadBase ? ' Editing and deleting are now turned off, because this report was not added through a path. Add it through the path field to keep them.' : ''));
+    else msg('No report found in this selection.', true);
   }
 
   async function addPath(p) {
@@ -129,19 +129,19 @@
       if (l.error) return msg(l.error, true);
       if (!state.loadedPath) return addFiles(l.files);
       const before = state.project.reports.length;
-      if (SMO.loadProject(l.files).reports.length <= before) return msg('Geen nieuw rapport gevonden in ' + p, true);
+      if (SMO.loadProject(l.files).reports.length <= before) return msg('No new report found in ' + p, true);
       reloadKeep(l.files, l.warnings || [], { base: l.base, path: l.target });
       $('pathInput').value = l.target;
       const n = state.project.reports.length - before;
-      msg(n + ' rapport' + (n === 1 ? '' : 'en') + ' toegevoegd.');
-    } catch (e) { msg('Toevoegen mislukt: ' + e.message, true); }
+      msg(n + ' report' + (n === 1 ? '' : 's') + ' added.');
+    } catch (e) { msg('Adding failed: ' + e.message, true); }
     finally { document.body.style.cursor = ''; }
   }
 
   async function loadList(list) {
     document.body.style.cursor = 'progress';
     try { const r = await readBrowserFiles(list); setProject(r.files, r.warnings); }
-    catch (e) { msg('Laden mislukt: ' + e.message, true); }
+    catch (e) { msg('Loading failed: ' + e.message, true); }
     finally { document.body.style.cursor = ''; }
   }
 
@@ -161,7 +161,7 @@
     if (acc.length) loadList(acc);
   });
 
-  // via serve.js: pad plakken en groottes uit Power BI Desktop lezen
+  // via serve.js: paste a path and read sizes from Power BI Desktop
   if (location.protocol.startsWith('http')) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) { $('pathForm').hidden = false; $('btnDesktop').hidden = false; } }).catch(() => {});
   }
@@ -171,7 +171,7 @@
     state.type = 'table'; state.status = ''; state.sort = 'size'; state.dir = -1;
     $('fType').value = 'table'; $('fStatus').value = '';
     run();
-    if (!state.analysis.stats.hasStats) msg('De groottes horen bij een ander model: geen enkele tabelnaam komt overeen.', true);
+    if (!state.analysis.stats.hasStats) msg('These sizes belong to a different model: not a single table name matches.', true);
   }
 
   async function loadDesktop(port) {
@@ -181,23 +181,23 @@
       $('msgs').innerHTML = '';
       if (r.error) return msg(r.error, true);
       if (r.instances) {
-        if (!r.instances.length) return msg('Geen geopend bestand in Power BI Desktop gevonden. Open het rapport in Power BI Desktop en probeer opnieuw.', true);
+        if (!r.instances.length) return msg('No open file found in Power BI Desktop. Open the report in Power BI Desktop and try again.', true);
         if (r.instances.length === 1) return loadDesktop(r.instances[0].port);
         const d = document.createElement('div');
         d.className = 'msg';
-        d.innerHTML = 'Er zijn meerdere bestanden open in Power BI Desktop. Kies er een: ' +
-          r.instances.map(i => `<span class="chip on" data-port="${i.port}">${esc(i.name)} <span class="muted">poort ${i.port}</span></span>`).join(' ');
+        d.innerHTML = 'Several files are open in Power BI Desktop. Pick one: ' +
+          r.instances.map(i => `<span class="chip on" data-port="${i.port}">${esc(i.name)} <span class="muted">port ${i.port}</span></span>`).join(' ');
         d.onclick = e => { const c = e.target.closest('[data-port]'); if (c) loadDesktop(c.dataset.port); };
         $('msgs').appendChild(d);
         return;
       }
-      if (!r.tables || !r.tables.length) return msg('Dit bestand in Power BI Desktop bevat geen tabellen met gegevens.', true);
+      if (!r.tables || !r.tables.length) return msg('This file in Power BI Desktop has no tables with data.', true);
       setStats(r);
-    } catch (e) { msg('Uitlezen mislukt: ' + e.message, true); }
+    } catch (e) { msg('Reading failed: ' + e.message, true); }
     finally { document.body.style.cursor = ''; }
   }
   $('btnDesktop').onclick = () => {
-    if (!state.project) return msg('Laad eerst het model (Map openen), daarna de groottes.', true);
+    if (!state.project) return msg('Load the model first (Open folder), then the sizes.', true);
     loadDesktop();
   };
   $('pathForm').onsubmit = async e => {
@@ -209,15 +209,15 @@
       const r = await fetch('api/load?path=' + encodeURIComponent(p)).then(x => x.json());
       if (r.error) { $('msgs').innerHTML = ''; msg(r.error, true); }
       else setProject(r.files, r.warnings || [], { base: r.base, path: p });
-    } catch (err) { msg('Laden mislukt: ' + err.message, true); }
+    } catch (err) { msg('Loading failed: ' + err.message, true); }
     finally { document.body.style.cursor = ''; }
   };
 
-  // ------------------------------------------------------------ selecteren en verwijderen
+  // ------------------------------------------------------------ selecting and deleting
 
-  /** Alleen ongebruikte measures en kolommen uit het model zelf zijn te verwijderen. */
-  const canSel = n => (n.type === 'measure' || n.type === 'column') && n.status === 'unused' && n.kind !== 'rapportmeasure' &&
-    !(n.type === 'column' && n.tableKind && n.tableKind !== 'tabel');
+  /** Only unused measures and columns that live in the model itself can be deleted. */
+  const canSel = n => (n.type === 'measure' || n.type === 'column') && n.status === 'unused' && n.kind !== 'report measure' &&
+    !(n.type === 'column' && n.tableKind && n.tableKind !== 'table');
   const canWrite = () => !!(state.base && state.project && state.project.models[state.modelIdx].format === 'tmdl');
 
   function renderSelBar() {
@@ -227,11 +227,11 @@
     if (!nodes.length) return;
     const m = nodes.filter(n => n.type === 'measure').length, c = nodes.length - m;
     const size = nodes.reduce((s, n) => s + (n.size || 0), 0);
-    bar.innerHTML = `<b>${nodes.length} geselecteerd</b> <span class="muted">${m} measures, ${c} kolommen${size ? ' · ' + mb(size) + ' MB' : ''}</span>
-      <span class="grow"></span><button class="danger" data-act="del">Verwijderen…</button><button data-act="script" title="Script om dezelfde objecten in Tabular Editor te verwijderen">Tabular Editor-script</button><button data-act="clear">Selectie wissen</button>`;
+    bar.innerHTML = `<b>${nodes.length} selected</b> <span class="muted">${m} measures, ${c} columns${size ? ' · ' + mb(size) + ' MB' : ''}</span>
+      <span class="grow"></span><button class="danger" data-act="del">Delete…</button><button data-act="script" title="Script that deletes the same objects in Tabular Editor">Tabular Editor script</button><button data-act="clear">Clear selection</button>`;
   }
 
-  /** Splitst de selectie in wat weg kan en wat nog gebruikt wordt door iets buiten de selectie. */
+  /** Splits the selection into what can go and what is still used by something outside the selection. */
   function plan() {
     const a = state.analysis;
     const ok = new Set([...state.sel].filter(id => a.nodes.has(id) && canSel(a.nodes.get(id))));
@@ -250,7 +250,7 @@
   function teScript(nodes) {
     const s = v => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
     const order = nodes.slice().sort((x, y) => (x.type === 'measure' ? 0 : 1) - (y.type === 'measure' ? 0 : 1));
-    return '// Semantic Model Optimizer: verwijdert ' + nodes.length + ' ongebruikte objecten.\n// Uitvoeren in Tabular Editor (C# Script). Maak eerst een kopie van het model.\n' +
+    return '// Semantic Model Optimizer: deletes ' + nodes.length + ' unused objects.\n// Run in Tabular Editor (C# Script). Make a copy of the model first.\n' +
       order.map(n => `Model.Tables[${s(n.table)}].${n.type === 'measure' ? 'Measures' : 'Columns'}[${s(n.name)}].Delete();`).join('\n') + '\n';
   }
   function download(name, text, type) {
@@ -266,26 +266,26 @@
     const m = p.ok.filter(n => n.type === 'measure').length, c = p.ok.length - m;
     const size = p.ok.reduce((s, n) => s + (n.size || 0), 0);
     const model = state.project.models[state.modelIdx];
-    let h = `<h2>${p.ok.length} objecten verwijderen</h2><p>${m} measures en ${c} kolommen${size ? ' (' + mb(size) + ' MB)' : ''} uit model <b>${esc(model.name)}</b>.</p>`;
+    let h = `<h2>Delete ${p.ok.length} objects</h2><p>${m} measures and ${c} columns${size ? ' (' + mb(size) + ' MB)' : ''} from model <b>${esc(model.name)}</b>.</p>`;
     if (p.blocked.length) {
-      h += `<p class="warn">${p.blocked.length} geselecteerde objecten blijven staan, omdat iets buiten je selectie ze nog aanroept:</p><ul class="small">` +
+      h += `<p class="warn">${p.blocked.length} selected objects will stay, because something outside your selection still calls them:</p><ul class="small">` +
         p.blocked.slice(0, 8).map(b => `<li>${esc(label(b.n))} ← ${esc(b.by.slice(0, 3).map(label).join(', '))}${b.by.length > 3 ? ' …' : ''}</li>`).join('') +
-        (p.blocked.length > 8 ? `<li>… en ${p.blocked.length - 8} meer</li>` : '') + '</ul>';
+        (p.blocked.length > 8 ? `<li>… and ${p.blocked.length - 8} more</li>` : '') + '</ul>';
     }
     if (canWrite()) {
-      h += `<ul class="small"><li>De TMDL-bestanden in <code>${esc(model.root)}</code> worden aangepast.</li>
-        <li>Van elk gewijzigd bestand komt eerst een kopie in de map <code>smo-backup</code> naast het model.</li>
-        ${c ? '<li>Voor verwijderde kolommen komt er een stap <code>Table.RemoveColumns</code> in de Power Query van de tabel, zodat ze ook niet meer geladen worden.</li>' : ''}
-        <li><b>Sluit dit project eerst in Power BI Desktop.</b> Staat het nog open en sla je daar op, dan komt alles terug.</li></ul>`;
+      h += `<ul class="small"><li>The TMDL files in <code>${esc(model.root)}</code> will be changed.</li>
+        <li>Each changed file is first copied to the folder <code>smo-backup</code> next to the model.</li>
+        ${c ? '<li>For deleted columns a <code>Table.RemoveColumns</code> step is added to the Power Query of the table, so they are no longer loaded either.</li>' : ''}
+        <li><b>Close this project in Power BI Desktop first.</b> If it is still open and you save there, everything comes back.</li></ul>`;
     } else {
-      h += `<p class="warn">Rechtstreeks verwijderen kan alleen bij een Power BI-project (TMDL) dat je via het padveld hebt geladen, met <code>node serve.js</code>. Je kunt wel een script voor Tabular Editor downloaden.</p>`;
+      h += `<p class="warn">Deleting directly only works for a Power BI project (TMDL) that you loaded through the path field, with <code>node serve.js</code>. You can still download a script for Tabular Editor.</p>`;
     }
-    h += `<div class="dlgbtn"><button data-act="cancel">Annuleren</button><button data-act="script">Tabular Editor-script</button>${canWrite() && p.ok.length ? `<button class="danger" data-act="go">${p.ok.length} verwijderen</button>` : ''}</div>`;
+    h += `<div class="dlgbtn"><button data-act="cancel">Cancel</button><button data-act="script">Tabular Editor script</button>${canWrite() && p.ok.length ? `<button class="danger" data-act="go">Delete ${p.ok.length}</button>` : ''}</div>`;
     dlg.innerHTML = h;
     dlg.onclick = async e => {
       const act = e.target.dataset && e.target.dataset.act;
       if (!act) return;
-      if (act === 'script') return download(model.name + '-verwijderen.csx', teScript(p.ok));
+      if (act === 'script') return download(model.name + '-delete.csx', teScript(p.ok));
       dlg.close();
       if (act === 'go') doDelete(p.ok);
     };
@@ -302,8 +302,8 @@
       }).then(x => x.json());
       $('msgs').innerHTML = '';
       if (r.error) return msg(r.error, true);
-      msg(`${r.removed.length} objecten verwijderd uit ${r.files} bestanden. Kopie van de oude bestanden: ${r.backup}`);
-      if (r.notFound.length) msg(r.notFound.length + ' objecten niet gevonden in de bestanden: ' + r.notFound.slice(0, 5).map(x => x.table + '[' + x.name + ']').join(', '), true);
+      msg(`${r.removed.length} objects deleted from ${r.files} files. Copy of the old files: ${r.backup}`);
+      if (r.notFound.length) msg(r.notFound.length + ' objects not found in the files: ' + r.notFound.slice(0, 5).map(x => x.table + '[' + x.name + ']').join(', '), true);
       for (const w of r.warnings) msg(w);
       const keepIdx = state.modelIdx, off = state.off, base = state.base, path = state.loadedPath;
       const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
@@ -311,14 +311,14 @@
       setProject(l.files, [], { base: l.base || base, path, keep: true });
       state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off;
       run();
-    } catch (e) { msg('Verwijderen mislukt: ' + e.message, true); }
+    } catch (e) { msg('Deleting failed: ' + e.message, true); }
     finally { document.body.style.cursor = ''; }
   }
 
   $('selbar').onclick = e => {
     const act = e.target.dataset && e.target.dataset.act;
     if (act === 'clear') { state.sel = new Set(); renderGrid(); }
-    else if (act === 'script') download(state.project.models[state.modelIdx].name + '-verwijderen.csx', teScript(plan().ok));
+    else if (act === 'script') download(state.project.models[state.modelIdx].name + '-delete.csx', teScript(plan().ok));
     else if (act === 'del') openDeleteDialog();
   };
   $('btnUnused').onclick = () => {
@@ -327,7 +327,7 @@
     renderGrid();
   };
 
-  // ------------------------------------------------------------ analyse + weergave
+  // ------------------------------------------------------------ analysis + rendering
 
   function run() {
     const p = state.project;
@@ -342,15 +342,15 @@
     const p = state.project;
     $('modelPick').hidden = p.models.length < 2;
     $('selModel').innerHTML = p.models.map((m, i) => `<option value="${i}"${i === state.modelIdx ? ' selected' : ''}>${esc(m.name)}</option>`).join('');
-    $('reports').innerHTML = (p.reports.length ? '<span class="muted">Rapporten:</span>' : '<span class="muted">Geen rapport geladen — alles telt nu als niet gebruikt in een rapport.</span>') +
-      p.reports.map(r => `<span class="chip ${state.off.has(r.root) ? 'off' : 'on'}" data-root="${esc(r.root)}" title="${esc(r.root)} · ${r.pages.length} pagina's, ${r.visualCount} visuals. Klik om mee te tellen of niet.">${esc(r.name)}</span>`).join('') +
-      '<span class="chip add" data-add="1" title="Nog een rapport op dit model laden">+ Rapport toevoegen</span>';
+    $('reports').innerHTML = (p.reports.length ? '<span class="muted">Reports:</span>' : '<span class="muted">No report loaded — everything now counts as not used in a report.</span>') +
+      p.reports.map(r => `<span class="chip ${state.off.has(r.root) ? 'off' : 'on'}" data-root="${esc(r.root)}" title="${esc(r.root)} · ${r.pages.length} pages, ${r.visualCount} visuals. Click to include or exclude it.">${esc(r.name)}</span>`).join('') +
+      '<span class="chip add" data-add="1" title="Load another report on this model">+ Add report</span>';
     const multi = state.analysis.stats.reportCount >= 2;
     $('fReport').hidden = !multi;
     if (!multi) state.report = '';
-    $('fReport').innerHTML = '<option value="">Alle rapporten</option>' +
+    $('fReport').innerHTML = '<option value="">All reports</option>' +
       p.reports.filter(r => !state.off.has(r.root)).map(r => `<option${r.name === state.report ? ' selected' : ''}>${esc(r.name)}</option>`).join('') +
-      `<option value="__none"${state.report === '__none' ? ' selected' : ''}>In geen rapport</option>`;
+      `<option value="__none"${state.report === '__none' ? ' selected' : ''}>In no report</option>`;
   }
   $('fReport').onchange = e => { state.report = e.target.value; renderGrid(); };
   $('addRep').onsubmit = e => {
@@ -388,32 +388,32 @@
     const tile = (lbl, big, sub, type, status, ok) =>
       `<button class="tile" data-type="${type}" data-status="${status}"><div class="lbl">${lbl}</div><div class="big">${big}</div><div class="sub${ok ? ' ok' : ''}">${sub}</div></button>`;
     $('tiles').innerHTML =
-      tile('Measures', s.measures, s.measuresUnused + ' niet gebruikt', 'measure', 'unused', !s.measuresUnused) +
-      tile('Kolommen', s.columns, s.columnsUnused + ' niet gebruikt', 'column', 'unused', !s.columnsUnused) +
-      tile('Alleen voor het model', s.columnsModelOnly, 'kolommen in relatie, RLS of hiërarchie', 'column', 'model', true) +
-      tile('Berekende kolommen', s.calcColumns, s.calcColumnsUnused + ' niet gebruikt', 'calc', 'unused', !s.calcColumnsUnused) +
-      tile('Tabellen', s.tables, s.tablesUnused + ' niet gebruikt', 'table', 'unused', !s.tablesUnused) +
-      (s.hasStats ? tile('Modelgrootte', mb(s.totalSize) + ' MB', mb(s.unusedSize) + ' MB in ongebruikte kolommen', 'column', 'unused', !s.unusedSize) : '') +
-      tile('Rapport', s.visuals + ' visuals', s.pages + " pagina's" + (s.broken ? ' · ' + s.broken + ' kapotte verwijzingen' : ''), 'mc', s.broken ? 'broken' : '', !s.broken);
+      tile('Measures', s.measures, s.measuresUnused + ' unused', 'measure', 'unused', !s.measuresUnused) +
+      tile('Columns', s.columns, s.columnsUnused + ' unused', 'column', 'unused', !s.columnsUnused) +
+      tile('Model only', s.columnsModelOnly, 'columns in a relationship, RLS or hierarchy', 'column', 'model', true) +
+      tile('Calculated columns', s.calcColumns, s.calcColumnsUnused + ' unused', 'calc', 'unused', !s.calcColumnsUnused) +
+      tile('Tables', s.tables, s.tablesUnused + ' unused', 'table', 'unused', !s.tablesUnused) +
+      (s.hasStats ? tile('Model size', mb(s.totalSize) + ' MB', mb(s.unusedSize) + ' MB in unused columns', 'column', 'unused', !s.unusedSize) : '') +
+      tile('Report', s.visuals + ' visuals', s.pages + ' pages' + (s.broken ? ' · ' + s.broken + ' broken references' : ''), 'mc', s.broken ? 'broken' : '', !s.broken);
   }
   $('tiles').onclick = e => {
     const t = e.target.closest('.tile');
     if (!t) return;
     state.type = t.dataset.type; state.status = t.dataset.status; state.table = '';
-    if (t.textContent.includes('Modelgrootte')) { state.sort = 'size'; state.dir = -1; }
+    if (t.textContent.includes('Model size')) { state.sort = 'size'; state.dir = -1; }
     $('fType').value = state.type; $('fStatus').value = state.status; $('fTable').value = '';
     renderGrid();
   };
 
   function renderTableFilter() {
     const names = state.analysis.list.filter(n => n.type === 'table' && !n.system).map(n => n.name).sort((a, b) => a.localeCompare(b));
-    $('fTable').innerHTML = '<option value="">Alle tabellen</option>' + names.map(n => `<option${n === state.table ? ' selected' : ''}>${esc(n)}</option>`).join('');
+    $('fTable').innerHTML = '<option value="">All tables</option>' + names.map(n => `<option${n === state.table ? ' selected' : ''}>${esc(n)}</option>`).join('');
   }
 
   function kindClass(n) {
     if (n.type === 'measure') return 'measure';
-    if (n.type === 'table') return n.kind === 'tabel' ? 'table' : 'calc';
-    if (n.kind === 'berekende kolom') return 'calc';
+    if (n.type === 'table') return n.kind === 'table' ? 'table' : 'calc';
+    if (n.kind === 'calculated column') return 'calc';
     return n.type === 'function' ? 'calc' : 'column';
   }
 
@@ -426,7 +426,7 @@
       if (t === 'measure' && n.type !== 'measure') return false;
       if (t === 'column' && n.type !== 'column') return false;
       if (t === 'table' && n.type !== 'table') return false;
-      if (t === 'calc' && !(n.kind === 'berekende kolom' || n.kind === 'berekende tabel' || n.kind === 'calculation group')) return false;
+      if (t === 'calc' && !(n.kind === 'calculated column' || n.kind === 'calculated table' || n.kind === 'calculation group')) return false;
       if (state.status && n.status !== state.status) return false;
       if (state.table && n.table !== state.table) return false;
       if (state.report === '__none' && n.reports.length) return false;
@@ -437,20 +437,20 @@
   }
 
   const COLS = [
-    { key: 'name', label: 'Naam' }, { key: 'table', label: 'Tabel' }, { key: 'kind', label: 'Soort' },
+    { key: 'name', label: 'Name' }, { key: 'table', label: 'Table' }, { key: 'kind', label: 'Type' },
     { key: 'status', label: 'Status' },
-    { key: 'uses', label: 'Visuals', num: true, title: 'Aantal plekken in rapporten waar dit direct gebruikt wordt' },
-    { key: 'depCount', label: 'Hangt af van', num: true }, { key: 'usedByCount', label: 'Gebruikt door', num: true },
+    { key: 'uses', label: 'Visuals', num: true, title: 'Number of places in reports where this is used directly' },
+    { key: 'depCount', label: 'Depends on', num: true }, { key: 'usedByCount', label: 'Used by', num: true },
   ];
   const STAT_COLS = [
-    { key: 'rows', label: 'Regels', num: true, title: 'Tabel: aantal regels. Kolom: aantal unieke waarden.' },
-    { key: 'size', label: 'MB', num: true, title: 'Geheugengebruik in het model' },
-    { key: 'share', label: '% model', num: true, title: 'Aandeel in de totale modelgrootte' },
+    { key: 'rows', label: 'Rows', num: true, title: 'Table: number of rows. Column: number of distinct values.' },
+    { key: 'size', label: 'MB', num: true, title: 'Memory used in the model' },
+    { key: 'share', label: '% model', num: true, title: 'Share of the total model size' },
   ];
-  const nf = new Intl.NumberFormat('nl-NL');
+  const nf = new Intl.NumberFormat('en-US');
   const int = v => (v == null ? '' : nf.format(v));
-  const mb = v => (v == null ? '' : (v / 1048576).toLocaleString('nl-NL', { minimumFractionDigits: v < 104857600 ? 2 : 1, maximumFractionDigits: v < 104857600 ? 2 : 1 }));
-  const pct = v => (v == null ? '' : (v * 100).toLocaleString('nl-NL', { maximumFractionDigits: 1 }) + '%');
+  const mb = v => (v == null ? '' : (v / 1048576).toLocaleString('en-US', { minimumFractionDigits: v < 104857600 ? 2 : 1, maximumFractionDigits: v < 104857600 ? 2 : 1 }));
+  const pct = v => (v == null ? '' : (v * 100).toLocaleString('en-US', { maximumFractionDigits: 1 }) + '%');
   const rowsOf = n => (n.type === 'table' ? n.rows : n.type === 'column' ? n.cardinality : null);
   const sortVal = (n, k) => k === 'status' ? STATUS_RANK[n.status] : k === 'uses' ? n.reportUses.length
     : k === 'reports' ? n.reports.length + n.reports.filter(r => r.direct).length / 100
@@ -461,9 +461,9 @@
     renderSelBar();
     if (state.status === 'broken') {
       const b = state.analysis.broken;
-      thead.innerHTML = '<tr><th>Veld</th><th>Tabel</th><th>Rapport</th><th>Pagina</th><th>Visual</th><th>Rol</th></tr>';
+      thead.innerHTML = '<tr><th>Field</th><th>Table</th><th>Report</th><th>Page</th><th>Visual</th><th>Role</th></tr>';
       tbody.innerHTML = b.map(u => `<tr><td class="nm">${esc(u.name)}</td><td>${esc(u.table)}</td><td>${esc(u.report)}</td><td>${esc(u.page)}</td><td>${esc(u.visualTitle || u.visualType || u.visual)}</td><td>${esc(u.role)}</td></tr>`).join('');
-      $('count').textContent = b.length + ' verwijzingen in rapporten naar velden die niet in het model bestaan';
+      $('count').textContent = b.length + ' references in reports to fields that do not exist in the model';
       return;
     }
     const rows = filtered();
@@ -476,23 +476,23 @@
     const has = state.analysis.stats.hasStats;
     const multi = state.analysis.stats.reportCount >= 2;
     const cols = COLS.slice(0, 4).concat(
-      multi ? [{ key: 'reports', label: 'Rapport', title: 'In welke rapporten dit gebruikt wordt. Gedimd = alleen indirect, via een measure of kolom die er wel in staat.' }] : [],
+      multi ? [{ key: 'reports', label: 'Report', title: 'Which reports use this. Dimmed = only indirectly, through a measure or column that is in the report.' }] : [],
       has ? STAT_COLS : [], COLS.slice(4));
-    const repCell = n => '<td class="reps">' + n.reports.map(r => `<span class="rep${r.direct ? '' : ' ind'}" title="${r.direct ? 'Staat direct in dit rapport' : 'Indirect nodig voor dit rapport'}">${esc(r.name)}</span>`).join('') + '</td>';
+    const repCell = n => '<td class="reps">' + n.reports.map(r => `<span class="rep${r.direct ? '' : ' ind'}" title="${r.direct ? 'Used directly in this report' : 'Needed indirectly for this report'}">${esc(r.name)}</span>`).join('') + '</td>';
     const selectable = rows.filter(canSel);
     const allOn = selectable.length > 0 && selectable.every(n => state.sel.has(n.id));
-    thead.innerHTML = `<tr><th class="chk"><input type="checkbox" id="chkAll" title="Alle ongebruikte in deze lijst selecteren"${allOn ? ' checked' : ''}${selectable.length ? '' : ' disabled'}></th>` + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
+    thead.innerHTML = `<tr><th class="chk"><input type="checkbox" id="chkAll" title="Select all unused objects in this list"${allOn ? ' checked' : ''}${selectable.length ? '' : ' disabled'}></th>` + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
     const MAX = 3000;
     tbody.innerHTML = rows.slice(0, MAX).map(n => `<tr data-id="${esc(n.id)}" class="${n.id === state.selected ? 'sel' : ''}">
       <td class="chk">${canSel(n) ? `<input type="checkbox" data-sel="${esc(n.id)}"${state.sel.has(n.id) ? ' checked' : ''}>` : ''}</td>
-      <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">verborgen</span>' : ''}</td>
+      <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">hidden</span>' : ''}</td>
       <td>${n.type === 'table' ? '' : esc(n.table)}</td>
       <td class="k k-${kindClass(n)}">${esc(n.kind)}</td>
       <td><span class="badge s-${n.status}">${STATUS[n.status]}</span></td>
-      ${multi ? repCell(n) : ''}${has ? `<td class="num">${int(rowsOf(n))}${n.type === 'column' && n.cardinality != null ? ' <span class="hid">uniek</span>' : ''}</td><td class="num">${n.type === 'table' && n.mode === 'directQuery' && !n.size ? '<span class="hid">DirectQuery</span>' : mb(n.size)}</td><td class="num">${n.share ? `<span class="sbar" style="--w:${Math.max(2, Math.round(n.share * 100))}%"></span>` + pct(n.share) : ''}</td>` : ''}
+      ${multi ? repCell(n) : ''}${has ? `<td class="num">${int(rowsOf(n))}${n.type === 'column' && n.cardinality != null ? ' <span class="hid">distinct</span>' : ''}</td><td class="num">${n.type === 'table' && n.mode === 'directQuery' && !n.size ? '<span class="hid">DirectQuery</span>' : mb(n.size)}</td><td class="num">${n.share ? `<span class="sbar" style="--w:${Math.max(2, Math.round(n.share * 100))}%"></span>` + pct(n.share) : ''}</td>` : ''}
       <td class="num">${n.reportUses.length || ''}</td><td class="num">${n.depCount || ''}</td><td class="num">${n.usedByCount || ''}</td></tr>`).join('');
     const sum = rows.reduce((a, n) => a + (n.size || 0), 0);
-    $('count').textContent = rows.length + ' objecten' + (has && sum ? ' · samen ' + mb(sum) + ' MB' + (state.type === 'table' ? ' · ' + int(rows.reduce((a, n) => a + (n.rows || 0), 0)) + ' regels' : '') + ' · bron: ' + state.analysis.stats.statsSource : '') + (rows.length > MAX ? ' (eerste ' + MAX + ' getoond — verfijn het filter)' : '');
+    $('count').textContent = rows.length + ' objects' + (has && sum ? ' · ' + mb(sum) + ' MB in total' + (state.type === 'table' ? ' · ' + int(rows.reduce((a, n) => a + (n.rows || 0), 0)) + ' rows' : '') + ' · source: ' + state.analysis.stats.statsSource : '') + (rows.length > MAX ? ' (first ' + MAX + ' shown — narrow the filter)' : '');
   }
   let lastChk = null;
   $('grid').onclick = e => {
@@ -526,13 +526,13 @@
 
   $('btnCsv').onclick = () => {
     const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const head = ['Soort', 'Tabel', 'Naam', 'Status', 'Rapporten direct', 'Rapporten indirect', 'Verborgen', 'Regels', 'Unieke waarden', 'Bytes', 'Visuals', 'Hangt af van', 'Gebruikt door', 'Gebruik in model', 'Expressie'];
-    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.reports.filter(r => r.direct).map(r => r.name).join(', '), n.reports.filter(r => !r.direct).map(r => r.name).join(', '), n.hidden ? 'ja' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
-      [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.expression].map(q).join(';'));
-    const blob = new Blob(['﻿' + [head.map(q).join(';')].concat(lines).join('\r\n')], { type: 'text/csv' });
+    const head = ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Expression'];
+    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.reports.filter(r => r.direct).map(r => r.name).join(', '), n.reports.filter(r => !r.direct).map(r => r.name).join(', '), n.hidden ? 'yes' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
+      [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.expression].map(q).join(','));
+    const blob = new Blob(['﻿' + [head.map(q).join(',')].concat(lines).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = state.project.models[state.modelIdx].name + '-gebruik.csv';
+    a.download = state.project.models[state.modelIdx].name + '-usage.csv';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
@@ -550,7 +550,7 @@
 
   const label = n => n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']';
 
-  /** Kortste weg van dit object naar iets dat direct in een rapport staat. */
+  /** Shortest path from this object to something that is used directly in a report. */
   function pathToReport(a, n) {
     const prev = new Map([[n.id, null]]);
     const todo = [n.id];
@@ -570,68 +570,68 @@
   function why(a, n) {
     if (n.status === 'direct') {
       const pages = new Set(n.reportUses.map(u => u.report + '|' + u.page));
-      return `Staat direct in een rapport: ${n.reportUses.length} keer, op ${pages.size} pagina${pages.size === 1 ? '' : "'s"}.`;
+      return `Used directly in a report: ${n.reportUses.length} time${n.reportUses.length === 1 ? '' : 's'}, on ${pages.size} page${pages.size === 1 ? '' : 's'}.`;
     }
     if (n.status === 'indirect') {
-      if (n.type === 'table') return 'Uit deze tabel wordt iets gebruikt in een rapport.';
+      if (n.type === 'table') return 'Something from this table is used in a report.';
       const p = pathToReport(a, n);
-      return 'Staat niet zelf in een rapport, maar is nodig voor iets dat er wel in staat' + (p ? ': ' + p.map(label).join(' → ') + ' → rapport.' : '.');
+      return 'Not in a report itself, but needed for something that is' + (p ? ': ' + p.map(label).join(' → ') + ' → report.' : '.');
     }
     if (n.status === 'model') {
       const kinds = [...new Set(n.modelUses.map(u => u.kind))];
-      return 'Komt in geen enkel rapport voor, maar het model heeft het nodig' + (kinds.length ? ' (' + kinds.join(', ') + ').' : ' via een ander modelonderdeel.') + ' Verwijderen kan relaties of beveiliging breken.';
+      return 'Not used in any report, but the model needs it' + (kinds.length ? ' (' + kinds.join(', ') + ').' : ' through another part of the model.') + ' Deleting it can break relationships or security.';
     }
-    if (n.usedBy.size) return `Wordt in geen enkel geladen rapport gebruikt. Wordt wel aangeroepen door ${n.usedBy.size} ander${n.usedBy.size === 1 ? '' : 'e'} object${n.usedBy.size === 1 ? '' : 'en'}, maar die zijn zelf ook ongebruikt.`;
-    return 'Wordt in geen enkel geladen rapport en nergens in het model gebruikt.';
+    if (n.usedBy.size) return `Not used in any loaded report. It is called by ${n.usedBy.size} other object${n.usedBy.size === 1 ? '' : 's'}, but ${n.usedBy.size === 1 ? 'that is' : 'those are'} unused as well.`;
+    return 'Not used in any loaded report or anywhere in the model.';
   }
 
   function renderDetail() {
     const a = state.analysis, el = $('detail');
     const n = state.selected && a.nodes.get(state.selected);
     if (!n) {
-      el.innerHTML = '<p class="muted">Klik op een measure of kolom om te zien waar die gebruikt wordt en waar die van afhangt.</p>';
+      el.innerHTML = '<p class="muted">Click a measure or column to see where it is used and what it depends on.</p>';
       return;
     }
     const links = ids => ids.length ? '<div class="links">' + ids.map(id => a.nodes.get(id)).sort((x, y) => label(x).localeCompare(label(y)))
       .map(x => `<span class="link" data-id="${esc(x.id)}" title="${esc(x.kind)} · ${STATUS[x.status]}"><span class="k-${kindClass(x)}">●</span> ${esc(label(x))}</span>`).join('') + '</div>' : '<span class="muted">—</span>';
     if (state.editing === n.id) { el.innerHTML = editForm(a, n); wireEdit(a, n); return; }
-    const editable = n.kind !== 'rapportmeasure' && ['measure', 'column', 'table'].includes(n.type) && !n.system;
+    const editable = n.kind !== 'report measure' && ['measure', 'column', 'table'].includes(n.type) && !n.system;
     let h = (editable ? (canWrite()
-      ? '<button class="editbtn" data-edit="1">Wijzigen</button>'
-      : '<button class="editbtn" disabled title="Wijzigen kan bij een Power BI-project (TMDL) dat je via het padveld hebt geladen, met node serve.js">Wijzigen</button>') : '') +
+      ? '<button class="editbtn" data-edit="1">Edit</button>'
+      : '<button class="editbtn" disabled title="Editing works for a Power BI project (TMDL) that you loaded through the path field, with node serve.js">Edit</button>') : '') +
       `<h2>${esc(n.name)}</h2>
       <div class="meta"><span class="k k-${kindClass(n)}">${esc(n.kind)}</span>${n.type === 'table' ? '' : '<span class="muted">in ' + esc(n.table) + '</span>'}
-        <span class="badge s-${n.status}">${STATUS[n.status]}</span>${n.hidden ? '<span class="hid">verborgen</span>' : ''}
-        ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">gemaakt in rapport ' + esc(n.report) + '</span>' : ''}</div>`;
+        <span class="badge s-${n.status}">${STATUS[n.status]}</span>${n.hidden ? '<span class="hid">hidden</span>' : ''}
+        ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">created in report ' + esc(n.report) + '</span>' : ''}</div>`;
     if (n.description) h += `<div class="muted">${esc(n.description)}</div>`;
     h += `<p class="why">${esc(why(a, n))}</p>`;
     if (a.stats.hasStats && (n.type === 'table' || n.type === 'column')) h += sizeBlock(a, n);
     h += '<h3>Lineage</h3>' + graph(a, n);
-    if (n.expression) h += `<h3>${n.type === 'table' ? 'Tabelexpressie' : 'DAX'}</h3><pre class="dax">${esc(n.expression)}</pre>`;
-    else if (n.type === 'column' && n.sourceColumn) h += `<h3>Bron</h3><div>Bronkolom <code>${esc(n.sourceColumn)}</code> van tabel ${esc(n.table)}</div>`;
-    else if (n.type === 'table' && n.source) h += `<h3>Bronquery${n.mode ? ' (' + esc(n.mode) + ')' : ''}</h3><pre class="dax">${esc(n.source)}</pre>`;
-    h += '<h3>Hangt direct af van</h3>' + links([...n.deps]);
-    h += '<h3>Wordt direct gebruikt door</h3>' + links([...n.usedBy]);
+    if (n.expression) h += `<h3>${n.type === 'table' ? 'Table expression' : 'DAX'}</h3><pre class="dax">${esc(n.expression)}</pre>`;
+    else if (n.type === 'column' && n.sourceColumn) h += `<h3>Source</h3><div>Source column <code>${esc(n.sourceColumn)}</code> of table ${esc(n.table)}</div>`;
+    else if (n.type === 'table' && n.source) h += `<h3>Source query${n.mode ? ' (' + esc(n.mode) + ')' : ''}</h3><pre class="dax">${esc(n.source)}</pre>`;
+    h += '<h3>Depends directly on</h3>' + links([...n.deps]);
+    h += '<h3>Used directly by</h3>' + links([...n.usedBy]);
     if (n.modelUses.length) {
-      h += '<h3>Gebruik in het model</h3><table class="uses">' + n.modelUses.map(u => `<tr><td>${esc(u.kind)}</td><td>${esc(u.detail)}</td></tr>`).join('') + '</table>';
+      h += '<h3>Usage in the model</h3><table class="uses">' + n.modelUses.map(u => `<tr><td>${esc(u.kind)}</td><td>${esc(u.detail)}</td></tr>`).join('') + '</table>';
     }
     if (n.reportUses.length) {
-      h += '<h3>Gebruik in rapporten</h3><table class="uses"><tr><th>Rapport</th><th>Pagina</th><th>Visual</th><th>Rol</th></tr>' +
+      h += '<h3>Usage in reports</h3><table class="uses"><tr><th>Report</th><th>Page</th><th>Visual</th><th>Role</th></tr>' +
         n.reportUses.map(u => `<tr><td>${esc(u.report)}</td><td>${esc(u.page || '—')}</td><td>${esc(u.visualTitle || u.visualType || u.visual || '—')}${u.visualTitle && u.visualType ? ' <span class="muted">' + esc(u.visualType) + '</span>' : ''}</td><td>${esc(u.role)}</td></tr>`).join('') + '</table>';
     }
     el.innerHTML = h;
   }
-  // ------------------------------------------------------------ wijzigen
+  // ------------------------------------------------------------ editing
 
-  /** Kan de naam veilig gewijzigd worden? Alleen als elk rapport dat het veld gebruikt als PBIR op schijf staat. */
+  /** Can the name be changed safely? Only if every report that uses the field is stored on disk as PBIR. */
   function renameBlock(n) {
-    if (n.type === 'table') return 'Tabellen hernoemen kan nog niet.';
+    if (n.type === 'table') return 'Renaming tables is not supported yet.';
     const bad = new Set();
     for (const u of n.reportUses) {
       const r = state.project.reports.find(x => x.name === u.report);
       if (r && (r.format !== 'PBIR' || /\.(pbix|pbit)(\/|$)/i.test(r.root))) bad.add(r.name);
     }
-    return bad.size ? 'Hernoemen kan niet: rapport ' + [...bad].join(', ') + ' gebruikt dit veld en staat in het oude formaat of in een .pbix. Dat kan de tool niet bijwerken.' : '';
+    return bad.size ? 'Renaming is not possible: report ' + [...bad].join(', ') + ' uses this field and is in the legacy format or inside a .pbix. The tool cannot update that.' : '';
   }
 
   function editForm(a, n) {
@@ -639,13 +639,13 @@
     const hasExpr = n.type !== 'table' && !!n.expression;
     const rows = Math.min(24, Math.max(4, (n.expression || '').split('\n').length + 1));
     return `<form id="editForm" class="edit">
-      <h2>${esc(n.kind)} wijzigen</h2>
-      <label>Naam<input name="name" type="text" value="${esc(n.name)}" ${block ? 'disabled' : ''} spellcheck="false" autocomplete="off"></label>
+      <h2>Edit ${esc(n.kind)}</h2>
+      <label>Name<input name="name" type="text" value="${esc(n.name)}" ${block ? 'disabled' : ''} spellcheck="false" autocomplete="off"></label>
       ${block ? `<div class="muted small">${esc(block)}</div>` : n.type === 'table' ? '' : `<div class="muted small" id="renameNote"></div>`}
-      <label>Beschrijving<textarea name="description" rows="3">${esc(n.description || '')}</textarea></label>
-      ${hasExpr ? `<label>Formule (DAX)<textarea name="expression" class="code" rows="${rows}" spellcheck="false">${esc(n.expression)}</textarea></label><div class="warn small" id="exprNote"></div>` : ''}
-      <div class="muted small">De wijziging gaat naar de TMDL-bestanden; van elk gewijzigd bestand komt eerst een kopie in <code>smo-backup</code>. Sluit het project eerst in Power BI Desktop. De formule wordt niet door Power BI gecontroleerd: een fout zie je pas bij het openen.</div>
-      <div class="dlgbtn"><button type="button" data-cancel="1">Annuleren</button><button class="primary">Opslaan</button></div>
+      <label>Description<textarea name="description" rows="3">${esc(n.description || '')}</textarea></label>
+      ${hasExpr ? `<label>Formula (DAX)<textarea name="expression" class="code" rows="${rows}" spellcheck="false">${esc(n.expression)}</textarea></label><div class="warn small" id="exprNote"></div>` : ''}
+      <div class="muted small">The change is written to the TMDL files; each changed file is first copied to <code>smo-backup</code>. Close the project in Power BI Desktop first. The formula is not validated by Power BI: you only see an error when you open the project.</div>
+      <div class="dlgbtn"><button type="button" data-cancel="1">Cancel</button><button class="primary">Save</button></div>
     </form>`;
   }
 
@@ -656,7 +656,7 @@
       if (nameNote) {
         const v = f.elements.name.value.trim();
         nameNote.textContent = v && v !== n.name
-          ? `Bij opslaan worden verwijzingen bijgewerkt: ${n.usedBy.size} formule${n.usedBy.size === 1 ? '' : 's'} en ${n.reportUses.length} plek${n.reportUses.length === 1 ? '' : 'ken'} in rapporten. Gebruik buiten deze map (andere rapporten, Excel) breekt.`
+          ? `Saving will update references: ${n.usedBy.size} formula${n.usedBy.size === 1 ? '' : 's'} and ${n.reportUses.length} place${n.reportUses.length === 1 ? '' : 's'} in reports. Usage outside this folder (other reports, Excel) will break.`
           : '';
       }
       if (exprNote) {
@@ -665,7 +665,7 @@
           if ((r.t === 'q' || r.t === 'b') && !a.resolve(r, n.table)) unknown.push(r.t === 'q' ? r.table + '[' + r.name + ']' : '[' + r.name + ']');
         }
         const u = [...new Set(unknown)];
-        exprNote.textContent = u.length ? 'Niet gevonden in het model: ' + u.slice(0, 6).join(', ') + (u.length > 6 ? ' …' : '') + '. Dat kan kloppen bij kolommen die je in de formule zelf maakt.' : '';
+        exprNote.textContent = u.length ? 'Not found in the model: ' + u.slice(0, 6).join(', ') + (u.length > 6 ? ' …' : '') + '. That can be fine for columns you create inside the formula itself.' : '';
       }
     };
     f.oninput = update;
@@ -685,14 +685,14 @@
         if (r.error) return msg(r.error, true);
         state.editing = null;
         if (!r.changed) return renderDetail();
-        msg(`Opgeslagen in ${r.files} bestand${r.files === 1 ? '' : 'en'}` + (r.renamed ? ` (${r.reportFields} velden in rapporten bijgewerkt)` : '') + `. Kopie van de oude bestanden: ${r.backup}`);
+        msg(`Saved in ${r.files} file${r.files === 1 ? '' : 's'}` + (r.renamed ? ` (${r.reportFields} fields in reports updated)` : '') + `. Copy of the old files: ${r.backup}`);
         const keepIdx = state.modelIdx, off = state.off, sel = state.sel, path = state.loadedPath;
         const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
         if (l.error) return msg(l.error, true);
         setProject(l.files, [], { base: l.base, path, keep: true });
         state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off; state.sel = sel; state.selected = r.id;
         run();
-      } catch (err) { msg('Opslaan mislukt: ' + err.message, true); }
+      } catch (err) { msg('Saving failed: ' + err.message, true); }
       finally { document.body.style.cursor = ''; }
     };
   }
@@ -709,21 +709,21 @@
   function sizeBlock(a, n) {
     const fact = (l, v) => `<div class="fact"><div class="lbl">${l}</div><div class="val">${v || '—'}</div></div>`;
     if (n.type === 'column') {
-      if (n.size == null) return '<h3>Grootte</h3><p class="muted">Geen groottegegevens voor deze kolom.</p>';
+      if (n.size == null) return '<h3>Size</h3><p class="muted">No size data for this column.</p>';
       const p = n.sizeParts || {};
-      return '<h3>Grootte</h3><div class="facts">' + fact('Geheugen', mb(n.size) + ' MB') + fact('Aandeel model', pct(n.share)) +
-        fact('Unieke waarden', int(n.cardinality)) + fact('Regels in tabel', int(n.rows)) +
-        fact('Woordenboek', p.dictionary == null ? '' : mb(p.dictionary) + ' MB') + fact('Data', p.data == null ? '' : mb(p.data) + ' MB') +
-        fact('Hiërarchie', p.hierarchy == null ? '' : mb(p.hierarchy) + ' MB') + (p.encoding ? fact('Codering', esc(p.encoding)) : '') + '</div>';
+      return '<h3>Size</h3><div class="facts">' + fact('Memory', mb(n.size) + ' MB') + fact('Share of model', pct(n.share)) +
+        fact('Distinct values', int(n.cardinality)) + fact('Rows in table', int(n.rows)) +
+        fact('Dictionary', p.dictionary == null ? '' : mb(p.dictionary) + ' MB') + fact('Data', p.data == null ? '' : mb(p.data) + ' MB') +
+        fact('Hierarchy', p.hierarchy == null ? '' : mb(p.hierarchy) + ' MB') + (p.encoding ? fact('Encoding', esc(p.encoding)) : '') + '</div>';
     }
-    if (n.size == null && n.rows == null) return '<h3>Grootte</h3><p class="muted">Geen groottegegevens voor deze tabel.</p>';
+    if (n.size == null && n.rows == null) return '<h3>Size</h3><p class="muted">No size data for this table.</p>';
     const cols = a.list.filter(c => c.type === 'column' && c.table === n.name && c.size).sort((x, y) => y.size - x.size);
     const unused = cols.filter(c => c.status === 'unused').reduce((s, c) => s + c.size, 0);
     const max = cols.length ? cols[0].size : 1;
-    let h = '<h3>Grootte</h3><div class="facts">' + fact('Regels', int(n.rows)) + fact('Geheugen', n.mode === 'directQuery' && !n.size ? 'DirectQuery' : mb(n.size) + ' MB') +
-      fact('Aandeel model', pct(n.share)) + fact('In ongebruikte kolommen', unused ? mb(unused) + ' MB' : '0 MB') + '</div>';
+    let h = '<h3>Size</h3><div class="facts">' + fact('Rows', int(n.rows)) + fact('Memory', n.mode === 'directQuery' && !n.size ? 'DirectQuery' : mb(n.size) + ' MB') +
+      fact('Share of model', pct(n.share)) + fact('In unused columns', unused ? mb(unused) + ' MB' : '0 MB') + '</div>';
     if (cols.length) {
-      h += '<table class="uses sizes"><tr><th>Grootste kolommen</th><th class="num">MB</th><th class="num">Uniek</th><th>Status</th></tr>' +
+      h += '<table class="uses sizes"><tr><th>Largest columns</th><th class="num">MB</th><th class="num">Distinct</th><th>Status</th></tr>' +
         cols.slice(0, 12).map(c => `<tr><td><span class="link" data-id="${esc(c.id)}">${esc(c.name)}</span><span class="sbar wide" style="--w:${Math.max(1, Math.round(c.size / max * 100))}%"></span></td>
           <td class="num">${mb(c.size)}</td><td class="num">${int(c.cardinality)}</td><td><span class="badge s-${c.status}">${STATUS[c.status]}</span></td></tr>`).join('') + '</table>';
     }
@@ -736,15 +736,15 @@
     const cols = [];
     const nodeItem = id => { const x = a.nodes.get(id); return { key: id, node: x, name: label(x), sub: x.kind + (x.type === 'measure' || x.type === 'table' ? '' : ''), cls: kindClass(x), status: x.status }; };
     const byName = (x, y) => x.cls.localeCompare(y.cls) || x.name.localeCompare(y.name);
-    up.slice().reverse().forEach((l, i) => cols.push({ title: up.length - i === 1 ? 'Hangt af van' : 'Niveau −' + (up.length - i), items: l.map(nodeItem).sort(byName) }));
-    cols.push({ title: 'Geselecteerd', items: [Object.assign(nodeItem(n.id), { center: true })] });
-    down.forEach((l, i) => cols.push({ title: i === 0 ? 'Gebruikt door' : 'Niveau +' + (i + 1), items: l.map(nodeItem).sort(byName) }));
-    // rapportpagina's waar dit object of iets wat ervan afhangt op staat
+    up.slice().reverse().forEach((l, i) => cols.push({ title: up.length - i === 1 ? 'Depends on' : 'Level −' + (up.length - i), items: l.map(nodeItem).sort(byName) }));
+    cols.push({ title: 'Selected', items: [Object.assign(nodeItem(n.id), { center: true })] });
+    down.forEach((l, i) => cols.push({ title: i === 0 ? 'Used by' : 'Level +' + (i + 1), items: l.map(nodeItem).sort(byName) }));
+    // report pages that show this object or something that depends on it
     const pages = new Map();
     for (const id of [n.id].concat(...down)) {
       for (const u of a.nodes.get(id).reportUses) {
         const key = 'P|' + u.report + '|' + u.page;
-        if (!pages.has(key)) pages.set(key, { key, page: true, name: u.page || '(rapportniveau)', report: u.report, from: new Set(), visuals: new Set(), cls: 'page' });
+        if (!pages.has(key)) pages.set(key, { key, page: true, name: u.page || '(report level)', report: u.report, from: new Set(), visuals: new Set(), cls: 'page' });
         const p = pages.get(key);
         p.from.add(id); p.visuals.add(u.visual + '|' + u.role);
       }
@@ -752,13 +752,13 @@
     if (pages.size) {
       const items = [...pages.values()].sort((x, y) => x.name.localeCompare(y.name));
       for (const p of items) p.sub = p.report + ' · ' + p.visuals.size + '×';
-      cols.push({ title: 'Rapportpagina', items });
+      cols.push({ title: 'Report page', items });
     }
-    if (cols.length === 1) return '<p class="muted">Geen afhankelijkheden en geen afnemers.</p>';
+    if (cols.length === 1) return '<p class="muted">No dependencies and nothing that uses this.</p>';
 
     let more = false;
     for (const c of cols) {
-      if (c.items.length > CAP) { more = true; const rest = c.items.length - CAP; c.items = c.items.slice(0, CAP); c.items.push({ key: 'more', more: true, name: '+ ' + rest + ' meer…', sub: 'klik om alles te tonen', cls: 'table' }); }
+      if (c.items.length > CAP) { more = true; const rest = c.items.length - CAP; c.items = c.items.slice(0, CAP); c.items.push({ key: 'more', more: true, name: '+ ' + rest + ' more…', sub: 'click to show all', cls: 'table' }); }
     }
     const maxRows = Math.max(...cols.map(c => c.items.length));
     const height = TOP + PAD + maxRows * (H + GY);
@@ -793,13 +793,13 @@
           ${it.status ? `<circle cx="${W - 10}" cy="10" r="4" fill="var(--${it.status})"/>` : ''}</g>`;
       }
     }
-    return `<div class="graphwrap"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Lineage van ${esc(n.name)}">${edges}${boxes}</svg></div>
-      <div class="legend"><span><i style="background:var(--measure)"></i>measure</span><span><i style="background:var(--column)"></i>kolom</span>
-      <span><i style="background:var(--calc)"></i>berekend</span><span><i style="background:var(--table)"></i>tabel</span><span><i style="background:var(--page)"></i>rapportpagina</span>
-      <span>stip = status</span><span>links = bron, rechts = afnemer${more ? '' : ''}. Klik op een blok om erheen te gaan.</span></div>`;
+    return `<div class="graphwrap"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Lineage of ${esc(n.name)}">${edges}${boxes}</svg></div>
+      <div class="legend"><span><i style="background:var(--measure)"></i>measure</span><span><i style="background:var(--column)"></i>column</span>
+      <span><i style="background:var(--calc)"></i>calculated</span><span><i style="background:var(--table)"></i>table</span><span><i style="background:var(--page)"></i>report page</span>
+      <span>dot = status</span><span>left = source, right = consumer${more ? '' : ''}. Click a block to go there.</span></div>`;
   }
 
-  // testhaak: project laden vanuit de adresbalk (?path=...) als serve.js draait
+  // test hook: load a project from the address bar (?path=...) when serve.js is running
   const qp = new URLSearchParams(location.search).get('path');
   if (qp && location.protocol.startsWith('http')) { $('pathInput').value = qp; setTimeout(() => $('pathForm').requestSubmit(), 50); }
 })();

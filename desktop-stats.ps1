@@ -1,7 +1,7 @@
-# Leest regels en geheugengebruik uit een geopend Power BI Desktop-bestand (alleen lezen).
-#   powershell -File desktop-stats.ps1 -List         -> geopende bestanden met poort
-#   powershell -File desktop-stats.ps1 -Port 12345   -> statistieken als JSON
-# Heeft ADOMD.NET nodig; dat zit o.a. bij DAX Studio, Tabular Editor en SSMS.
+# Reads row counts and memory usage from a file open in Power BI Desktop (read-only).
+#   powershell -File desktop-stats.ps1 -List         -> open files with their port
+#   powershell -File desktop-stats.ps1 -Port 12345   -> statistics as JSON
+# Requires ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS, among others.
 param([switch]$List, [int]$Port = 0)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -26,7 +26,7 @@ if ($List) { Out-Json @{ instances = @(Get-Instances) }; exit 0 }
 
 $instances = @(Get-Instances)
 if (-not ($instances | Where-Object { $_.port -eq $Port })) {
-  Out-Json @{ error = 'Dit is geen poort van een geopend Power BI Desktop-bestand.' }; exit 0
+  Out-Json @{ error = 'This is not the port of a file open in Power BI Desktop.' }; exit 0
 }
 
 $candidates = @($env:SMO_ADOMD) + @(
@@ -37,7 +37,7 @@ $candidates = @($env:SMO_ADOMD) + @(
   Sort-Object FullName -Descending | ForEach-Object FullName)
 $dll = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 if (-not $dll) {
-  Out-Json @{ error = 'ADOMD.NET niet gevonden. Installeer DAX Studio, of exporteer daar een .vpax (Advanced > Export Metrics) en laad die.' }; exit 0
+  Out-Json @{ error = 'ADOMD.NET not found. Install DAX Studio, or export a .vpax from it (Advanced > Export Metrics) and load that.' }; exit 0
 }
 Add-Type -Path $dll
 
@@ -51,7 +51,7 @@ function Query($sql) {
 }
 try {
   $tables = @{}; $columns = @{}
-  $colName = @{}   # "tabel|COLUMN_ID" -> kolomnaam
+  $colName = @{}   # "table|COLUMN_ID" -> column name
   foreach ($c in Query 'SELECT DIMENSION_NAME, COLUMN_ID, ATTRIBUTE_NAME, DICTIONARY_SIZE, COLUMN_TYPE FROM $SYSTEM.DISCOVER_STORAGE_TABLE_COLUMNS') {
     if ($c.COLUMN_TYPE -ne 'BASIC_DATA') { continue }
     $t = [string]$c.DIMENSION_NAME; $n = [string]$c.ATTRIBUTE_NAME

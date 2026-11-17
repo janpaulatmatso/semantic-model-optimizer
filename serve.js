@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-/* Start de tool lokaal: node serve.js  →  http://127.0.0.1:5273
- * Alleen bereikbaar vanaf deze computer. Via /api/load leest de pagina een map van schijf. */
+/* Runs the tool locally: node serve.js  →  http://127.0.0.1:5273
+ * Only reachable from this computer. Through /api/load the page reads a folder from disk. */
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -10,14 +10,14 @@ const { execFile } = require('child_process');
 const { removeObjects } = require('./remove.js');
 const { editObject } = require('./edit.js');
 
-/** Regels en MB uit een geopend Power BI Desktop-bestand (alleen Windows, alleen lezen). */
+/** Rows and MB from a file open in Power BI Desktop (Windows only, read-only). */
 function desktopStats(port) {
   return new Promise(resolve => {
-    if (process.platform !== 'win32') return resolve({ error: 'Uitlezen uit Power BI Desktop werkt alleen op Windows.' });
+    if (process.platform !== 'win32') return resolve({ error: 'Reading from Power BI Desktop only works on Windows.' });
     const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'desktop-stats.ps1')].concat(port ? ['-Port', String(port)] : ['-List']);
     execFile('powershell.exe', args, { maxBuffer: 256 * 1024 * 1024, timeout: 120000, windowsHide: true }, (err, stdout, stderr) => {
       try { resolve(JSON.parse(stdout.slice(stdout.indexOf('{')))); }
-      catch (e) { resolve({ error: 'Uitlezen mislukt: ' + String((stderr || (err && err.message) || 'geen antwoord')).trim().split(String.fromCharCode(10))[0].trim() }); }
+      catch (e) { resolve({ error: 'Reading failed: ' + String((stderr || (err && err.message) || 'no response')).trim().split(String.fromCharCode(10))[0].trim() }); }
     });
   });
 }
@@ -28,37 +28,37 @@ const TYPES = { html: 'text/html', js: 'text/javascript', css: 'text/css' };
 
 http.createServer(async (req, res) => {
   const host = String(req.headers.host || '').replace(/:\d+$/, '');
-  if (host !== '127.0.0.1' && host !== 'localhost') { res.writeHead(403); return res.end('Alleen lokaal'); }
+  if (host !== '127.0.0.1' && host !== 'localhost') { res.writeHead(403); return res.end('Local only'); }
   const url = new URL(req.url, 'http://x');
   const send = (code, body, type) => { res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
   try {
     if (url.pathname === '/api/ping') return send(200, '{"ok":true}', 'application/json');
     if (url.pathname === '/api/load') {
       const target = (url.searchParams.get('path') || '').trim();
-      if (!target) return send(400, JSON.stringify({ error: 'Geen pad opgegeven' }), 'application/json');
+      if (!target) return send(400, JSON.stringify({ error: 'No path given' }), 'application/json');
       const r = await loadPath(target);
       return send(200, JSON.stringify(r), 'application/json');
     }
     if (url.pathname === '/api/edit') {
       const origin = String(req.headers.origin || '');
       if (req.method !== 'POST' || !/^application\/json/.test(String(req.headers['content-type'] || '')) ||
-        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Niet toegestaan' }), 'application/json');
+        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
       let body = '';
-      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Te groot'); }
+      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Too large'); }
       const j = JSON.parse(body);
-      if (!j.path || !j.modelRoot || !j.sel || !j.changes) return send(400, JSON.stringify({ error: 'Onvolledig verzoek' }), 'application/json');
+      if (!j.path || !j.modelRoot || !j.sel || !j.changes) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
       try { return send(200, JSON.stringify(await editObject(String(j.path), String(j.modelRoot), j.sel, j.changes)), 'application/json'); }
       catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
     if (url.pathname === '/api/delete') {
-      // alleen vanaf deze pagina zelf: een andere website kan dit niet aanroepen
+      // only from this page itself: another website cannot call this
       const origin = String(req.headers.origin || '');
       if (req.method !== 'POST' || !/^application\/json/.test(String(req.headers['content-type'] || '')) ||
-        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Niet toegestaan' }), 'application/json');
+        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
       let body = '';
-      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Te groot'); }
+      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Too large'); }
       const j = JSON.parse(body);
-      if (!j.path || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Onvolledig verzoek' }), 'application/json');
+      if (!j.path || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
       try { return send(200, JSON.stringify(removeObjects(modelRootAbs(await loadPath(String(j.path)), j.modelRoot), j.items)), 'application/json'); }
       catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
@@ -67,7 +67,7 @@ http.createServer(async (req, res) => {
       return send(200, JSON.stringify(await desktopStats(port)), 'application/json');
     }
     const file = STATIC[url.pathname];
-    if (!file) return send(404, 'Niet gevonden', 'text/plain');
+    if (!file) return send(404, 'Not found', 'text/plain');
     send(200, fs.readFileSync(path.join(__dirname, file)), TYPES[file.split('.').pop()]);
   } catch (e) {
     send(500, JSON.stringify({ error: e.message }), 'application/json');

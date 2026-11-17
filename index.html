@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,12 +10,12 @@
 <header class="top">
   <h1>Semantic Model Optimizer</h1>
   <div class="load">
-    <button id="btnDir" class="primary">Map openen</button>
-    <button id="btnFile">Bestand openen</button>
-    <button id="btnDesktop" hidden title="Leest aantal regels en MB per tabel en kolom uit het bestand dat nu open staat in Power BI Desktop">Groottes uit Power BI Desktop</button>
+    <button id="btnDir" class="primary">Open folder</button>
+    <button id="btnFile">Open file</button>
+    <button id="btnDesktop" hidden title="Reads the number of rows and MB per table and column from the file that is open in Power BI Desktop right now">Sizes from Power BI Desktop</button>
     <form id="pathForm" hidden>
-      <input id="pathInput" type="text" placeholder="Of plak een pad: C:\…\MijnRapport" spellcheck="false">
-      <button>Laden</button>
+      <input id="pathInput" type="text" placeholder="Or paste a path: C:\…\MyReport" spellcheck="false">
+      <button>Load</button>
     </form>
     <input id="inDir" type="file" webkitdirectory multiple hidden>
     <input id="inFile" type="file" accept=".pbix,.pbit,.vpax,.bim,.json,.tmdl" multiple hidden>
@@ -26,15 +26,15 @@
 
 <main id="empty" class="empty">
   <div class="drop" id="drop">
-    <h2>Laad een Power BI-project</h2>
-    <p>Sleep een map of bestand hierheen, of kies <b>Map openen</b>.</p>
+    <h2>Load a Power BI project</h2>
+    <p>Drop a folder or file here, or choose <b>Open folder</b>.</p>
     <ul>
-      <li><b>Power BI-project (.pbip-map)</b> — model én rapport, volledig ondersteund.</li>
-      <li><b>.pbit</b> (sjabloon) — model én rapport.</li>
-      <li><b>.pbix</b> — alleen het rapport; het model in een .pbix is niet leesbaar. Combineer met het model als .pbip of .pbit.</li>
+      <li><b>Power BI project (.pbip folder)</b> — model and report, fully supported.</li>
+      <li><b>.pbit</b> (template) — model and report.</li>
+      <li><b>.pbix</b> — report only; the model inside a .pbix cannot be read. Combine it with the model as .pbip or .pbit.</li>
     </ul>
-    <p><b>Aantal regels en MB per tabel?</b> Laad daarna een <b>.vpax</b> (DAX Studio › Advanced › Export Metrics), of start de tool met <code>node serve.js</code> en lees de groottes rechtstreeks uit Power BI Desktop.</p>
-    <p class="hint">Meerdere rapporten op één model? Open de map waar ze samen in staan. Alles blijft op deze computer.</p>
+    <p><b>Rows and MB per table?</b> Afterwards load a <b>.vpax</b> (DAX Studio › Advanced › Export Metrics), or start the tool with <code>node serve.js</code> and read the sizes straight from Power BI Desktop.</p>
+    <p class="hint">Several reports on one model? Open the folder that holds them all, or add more reports after loading. Everything stays on this computer.</p>
   </div>
 </main>
 
@@ -43,38 +43,38 @@
     <label id="modelPick" hidden>Model <select id="selModel"></select></label>
     <div id="reports" class="chips"></div>
     <form id="addRep" class="addrep" hidden>
-      <input id="addPath" type="text" placeholder="Pad naar rapport of map: C:\…\Verkoop.Report" spellcheck="false">
-      <button id="addPathBtn">Toevoegen</button>
-      <button type="button" data-pick="dir">Map kiezen</button>
-      <button type="button" data-pick="file">Bestand kiezen</button>
-      <button type="button" data-pick="cancel">Annuleren</button>
+      <input id="addPath" type="text" placeholder="Path to a report or folder: C:\…\Sales.Report" spellcheck="false">
+      <button id="addPathBtn">Add</button>
+      <button type="button" data-pick="dir">Choose folder</button>
+      <button type="button" data-pick="file">Choose file</button>
+      <button type="button" data-pick="cancel">Cancel</button>
     </form>
   </section>
   <section id="tiles" class="tiles"></section>
   <section class="split">
     <div class="left">
       <div class="filters">
-        <input id="q" type="search" placeholder="Zoek op naam, tabel of DAX">
+        <input id="q" type="search" placeholder="Search by name, table or DAX">
         <select id="fType">
-          <option value="mc">Measures en kolommen</option>
+          <option value="mc">Measures and columns</option>
           <option value="measure">Measures</option>
-          <option value="column">Kolommen</option>
-          <option value="calc">Berekende kolommen en tabellen</option>
-          <option value="table">Tabellen</option>
-          <option value="all">Alles</option>
+          <option value="column">Columns</option>
+          <option value="calc">Calculated columns and tables</option>
+          <option value="table">Tables</option>
+          <option value="all">Everything</option>
         </select>
         <select id="fStatus">
-          <option value="">Elke status</option>
-          <option value="unused">Niet gebruikt</option>
-          <option value="model">Alleen model</option>
-          <option value="indirect">Indirect gebruikt</option>
-          <option value="direct">In rapport</option>
-          <option value="broken">Kapotte verwijzingen</option>
+          <option value="">Any status</option>
+          <option value="unused">Unused</option>
+          <option value="model">Model only</option>
+          <option value="indirect">Used indirectly</option>
+          <option value="direct">In report</option>
+          <option value="broken">Broken references</option>
         </select>
         <select id="fTable"></select>
         <select id="fReport" hidden></select>
-        <button id="btnCsv" title="Exporteer de lijst als CSV">CSV</button>
-        <button id="btnUnused" title="Vinkt alle ongebruikte measures en kolommen aan">Selecteer alle ongebruikte</button>
+        <button id="btnCsv" title="Export the list as CSV">CSV</button>
+        <button id="btnUnused" title="Ticks all unused measures and columns">Select all unused</button>
       </div>
       <div id="selbar" class="selbar" hidden></div>
       <div class="count" id="count"></div>

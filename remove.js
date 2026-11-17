@@ -1,5 +1,5 @@
-/* Verwijdert measures en kolommen uit de TMDL-bestanden van een Power BI-project (Node).
- * Maakt eerst een back-up en schrijft alleen als de uitkomst klopt. */
+/* Removes measures and columns from the TMDL files of a Power BI project (Node).
+ * Makes a backup first and only writes if the result checks out. */
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -25,10 +25,10 @@ function counts(texts) {
   return keys;
 }
 
-/** modelRoot: map van het model (…​.SemanticModel); items: [{type: 'measure'|'column', table, name}] */
+/** modelRoot: folder of the model (…​.SemanticModel); items: [{type: 'measure'|'column', table, name}] */
 function removeObjects(modelRoot, items) {
   const defDir = path.join(modelRoot, 'definition');
-  if (!fs.existsSync(defDir)) throw new Error('Geen TMDL-model gevonden in ' + modelRoot);
+  if (!fs.existsSync(defDir)) throw new Error('No TMDL model found in ' + modelRoot);
   const files = listTmdl(defDir, []);
   const byTable = new Map();
   for (const it of items) {
@@ -53,11 +53,11 @@ function removeObjects(modelRoot, items) {
   const gone = new Set(removed.map(key));
   const notFound = items.filter(it => !gone.has(key(it)));
 
-  // controle: precies de gevraagde objecten zijn weg, de rest staat er nog
+  // check: exactly the requested objects are gone, everything else is still there
   const a = counts([...before.values()]), b = counts([...after.values()]);
-  for (const k of a) if (!b.has(k) && !gone.has(k)) throw new Error('Controle mislukt: ' + k + ' zou onbedoeld verdwijnen. Er is niets gewijzigd.');
-  for (const k of gone) if (b.has(k)) throw new Error('Controle mislukt: ' + k + ' staat er nog. Er is niets gewijzigd.');
-  if (b.size !== a.size - gone.size) throw new Error('Controle mislukt: aantallen kloppen niet. Er is niets gewijzigd.');
+  for (const k of a) if (!b.has(k) && !gone.has(k)) throw new Error('Check failed: ' + k + ' would disappear unintentionally. Nothing was changed.');
+  for (const k of gone) if (b.has(k)) throw new Error('Check failed: ' + k + ' is still there. Nothing was changed.');
+  if (b.size !== a.size - gone.size) throw new Error('Check failed: the counts do not add up. Nothing was changed.');
 
   const changed = files.filter(f => before.get(f) !== after.get(f));
   let backup = '';
