@@ -1,0 +1,855 @@
+/* Semantic Model Optimizer — analysekern.
+ * Werkt in de browser (window.SMO) en in Node (require).
+ * Invoer: een lijst bestanden [{path, text}] uit een PBIP-map, PBIX of PBIT.
+ * Uitvoer: model, rapporten, en per measure/kolom waar het gebruikt wordt en waar het van afhangt.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.SMO = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- TMDL
+
+  function indentOf(raw) {
+    let n = 0, spaces = 0;
+    for (const ch of raw) {
+      if (ch === '\t') n++;
+      else if (ch === ' ') { spaces++; if (spaces === 4) { n++; spaces = 0; } }
+      else break;
+    }
+    return n;
+  }
+
+  /** Leest een TMDL-naam ('met spaties' of zonder) aan het begin van s. */
+  function readName(s) {
+    s = s.replace(/^\s+/, '');
+    if (s[0] === "'") {
+      let i = 1, name = '';
+      while (i < s.length) {
+        if (s[i] === "'") {
+          if (s[i + 1] === "'") { name += "'"; i += 2; continue; }
+          i++; break;
+        }
+        name += s[i++];
+      }
+      return { name, rest: s.slice(i) };
+    }
+    const m = /^[^\s=:.]+/.exec(s);
+    const name = m ? m[0] : '';
+    return { name, rest: s.slice(name.length) };
+  }
+
+  /** 'Tabel naam'.'Kolom naam' of Tabel.Kolom → [tabel, kolom] */
+  function readQualified(s) {
+    const a = readName(s);
+    const rest = a.rest.replace(/^\s*\.\s*/, '');
+    if (rest === a.rest) return [a.name, ''];
+    const b = readName(rest);
+    return [a.name, b.name];
+  }
+
+  function unquoteValue(v) {
+    v = (v || '').trim();
+    if (v.length >= 2 && v[0] === '"' && v[v.length - 1] === '"') return v.slice(1, -1).replace(/""/g, '"');
+    if (v.length >= 2 && v[0] === "'" && v[v.length - 1] === "'") return v.slice(1, -1).replace(/''/g, "'");
+    return v;
+  }
+
+  /** TMDL-tekst → boom van {kw, name, value, expr, props, children, description}. */
+  function parseTmdlTree(text) {
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+    const rootNode = { indent: -1, kw: 'root', children: [], props: {} };
+    const stack = [rootNode];
+    let desc = [];
+    let i = 0;
+    while (i < lines.length) {
+      const raw = lines[i];
+      const line = raw.trim();
+      if (!line) { i++; continue; }
+      const indent = indentOf(raw);
+      if (line.startsWith('///')) { desc.push(line.slice(3).trim()); i++; continue; }
+      while (stack[stack.length - 1].indent >= indent) stack.pop();
+      const parent = stack[stack.length - 1];
+      i++;
+
+      let m;
+      // eigenschap: sleutel: waarde
+      if ((m = /^([A-Za-z_]\w*)\s*:\s?(.*)$/.exec(line))) {
+        parent.props[m[1]] = m[2];
+        desc = [];
+        continue;
+      }
+      let node = null, exprStart = null, minIndent = indent + 1;
+      if ((m = /^([A-Za-z_]\w*)\s*=\s*(.*)$/.exec(line))) {
+        // expressie-eigenschap zonder naam: source =, expression =, formatStringDefinition =
+        node = { kw: m[1], name: '', isProp: true };
+        exprStart = m[2];
+      } else if ((m = /^([A-Za-z_]\w*)\s+(.+)$/.exec(line))) {
+        const kw = m[1];
+        let rest = m[2];
+        if (kw === 'ref') { desc = []; continue; }
+        const nm = readName(rest);
+        node = { kw, name: nm.name };
+        rest = nm.rest.trim();
+        // relationship/level e.d. hebben geen '='; tablePermission/measure/column wel
+        if (rest.startsWith('=')) { exprStart = rest.slice(1).trim(); minIndent = indent + 2; }
+        else if (rest.startsWith('.')) {
+          // gekwalificeerde naam (bijv. perspectiveTable); negeren we verder
+          node.name = m[2];
+        }
+      } else {
+        // losse vlag: isHidden, relyOnReferentialIntegrity
+        parent.props[line] = true;
+        desc = [];
+        continue;
+      }
+
+      if (exprStart !== null) {
+        let expr = exprStart;
+        if (exprStart.startsWith('```')) {
+          const buf = [];
+          let first = exprStart.slice(3);
+          if (first.trim().endsWith('```')) { expr = first.trim().slice(0, -3); }
+          else {
+            if (first.trim()) buf.push(first);
+            while (i < lines.length) {
+              const l = lines[i++];
+              if (l.trim().endsWith('```')) { const t = l.replace(/```\s*$/, ''); if (t.trim()) buf.push(t); break; }
+              buf.push(l);
+            }
+            expr = dedent(buf).join('\n');
+          }
+        } else if (exprStart === '') {
+          const buf = [];
+          while (i < lines.length) {
+            const l = lines[i];
+            if (!l.trim()) { buf.push(''); i++; continue; }
+            if (indentOf(l) < minIndent) break;
+            buf.push(l); i++;
+          }
+          while (buf.length && !buf[buf.length - 1].trim()) buf.pop();
+          expr = dedent(buf).join('\n');
+        }
+        node.expr = expr;
+      }
+      node.indent = indent;
+      node.children = [];
+      node.props = {};
+      node.description = desc.join('\n');
+      desc = [];
+      if (node.isProp) {
+        parent.props[node.kw] = node.expr;
+      } else {
+        parent.children.push(node);
+        stack.push(node);
+      }
+    }
+    return rootNode;
+  }
+
+  function dedent(buf) {
+    let min = Infinity;
+    for (const l of buf) {
+      if (!l.trim()) continue;
+      const ws = /^[\t ]*/.exec(l)[0].length;
+      if (ws < min) min = ws;
+    }
+    if (!isFinite(min)) min = 0;
+    return buf.map(l => l.slice(Math.min(min, l.length)).replace(/\s+$/, ''));
+  }
+
+  function emptyModel() {
+    return { tables: [], relationships: [], roles: [], functions: [], expressions: [] };
+  }
+
+  function addTmdlToModel(model, text) {
+    const tree = parseTmdlTree(text);
+    for (const n of tree.children) {
+      if (n.kw === 'table') model.tables.push(tableFromTmdl(n));
+      else if (n.kw === 'relationship') {
+        const [ft, fc] = readQualified(n.props.fromColumn || '');
+        const [tt, tc] = readQualified(n.props.toColumn || '');
+        model.relationships.push({
+          name: n.name, fromTable: ft, fromColumn: fc, toTable: tt, toColumn: tc,
+          isActive: String(n.props.isActive) !== 'false',
+          crossFilter: n.props.crossFilteringBehavior || '',
+        });
+      } else if (n.kw === 'role') {
+        const role = { name: n.name, permissions: [] };
+        for (const c of n.children) {
+          if (c.kw === 'tablePermission') role.permissions.push({ table: c.name, expression: c.expr || '' });
+        }
+        model.roles.push(role);
+      } else if (n.kw === 'function') {
+        model.functions.push({ name: n.name, expression: n.expr || '', description: n.description });
+      } else if (n.kw === 'expression') {
+        model.expressions.push({ name: n.name, expression: n.expr || '' });
+      }
+    }
+  }
+
+  function tableFromTmdl(n) {
+    const t = {
+      name: n.name, description: n.description, isHidden: !!n.props.isHidden,
+      kind: 'tabel', expression: '', sourceType: '', mode: '',
+      columns: [], measures: [], hierarchies: [], calcItems: [],
+    };
+    for (const c of n.children) {
+      if (c.kw === 'measure') {
+        t.measures.push({
+          name: c.name, expression: c.expr || '', description: c.description,
+          isHidden: !!c.props.isHidden, displayFolder: unquoteValue(c.props.displayFolder),
+          formatString: c.props.formatString || '',
+          extraExpressions: [c.props.formatStringDefinition, c.props.detailRowsDefinition].filter(Boolean),
+        });
+      } else if (c.kw === 'column') {
+        t.columns.push({
+          name: c.name, expression: c.expr || '', isCalculated: c.expr != null && c.expr !== '',
+          description: c.description, isHidden: !!c.props.isHidden,
+          dataType: c.props.dataType || '', displayFolder: unquoteValue(c.props.displayFolder),
+          sortByColumn: c.props.sortByColumn ? readName(c.props.sortByColumn).name : '',
+          sourceColumn: c.props.sourceColumn || '',
+          isSystem: c.props.type === 'rowNumber',
+        });
+      } else if (c.kw === 'hierarchy') {
+        t.hierarchies.push({
+          name: c.name,
+          levels: c.children.filter(l => l.kw === 'level').map(l => ({
+            name: l.name, column: l.props.column ? readName(l.props.column).name : l.name,
+          })),
+        });
+      } else if (c.kw === 'partition') {
+        const type = (c.expr || '').trim();
+        t.sourceType = t.sourceType || type;
+        t.mode = c.props.mode || t.mode;
+        if (type === 'calculated') { t.kind = 'berekende tabel'; t.expression = c.props.source || ''; }
+        else if (!t.source) t.source = c.props.source || '';
+      } else if (c.kw === 'calculationGroup') {
+        t.kind = 'calculation group';
+        for (const it of c.children) {
+          if (it.kw === 'calculationItem') {
+            t.calcItems.push({
+              name: it.name, expression: it.expr || '',
+              extraExpressions: [it.props.formatStringDefinition].filter(Boolean),
+            });
+          }
+        }
+      }
+    }
+    return t;
+  }
+
+  // ---------------------------------------------------------------- BIM / DataModelSchema (TMSL JSON)
+
+  function joinExpr(e) { return Array.isArray(e) ? e.join('\n') : (e == null ? '' : String(e)); }
+
+  function modelFromBim(json) {
+    const src = json.model || json;
+    const model = emptyModel();
+    for (const t of src.tables || []) {
+      const out = {
+        name: t.name, description: joinExpr(t.description), isHidden: !!t.isHidden,
+        kind: 'tabel', expression: '', sourceType: '', mode: '', source: '',
+        columns: [], measures: [], hierarchies: [], calcItems: [],
+      };
+      for (const p of t.partitions || []) {
+        const s = p.source || {};
+        out.sourceType = out.sourceType || s.type || '';
+        out.mode = p.mode || out.mode;
+        if (s.type === 'calculated') { out.kind = 'berekende tabel'; out.expression = joinExpr(s.expression); }
+        else if (!out.source) out.source = joinExpr(s.expression || s.query);
+      }
+      if (t.calculationGroup) {
+        out.kind = 'calculation group';
+        for (const it of t.calculationGroup.calculationItems || []) {
+          out.calcItems.push({
+            name: it.name, expression: joinExpr(it.expression),
+            extraExpressions: [it.formatStringDefinition && joinExpr(it.formatStringDefinition.expression)].filter(Boolean),
+          });
+        }
+      }
+      for (const c of t.columns || []) {
+        out.columns.push({
+          name: c.name, expression: joinExpr(c.expression), isCalculated: c.type === 'calculated',
+          description: joinExpr(c.description), isHidden: !!c.isHidden, dataType: c.dataType || '',
+          displayFolder: c.displayFolder || '', sortByColumn: c.sortByColumn || '',
+          sourceColumn: c.sourceColumn || '', isSystem: c.type === 'rowNumber',
+        });
+      }
+      for (const m of t.measures || []) {
+        out.measures.push({
+          name: m.name, expression: joinExpr(m.expression), description: joinExpr(m.description),
+          isHidden: !!m.isHidden, displayFolder: m.displayFolder || '', formatString: m.formatString || '',
+          extraExpressions: [
+            m.formatStringDefinition && joinExpr(m.formatStringDefinition.expression),
+            m.detailRowsDefinition && joinExpr(m.detailRowsDefinition.expression),
+            m.kpi && joinExpr(m.kpi.targetExpression), m.kpi && joinExpr(m.kpi.statusExpression),
+            m.kpi && joinExpr(m.kpi.trendExpression),
+          ].filter(Boolean),
+        });
+      }
+      for (const h of t.hierarchies || []) {
+        out.hierarchies.push({ name: h.name, levels: (h.levels || []).map(l => ({ name: l.name, column: l.column })) });
+      }
+      model.tables.push(out);
+    }
+    for (const r of src.relationships || []) {
+      model.relationships.push({
+        name: r.name, fromTable: r.fromTable, fromColumn: r.fromColumn, toTable: r.toTable, toColumn: r.toColumn,
+        isActive: r.isActive !== false, crossFilter: r.crossFilteringBehavior || '',
+      });
+    }
+    for (const r of src.roles || []) {
+      model.roles.push({
+        name: r.name,
+        permissions: (r.tablePermissions || []).map(p => ({ table: p.name, expression: joinExpr(p.filterExpression) })),
+      });
+    }
+    for (const f of src.functions || []) model.functions.push({ name: f.name, expression: joinExpr(f.expression) });
+    for (const e of src.expressions || []) model.expressions.push({ name: e.name, expression: joinExpr(e.expression) });
+    return model;
+  }
+
+  // ---------------------------------------------------------------- DAX-verwijzingen
+
+  const IDENT_START = /[\p{L}_]/u;
+  const IDENT_PART = /[\p{L}\p{N}_.]/u;
+
+  /** Haalt verwijzingen uit een DAX-expressie: [{t:'q',table,name} | {t:'b',name} | {t:'t',table} | {t:'f',name}] */
+  function daxRefs(expr) {
+    const refs = [];
+    const s = expr || '';
+    const n = s.length;
+    let i = 0;
+    const skipWs = j => { while (j < n && /\s/.test(s[j])) j++; return j; };
+    const readBracket = j => { // s[j] === '['
+      let name = '';
+      j++;
+      while (j < n) {
+        if (s[j] === ']') { if (s[j + 1] === ']') { name += ']'; j += 2; continue; } j++; break; }
+        name += s[j++];
+      }
+      return { name, end: j };
+    };
+    while (i < n) {
+      const ch = s[i];
+      if (ch === '"') {
+        i++;
+        while (i < n) { if (s[i] === '"') { if (s[i + 1] === '"') { i += 2; continue; } i++; break; } i++; }
+      } else if ((ch === '/' && s[i + 1] === '/') || (ch === '-' && s[i + 1] === '-')) {
+        while (i < n && s[i] !== '\n') i++;
+      } else if (ch === '/' && s[i + 1] === '*') {
+        const e = s.indexOf('*/', i + 2);
+        i = e < 0 ? n : e + 2;
+      } else if (ch === "'") {
+        let name = '';
+        i++;
+        while (i < n) {
+          if (s[i] === "'") { if (s[i + 1] === "'") { name += "'"; i += 2; continue; } i++; break; }
+          name += s[i++];
+        }
+        const j = skipWs(i);
+        if (s[j] === '[') { const b = readBracket(j); refs.push({ t: 'q', table: name, name: b.name }); i = b.end; }
+        else refs.push({ t: 't', table: name });
+      } else if (ch === '[') {
+        const b = readBracket(i);
+        refs.push({ t: 'b', name: b.name });
+        i = b.end;
+      } else if (IDENT_START.test(ch)) {
+        let j = i + 1;
+        while (j < n && IDENT_PART.test(s[j])) j++;
+        const ident = s.slice(i, j);
+        const k = skipWs(j);
+        if (s[k] === '[') { const b = readBracket(k); refs.push({ t: 'q', table: ident, name: b.name }); i = b.end; }
+        else if (s[k] === '(') { refs.push({ t: 'f', name: ident }); i = j; }
+        else { refs.push({ t: 't', table: ident }); i = j; }
+      } else if (/[0-9]/.test(ch)) {
+        while (i < n && /[0-9.eE]/.test(s[i])) i++;
+      } else i++;
+    }
+    return refs;
+  }
+
+  // ---------------------------------------------------------------- Rapporten
+
+  function tryJson(text) {
+    if (text == null) return null;
+    if (typeof text !== 'string') return text;
+    try { return JSON.parse(text.replace(/^﻿/, '')); } catch (e) { return null; }
+  }
+
+  function entityOf(expr, aliases) {
+    const sr = expr && expr.SourceRef;
+    if (!sr) return null;
+    if (sr.Entity != null) return sr.Entity;
+    if (sr.Source != null && aliases[sr.Source] != null) return aliases[sr.Source];
+    return null;
+  }
+
+  /** Loopt door willekeurige rapport-JSON en meldt elke veldverwijzing. */
+  function walkRefs(n, aliases, emit) {
+    if (Array.isArray(n)) { for (const x of n) walkRefs(x, aliases, emit); return; }
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n.From)) {
+      aliases = Object.assign({}, aliases);
+      for (const f of n.From) if (f && f.Name != null && f.Entity != null) aliases[f.Name] = f.Entity;
+    }
+    for (const kind of ['Column', 'Measure']) {
+      const c = n[kind];
+      if (c && typeof c === 'object' && typeof c.Property === 'string' && c.Expression) {
+        const ent = entityOf(c.Expression, aliases);
+        if (ent != null) emit({ kind: kind === 'Column' ? 'column' : 'measure', entity: ent, property: c.Property });
+      }
+    }
+    const hl = n.HierarchyLevel;
+    if (hl && hl.Expression && hl.Expression.Hierarchy) {
+      const h = hl.Expression.Hierarchy;
+      const pvs = h.Expression && h.Expression.PropertyVariationSource;
+      if (pvs) {
+        const ent = entityOf(pvs.Expression, aliases);
+        if (ent != null) emit({ kind: 'column', entity: ent, property: pvs.Property });
+      } else {
+        const ent = entityOf(h.Expression, aliases);
+        if (ent != null) emit({ kind: 'hierarchy', entity: ent, hierarchy: h.Hierarchy, level: hl.Level });
+      }
+    }
+    for (const k in n) {
+      const v = n[k];
+      if (v && typeof v === 'object') walkRefs(v, aliases, emit);
+    }
+  }
+
+  function literalText(objs, key) {
+    try {
+      const v = objs[key][0].properties.text.expr.Literal.Value;
+      return typeof v === 'string' ? v.replace(/^'|'$/g, '').replace(/''/g, "'") : '';
+    } catch (e) { return ''; }
+  }
+
+  function extensionMeasures(ext, into) {
+    for (const e of (ext && ext.entities) || []) {
+      for (const m of e.measures || []) {
+        into.push({ table: e.name, name: m.name, expression: joinExpr(m.expression), description: m.description || '' });
+      }
+    }
+  }
+
+  /** PBIR (map definition/ met losse bestanden) */
+  function parsePbirReport(name, root, files) {
+    const rep = { name, root, format: 'PBIR', pages: [], uses: [], measures: [], visualCount: 0 };
+    const rel = p => p.slice(root.length + 1);
+    const pageNames = {};
+    for (const f of files) {
+      const m = /^definition\/pages\/([^/]+)\/page\.json$/i.exec(rel(f.path));
+      if (m) {
+        const j = tryJson(f.text) || {};
+        pageNames[m[1]] = j.displayName || m[1];
+        rep.pages.push({ id: m[1], name: pageNames[m[1]], json: j });
+      }
+    }
+    const add = (ctx) => (r) => rep.uses.push(Object.assign({}, r, ctx));
+    for (const p of rep.pages) {
+      walkRefs(p.json, {}, add({ page: p.name, visual: '', visualType: '', role: 'paginafilter' }));
+      delete p.json;
+    }
+    for (const f of files) {
+      const r = rel(f.path);
+      let m;
+      if ((m = /^definition\/pages\/([^/]+)\/visuals\/([^/]+)\/visual\.json$/i.exec(r))) {
+        const j = tryJson(f.text);
+        if (!j) continue;
+        rep.visualCount++;
+        const v = j.visual || {};
+        const ctx = {
+          page: pageNames[m[1]] || m[1], visual: j.name || m[2],
+          visualType: v.visualType || (j.visualGroup ? 'groep' : ''),
+          visualTitle: literalText(v.visualContainerObjects || {}, 'title'),
+        };
+        const q = v.query || {};
+        for (const role in q.queryState || {}) walkRefs(q.queryState[role], {}, add(Object.assign({ role }, ctx)));
+        if (q.sortDefinition) walkRefs(q.sortDefinition, {}, add(Object.assign({ role: 'sortering' }, ctx)));
+        if (j.filterConfig) walkRefs(j.filterConfig, {}, add(Object.assign({ role: 'filter' }, ctx)));
+        const rest = Object.assign({}, j, { visual: Object.assign({}, v, { query: undefined }), filterConfig: undefined });
+        walkRefs(rest, {}, add(Object.assign({ role: 'opmaak' }, ctx)));
+      } else if (/^definition\/report\.json$/i.test(r)) {
+        walkRefs(tryJson(f.text), {}, add({ page: '', visual: '', visualType: '', role: 'rapportfilter' }));
+      } else if (/^definition\/reportExtensions\.json$/i.test(r)) {
+        extensionMeasures(tryJson(f.text), rep.measures);
+      } else if (/^definition\/bookmarks\/.+\.bookmark\.json$/i.test(r)) {
+        const j = tryJson(f.text) || {};
+        walkRefs(j, {}, add({ page: '', visual: j.displayName || '', visualType: 'bladwijzer', role: 'bladwijzer' }));
+      }
+    }
+    return rep;
+  }
+
+  /** Oud formaat: één Layout / report.json met sections[] */
+  function parseLegacyReport(name, root, layout) {
+    const rep = { name, root, format: 'Layout', pages: [], uses: [], measures: [], visualCount: 0 };
+    const add = (ctx) => (r) => rep.uses.push(Object.assign({}, r, ctx));
+    walkRefs(tryJson(layout.filters), {}, add({ page: '', visual: '', visualType: '', role: 'rapportfilter' }));
+    const cfg = tryJson(layout.config) || {};
+    for (const ext of cfg.modelExtensions || []) extensionMeasures(ext, rep.measures);
+    for (const b of cfg.bookmarks || []) {
+      walkRefs(b, {}, add({ page: '', visual: b.displayName || '', visualType: 'bladwijzer', role: 'bladwijzer' }));
+    }
+    for (const sec of layout.sections || []) {
+      const page = sec.displayName || sec.name || '';
+      rep.pages.push({ id: sec.name, name: page });
+      walkRefs(tryJson(sec.filters), {}, add({ page, visual: '', visualType: '', role: 'paginafilter' }));
+      for (const vc of sec.visualContainers || []) {
+        rep.visualCount++;
+        const c = tryJson(vc.config) || {};
+        const sv = c.singleVisual || {};
+        const ctx = {
+          page, visual: c.name || String(vc.id || ''), visualType: sv.visualType || (c.singleVisualGroup ? 'groep' : ''),
+          visualTitle: literalText(sv.vcObjects || {}, 'title'),
+        };
+        walkRefs(sv.prototypeQuery, {}, add(Object.assign({ role: 'veld' }, ctx)));
+        const aliases = {};
+        for (const f of (sv.prototypeQuery && sv.prototypeQuery.From) || []) if (f.Name != null) aliases[f.Name] = f.Entity;
+        walkRefs([sv.objects, sv.vcObjects], aliases, add(Object.assign({ role: 'opmaak' }, ctx)));
+        walkRefs(tryJson(vc.filters), {}, add(Object.assign({ role: 'filter' }, ctx)));
+        walkRefs([tryJson(vc.query), tryJson(vc.dataTransforms)], {}, add(Object.assign({ role: 'veld' }, ctx)));
+      }
+    }
+    return rep;
+  }
+
+  // ---------------------------------------------------------------- Bestanden → project
+
+  const norm = p => p.replace(/\\/g, '/').replace(/^\.?\//, '');
+  const baseName = p => p.slice(p.lastIndexOf('/') + 1);
+  const dirName = p => (p.lastIndexOf('/') < 0 ? '' : p.slice(0, p.lastIndexOf('/')));
+  function niceName(root) {
+    const segs = root.split('/').filter(Boolean);
+    let last = segs[segs.length - 1] || 'model';
+    if (/^(Report|Model)$/i.test(last) && segs.length > 1) last = segs[segs.length - 2];
+    return last.replace(/\.(SemanticModel|Dataset|Report|pbix|pbit|pbip)$/i, '');
+  }
+
+  /** Welke bestanden zijn de moeite van het inlezen waard? */
+  function wantsFile(path) {
+    const p = norm(path);
+    if (/(^|\/)(\.pbi|StaticResources|RegisteredResources|\.git|node_modules)\//i.test(p)) return false;
+    return /\.(tmdl|bim|json|pbir)$/i.test(p) || /(^|\/)(Layout|DataModelSchema)$/.test(p);
+  }
+
+  /** files: [{path, text}] → {models: [{name, root, model}], reports: [...], warnings: []} */
+  function loadProject(files) {
+    const warnings = [];
+    const modelGroups = new Map(), pbirGroups = new Map();
+    const models = [], reports = [];
+    for (const f0 of files) {
+      const f = { path: norm(f0.path), text: f0.text };
+      const p = f.path, b = baseName(p);
+      if (/\.tmdl$/i.test(p)) {
+        const i = p.toLowerCase().lastIndexOf('/definition/');
+        const rootDir = i >= 0 ? p.slice(0, i) : dirName(p);
+        if (!modelGroups.has(rootDir)) modelGroups.set(rootDir, []);
+        modelGroups.get(rootDir).push(f);
+      } else if (/\.bim$/i.test(p) || b === 'DataModelSchema') {
+        const j = tryJson(f.text);
+        if (j && (j.model || j.tables)) models.push({ name: niceName(dirName(p)), root: dirName(p), model: modelFromBim(j) });
+        else warnings.push('Kon ' + p + ' niet lezen als model.');
+      } else if (/\/definition\/(pages\/|report\.json$|reportExtensions\.json$|bookmarks\/)/i.test('/' + p)) {
+        const i = ('/' + p).toLowerCase().lastIndexOf('/definition/');
+        const rootDir = p.slice(0, Math.max(0, i - 1 + 1)).replace(/\/$/, '');
+        if (!pbirGroups.has(rootDir)) pbirGroups.set(rootDir, []);
+        pbirGroups.get(rootDir).push(f);
+      } else if (b === 'Layout' || b === 'report.json') {
+        const j = tryJson(f.text);
+        if (j && Array.isArray(j.sections)) reports.push(parseLegacyReport(niceName(dirName(p)), dirName(p), j));
+      }
+    }
+    for (const [rootDir, fs] of modelGroups) {
+      const model = emptyModel();
+      for (const f of fs) {
+        try { addTmdlToModel(model, f.text); } catch (e) { warnings.push('Fout in ' + f.path + ': ' + e.message); }
+      }
+      if (model.tables.length) models.push({ name: niceName(rootDir), root: rootDir, model });
+    }
+    for (const [rootDir, fs] of pbirGroups) reports.push(parsePbirReport(niceName(rootDir), rootDir, fs));
+    models.sort((a, b) => a.name.localeCompare(b.name));
+    reports.sort((a, b) => a.name.localeCompare(b.name));
+    return { models, reports, warnings };
+  }
+
+  // ---------------------------------------------------------------- Analyse
+
+  const lc = s => String(s == null ? '' : s).toLowerCase();
+  const isAutoDate = name => /^(LocalDateTable_|DateTableTemplate_)/.test(name);
+
+  /**
+   * model + rapporten → nodes met afhankelijkheden, gebruik en status.
+   * Status: 'direct' (in rapport), 'indirect' (via iets dat in een rapport staat),
+   *         'model' (alleen nodig voor het model: relatie, RLS, hiërarchie), 'unused'.
+   */
+  function analyze(model, reports) {
+    const nodes = new Map();
+    const tableIdx = new Map(), colIdx = new Map(), measIdx = new Map(), measByName = new Map(), fnIdx = new Map();
+    const hierIdx = new Map();
+    const broken = [];
+
+    const mk = (id, o) => {
+      const n = Object.assign({
+        id, deps: new Set(), usedBy: new Set(), depKinds: {}, reportUses: [], modelUses: [],
+        expression: '', description: '', hidden: false, status: 'unused',
+      }, o);
+      nodes.set(id, n);
+      return n;
+    };
+    const link = (from, to, kind) => {
+      if (!from || !to || from === to) return;
+      from.deps.add(to.id); to.usedBy.add(from.id);
+      if (kind) from.depKinds[to.id] = kind;
+    };
+
+    for (const t of model.tables) {
+      const tn = mk('T|' + t.name, {
+        type: 'table', kind: t.kind, name: t.name, table: t.name, expression: t.expression,
+        description: t.description, hidden: t.isHidden, system: isAutoDate(t.name),
+        source: t.source || '', mode: t.mode || '',
+      });
+      tableIdx.set(lc(t.name), tn);
+      for (const c of t.columns) {
+        if (c.isSystem) continue;
+        const cn = mk('C|' + t.name + '|' + c.name, {
+          type: 'column', kind: c.isCalculated ? 'berekende kolom' : 'kolom', name: c.name, table: t.name,
+          expression: c.isCalculated ? c.expression : '', description: c.description, hidden: c.isHidden,
+          dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder,
+          system: tn.system, sortByColumn: c.sortByColumn,
+        });
+        colIdx.set(lc(t.name) + '|' + lc(c.name), cn);
+      }
+      for (const m of t.measures) {
+        const mn = mk('M|' + t.name + '|' + m.name, {
+          type: 'measure', kind: 'measure', name: m.name, table: t.name, expression: m.expression,
+          extraExpressions: m.extraExpressions || [], description: m.description, hidden: m.isHidden,
+          displayFolder: m.displayFolder, formatString: m.formatString,
+        });
+        measIdx.set(lc(t.name) + '|' + lc(m.name), mn);
+        measByName.set(lc(m.name), mn);
+      }
+      for (const h of t.hierarchies) hierIdx.set(lc(t.name) + '|' + lc(h.name), h);
+    }
+    for (const f of model.functions || []) {
+      fnIdx.set(lc(f.name), mk('F|' + f.name, {
+        type: 'function', kind: 'functie', name: f.name, table: '', expression: f.expression, description: f.description || '',
+      }));
+    }
+    // measures die in een rapport zelf zijn gemaakt
+    for (const rep of reports) {
+      for (const m of rep.measures) {
+        const key = lc(m.table) + '|' + lc(m.name);
+        if (measIdx.has(key)) continue;
+        const mn = mk('M|' + m.table + '|' + m.name, {
+          type: 'measure', kind: 'rapportmeasure', name: m.name, table: m.table, expression: m.expression,
+          extraExpressions: [], description: m.description, report: rep.name,
+        });
+        measIdx.set(key, mn);
+        if (!measByName.has(lc(m.name))) measByName.set(lc(m.name), mn);
+      }
+    }
+
+    const resolve = (ref, homeTable) => {
+      if (ref.t === 'q') {
+        const k = lc(ref.table) + '|' + lc(ref.name);
+        return colIdx.get(k) || measIdx.get(k) || measByName.get(lc(ref.name)) || null;
+      }
+      if (ref.t === 'b') {
+        return measByName.get(lc(ref.name)) || (homeTable ? colIdx.get(lc(homeTable) + '|' + lc(ref.name)) : null) || null;
+      }
+      if (ref.t === 't') return tableIdx.get(lc(ref.table)) || null;
+      if (ref.t === 'f') return fnIdx.get(lc(ref.name)) || null;
+      return null;
+    };
+    const linkExpr = (node, expr, homeTable) => {
+      for (const r of daxRefs(expr)) link(node, resolve(r, homeTable));
+    };
+
+    for (const t of model.tables) {
+      const tn = tableIdx.get(lc(t.name));
+      if (t.kind === 'berekende tabel') linkExpr(tn, t.expression, null);
+      for (const it of t.calcItems) {
+        linkExpr(tn, it.expression, null);
+        for (const e of it.extraExpressions || []) linkExpr(tn, e, null);
+      }
+      for (const c of t.columns) {
+        const cn = colIdx.get(lc(t.name) + '|' + lc(c.name));
+        if (!cn) continue;
+        if (c.isCalculated) linkExpr(cn, c.expression, t.name);
+        if (t.kind !== 'tabel') link(cn, tn, t.kind); // kolom van berekende tabel hangt af van de tabelexpressie
+        if (c.sortByColumn) link(cn, colIdx.get(lc(t.name) + '|' + lc(c.sortByColumn)), 'sorteerkolom');
+      }
+      for (const h of t.hierarchies) {
+        for (const l of h.levels) {
+          const cn = colIdx.get(lc(t.name) + '|' + lc(l.column));
+          if (cn) cn.modelUses.push({ kind: 'hiërarchie', detail: h.name + ' › ' + l.name });
+        }
+      }
+    }
+    for (const n of nodes.values()) {
+      if (n.type === 'measure') {
+        linkExpr(n, n.expression, n.table);
+        for (const e of n.extraExpressions || []) linkExpr(n, e, n.table);
+      } else if (n.type === 'function') linkExpr(n, n.expression, null);
+    }
+    for (const r of model.relationships) {
+      const a = colIdx.get(lc(r.fromTable) + '|' + lc(r.fromColumn));
+      const b = colIdx.get(lc(r.toTable) + '|' + lc(r.toColumn));
+      const txt = r.fromTable + '[' + r.fromColumn + '] → ' + r.toTable + '[' + r.toColumn + ']' + (r.isActive ? '' : ' (inactief)');
+      if (a) a.modelUses.push({ kind: 'relatie', detail: txt });
+      if (b) b.modelUses.push({ kind: 'relatie', detail: txt });
+    }
+    for (const role of model.roles) {
+      for (const p of role.permissions) {
+        for (const ref of daxRefs(p.expression)) {
+          const n = resolve(ref, p.table);
+          if (n) n.modelUses.push({ kind: 'RLS', detail: 'rol ' + role.name + ' op ' + p.table });
+        }
+      }
+    }
+
+    // gebruik in rapporten
+    const seen = new Set();
+    for (const rep of reports) {
+      for (const u of rep.uses) {
+        let n = null;
+        if (u.kind === 'hierarchy') {
+          const h = hierIdx.get(lc(u.entity) + '|' + lc(u.hierarchy));
+          const lvl = h && h.levels.find(l => lc(l.name) === lc(u.level));
+          if (lvl) n = colIdx.get(lc(u.entity) + '|' + lc(lvl.column));
+        } else {
+          const k = lc(u.entity) + '|' + lc(u.property);
+          n = u.kind === 'measure' ? (measIdx.get(k) || colIdx.get(k)) : (colIdx.get(k) || measIdx.get(k));
+        }
+        const use = {
+          report: rep.name, page: u.page, visual: u.visual, visualType: u.visualType,
+          visualTitle: u.visualTitle || '', role: u.role,
+        };
+        const key = (n ? n.id : 'X|' + u.entity + '|' + (u.property || u.hierarchy + '.' + u.level)) +
+          '|' + rep.name + '|' + u.page + '|' + u.visual + '|' + u.role;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (n) n.reportUses.push(use);
+        else broken.push(Object.assign({ table: u.entity, name: u.property || (u.hierarchy + ' › ' + u.level), kind: u.kind }, use));
+      }
+    }
+
+    // status
+    const closure = (roots) => {
+      const out = new Set(roots.map(n => n.id));
+      const todo = roots.slice();
+      while (todo.length) {
+        const n = todo.pop();
+        for (const d of n.deps) if (!out.has(d)) { out.add(d); todo.push(nodes.get(d)); }
+      }
+      return out;
+    };
+    const all = Array.from(nodes.values());
+    const reachR = closure(all.filter(n => n.reportUses.length));
+    const reachM = closure(all.filter(n => n.modelUses.length));
+    for (const n of all) {
+      n.status = n.reportUses.length ? 'direct' : reachR.has(n.id) ? 'indirect' : reachM.has(n.id) ? 'model' : 'unused';
+    }
+    // tabel telt als gebruikt zodra er iets uit de tabel gebruikt wordt
+    const rank = { unused: 0, model: 1, indirect: 2, direct: 3 };
+    for (const n of all) {
+      if (n.type === 'table') continue;
+      const tn = tableIdx.get(lc(n.table));
+      if (!tn || n.status === 'unused') continue;
+      const s = n.status === 'direct' ? 'indirect' : n.status;
+      if (rank[s] > rank[tn.status]) tn.status = s;
+    }
+    for (const n of all) {
+      n.depCount = n.deps.size;
+      n.usedByCount = n.usedBy.size;
+    }
+
+    const count = (f) => all.filter(n => !n.system && f(n)).length;
+    const stats = {
+      measures: count(n => n.type === 'measure'),
+      measuresUnused: count(n => n.type === 'measure' && n.status === 'unused'),
+      columns: count(n => n.type === 'column'),
+      columnsUnused: count(n => n.type === 'column' && n.status === 'unused'),
+      columnsModelOnly: count(n => n.type === 'column' && n.status === 'model'),
+      calcColumns: count(n => n.kind === 'berekende kolom'),
+      calcColumnsUnused: count(n => n.kind === 'berekende kolom' && n.status === 'unused'),
+      tables: count(n => n.type === 'table'),
+      tablesUnused: count(n => n.type === 'table' && n.status === 'unused'),
+      visuals: reports.reduce((a, r) => a + r.visualCount, 0),
+      pages: reports.reduce((a, r) => a + r.pages.length, 0),
+      broken: broken.length,
+    };
+    return { nodes, list: all, broken, stats };
+  }
+
+  /** Alle (in)directe afhankelijkheden (dir='deps') of afnemers (dir='usedBy'), per afstand. */
+  function layers(analysis, id, dir, maxDepth) {
+    const out = [];
+    const seen = new Set([id]);
+    let cur = [id];
+    for (let d = 0; d < (maxDepth || 50) && cur.length; d++) {
+      const next = [];
+      for (const c of cur) {
+        const n = analysis.nodes.get(c);
+        if (!n) continue;
+        for (const x of n[dir]) if (!seen.has(x)) { seen.add(x); next.push(x); }
+      }
+      if (next.length) out.push(next);
+      cur = next;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- ZIP (pbix/pbit)
+
+  function decodeText(bytes) {
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+    if (bytes.length >= 2 && bytes[0] !== 0 && bytes[1] === 0) return new TextDecoder('utf-16le').decode(bytes);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  /**
+   * Leest de gewenste tekstbestanden uit een zip.
+   * reader: {size, read(offset, length) → Promise<Uint8Array>}; inflateRaw(Uint8Array) → Promise<Uint8Array>
+   */
+  async function readZipTexts(reader, inflateRaw, want) {
+    const tailLen = Math.min(reader.size, 66000);
+    const tail = await reader.read(reader.size - tailLen, tailLen);
+    const dv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+    let e = -1;
+    for (let i = tail.length - 22; i >= 0; i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) throw new Error('Geen geldig zip-bestand');
+    const count = dv.getUint16(e + 10, true), cdSize = dv.getUint32(e + 12, true), cdOff = dv.getUint32(e + 16, true);
+    const cd = await reader.read(cdOff, cdSize);
+    const cv = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
+    const out = [], names = [];
+    let p = 0;
+    for (let k = 0; k < count && p + 46 <= cd.length; k++) {
+      if (cv.getUint32(p, true) !== 0x02014b50) break;
+      const method = cv.getUint16(p + 10, true), csize = cv.getUint32(p + 20, true);
+      const nl = cv.getUint16(p + 28, true), el = cv.getUint16(p + 30, true), cl = cv.getUint16(p + 32, true);
+      const off = cv.getUint32(p + 42, true);
+      const name = new TextDecoder('utf-8').decode(cd.subarray(p + 46, p + 46 + nl));
+      p += 46 + nl + el + cl;
+      names.push(name);
+      if (!want(name)) continue;
+      const lh = await reader.read(off, 30);
+      const lv = new DataView(lh.buffer, lh.byteOffset, lh.byteLength);
+      const start = off + 30 + lv.getUint16(26, true) + lv.getUint16(28, true);
+      let data = await reader.read(start, csize);
+      if (method === 8) data = await inflateRaw(data);
+      else if (method !== 0) continue;
+      out.push({ path: name, text: decodeText(data) });
+    }
+    return { files: out, names };
+  }
+
+  return {
+    parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
+    loadProject, analyze, layers, readZipTexts, wantsFile, decodeText,
+  };
+});
