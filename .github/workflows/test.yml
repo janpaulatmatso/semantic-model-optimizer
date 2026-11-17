@@ -115,10 +115,17 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'smo-install'
           $p = Start-Process dist\SemanticModelOptimizer-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER', '/NORESTART', "/DIR=$dir", "/LOG=$env:RUNNER_TEMP\setup.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "Setup exited with $($p.ExitCode)" }
-          $v = & "$dir\SemanticModelOptimizer.exe" version
-          Write-Output $v
+          # the installed program has no console, so check it through its server
+          $env:PORT = '5391'; $env:SMO_IDLE_EXIT = '60'
+          $s = Start-Process "$dir\SemanticModelOptimizer.exe" -ArgumentList 'serve' -PassThru
+          $ping = $null
+          for ($i = 0; $i -lt 30 -and -not $ping; $i++) { Start-Sleep 1; try { $ping = (Invoke-WebRequest http://127.0.0.1:5391/api/ping -UseBasicParsing).Content | ConvertFrom-Json } catch { } }
+          Write-Output "Installed program answers: version $($ping.version)"
           $tag = '${{ steps.version.outputs.tag }}'
-          if ($v -ne "Semantic Model Optimizer $($tag.TrimStart('v'))") { throw "Installed version is '$v'" }
+          if ($ping.version -ne $tag.TrimStart('v')) { throw "Installed version is '$($ping.version)'" }
+          Start-Process "$dir\SemanticModelOptimizer.exe" -ArgumentList 'stop' -Wait
+          for ($i = 0; $i -lt 20 -and -not $s.HasExited; $i++) { Start-Sleep 1 }
+          if (-not $s.HasExited) { throw 'The program did not stop' }
           if (-not (Test-Path "$dir\unins000.exe")) { throw 'No uninstaller was installed' }
           $u = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           for ($i = 0; $i -lt 30 -and (Test-Path "$dir\SemanticModelOptimizer.exe"); $i++) { Start-Sleep 1 }
@@ -131,7 +138,8 @@ jobs:
         with:
           name: windows-build
           path: |
-            dist/SemanticModelOptimizer.exe
+            dist/app/SemanticModelOptimizer.exe
+            dist/SemanticModelOptimizer-cli.exe
             dist/SemanticModelOptimizer-Setup.exe
 
       - name: Publish the release
@@ -142,10 +150,13 @@ jobs:
           LAST: ${{ steps.version.outputs.last }}
         run: |
           {
-            echo "Two downloads for Windows:"
+            echo "Downloads for Windows:"
             echo
-            echo '- **`SemanticModelOptimizer-Setup.exe`**: installs the tool, with a shortcut in the Start menu, an uninstaller under *Apps*, and (when installed for all users) the button in Power BI Desktop. No administrator rights needed for yourself.'
-            echo '- **`SemanticModelOptimizer.exe`**: the portable version, one file that runs without installing.'
+            echo '- **`SemanticModelOptimizer-Setup.exe`**: installs the tool as a program, with a shortcut in the Start menu, an uninstaller under *Apps*, and (when installed for all users) the button in Power BI Desktop. No administrator rights needed for yourself.'
+            echo '- **`SemanticModelOptimizer.exe`**: the same program without installing; one file you can start from anywhere.'
+            echo '- **`SemanticModelOptimizer-cli.exe`**: for the command line and pipelines (`SemanticModelOptimizer-cli.exe cli <folder> --check`).'
+            echo
+            echo 'The tool opens in its own window (an app window of your default browser when that is Edge, Chrome or Brave, otherwise Edge) and stops by itself a few minutes after you close it.'
             echo
             echo "## Changes since $LAST"
             echo
@@ -153,10 +164,11 @@ jobs:
             echo
             echo "## Use"
             echo
-            echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`. It opens in your browser and keeps running in the background; stop it with *Stop Semantic Model Optimizer* in the Start menu or `SemanticModelOptimizer.exe stop`.'
-            echo '- Command line: `SemanticModelOptimizer.exe cli <folder> --check`'
-            echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer.exe install-tool` in a terminal started as administrator.'
+            echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`.'
+            echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
+            echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
             echo 'The files are not signed, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*). Built automatically by GitHub Actions from commit ${{ github.sha }}.'
           } > notes.md
-          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          cp dist/app/SemanticModelOptimizer.exe dist/SemanticModelOptimizer.exe
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest

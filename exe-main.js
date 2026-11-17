@@ -1,5 +1,6 @@
 /* Entry point of the portable executable (see build-exe.js).
- *   SemanticModelOptimizer.exe                      → starts the tool and opens it in the browser
+ *   SemanticModelOptimizer.exe                      → starts the tool and opens it in its own window (Edge or Chrome
+ *                                                     app mode); set SMO_BROWSER=1 for the normal browser instead
  *   SemanticModelOptimizer.exe open <server> <db>   → the same, on a model open in Power BI Desktop
  *   SemanticModelOptimizer.exe cli <path> --check   → the command line (every option of cli.js)
  *   SemanticModelOptimizer.exe stop                 → stops the tool that runs in the background
@@ -49,11 +50,12 @@ const request = (method, p, headers) => new Promise(resolve => {
 
   // default: make sure the server runs, then open the browser
   if ((await request('GET', '/api/ping')) !== 200) {
-    spawn(process.execPath, ['serve'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    // the server stops by itself a while after its window is closed
+    spawn(process.execPath, ['serve'], { detached: true, stdio: 'ignore', windowsHide: true, env: Object.assign({}, process.env, { SMO_IDLE_EXIT: process.env.SMO_IDLE_EXIT || '150' }) }).unref();
     for (let i = 0; i < 60 && (await request('GET', '/api/ping')) !== 200; i++) await new Promise(r => setTimeout(r, 150));
   }
   const [server, database] = cmd === 'open' ? args.slice(1) : [];
   const url = `http://127.0.0.1:${PORT}/` + (server ? `?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database || '')}` : '');
-  spawn('rundll32', ['url.dll,FileProtocolHandler', url], { detached: true, stdio: 'ignore' }).unref();
-  console.log('Semantic Model Optimizer is open in your browser: ' + url + '\nIt keeps running in the background. Stop it with: ' + path.basename(process.execPath) + ' stop');
+  const how = __smoRequire('./appwindow.js').openWindow(url);
+  console.log('Semantic Model Optimizer is open ' + (how === 'app' ? 'in its own window' : 'in your browser') + ': ' + url + '\nIt stops by itself a few minutes after you close it, or with: ' + path.basename(process.execPath) + ' stop');
 })().catch(e => { console.error(e.message); process.exit(2); });

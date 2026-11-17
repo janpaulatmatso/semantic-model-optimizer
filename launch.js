@@ -17,16 +17,11 @@ const ping = () => new Promise(resolve => {
   req.on('error', () => resolve(false));
   req.on('timeout', () => { req.destroy(); resolve(false); });
 });
-function openBrowser(u) {
-  const run = (cmd, args) => spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
-  if (process.platform === 'win32') run('rundll32', ['url.dll,FileProtocolHandler', u]);
-  else if (process.platform === 'darwin') run('open', [u]);
-  else run('xdg-open', [u]);
-}
+const { openWindow } = require('./appwindow.js');
 (async () => {
   if (!(await ping())) {
-    spawn(process.execPath, [path.join(__dirname, 'serve.js'), String(PORT)], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawn(process.execPath, [path.join(__dirname, 'serve.js'), String(PORT)], { detached: true, stdio: 'ignore', windowsHide: true, env: Object.assign({}, process.env, { SMO_IDLE_EXIT: process.env.SMO_IDLE_EXIT || '150' }) }).unref();
     for (let i = 0; i < 40 && !(await ping()); i++) await new Promise(r => setTimeout(r, 150));
   }
-  openBrowser(url);
+  openWindow(url);
 })();

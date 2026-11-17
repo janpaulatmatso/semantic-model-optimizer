@@ -62,7 +62,7 @@ Name: "desktopicon"; Description: "{cm:TaskDesktop}"; Flags: unchecked
 Name: "pbitool"; Description: "{cm:TaskPbi}"; GroupDescription: "{cm:TaskPbiNote}"; Check: IsAdminInstallMode
 
 [Files]
-Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\app\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\smo.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion

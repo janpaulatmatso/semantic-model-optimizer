@@ -68,7 +68,14 @@ const PORT = Number(process.env.PORT || process.argv[2] || 5273);
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js', '/extras.js': 'extras.js', '/i18n.js': 'i18n.js' };
 const TYPES = { html: 'text/html', js: 'text/javascript', css: 'text/css' };
 
+// started from the executable or launch.js: stop when the window has been closed for a while (the page pings every 20 s)
+let lastSeen = Date.now(), active = 0;
+const idle = Number(process.env.SMO_IDLE_EXIT || 0);
+if (idle > 0) setInterval(() => { if (!active && Date.now() - lastSeen > idle * 1000) process.exit(0); }, 5000).unref();
+
 http.createServer(async (req, res) => {
+  lastSeen = Date.now(); active++;
+  res.on('close', () => { active--; lastSeen = Date.now(); });
   const host = String(req.headers.host || '').replace(/:\d+$/, '');
   if (host !== '127.0.0.1' && host !== 'localhost') { res.writeHead(403); return res.end('Local only'); }
   const url = new URL(req.url, 'http://x');
@@ -175,6 +182,12 @@ http.createServer(async (req, res) => {
     if (url.pathname === '/api/desktop') {
       const port = parseInt(url.searchParams.get('port') || '0', 10) || 0;
       return send(200, JSON.stringify(await desktopStats(port)), 'application/json');
+    }
+    if (url.pathname === '/icon.png' || url.pathname === '/favicon.ico') {
+      const icon = require('./icon.js');
+      const body = url.pathname === '/icon.png' ? icon.png(256) : icon.ico([16, 32, 48, 256]);
+      res.writeHead(200, { 'Content-Type': url.pathname === '/icon.png' ? 'image/png' : 'image/x-icon', 'Cache-Control': 'max-age=86400' });
+      return res.end(body);
     }
     const file = STATIC[url.pathname];
     if (!file) return send(404, 'Not found', 'text/plain');

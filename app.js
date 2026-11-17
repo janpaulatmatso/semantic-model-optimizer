@@ -169,6 +169,8 @@
   if (location.protocol.startsWith('http')) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
       if (j.version) document.querySelector('.top h1').title = 'Version ' + j.version;
+      // keeps the server running while this window is open
+      setInterval(() => fetch('api/ping').catch(() => {}), 20000);
       $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false; $('btnXmla').hidden = false;
       renderRepos();
       Promise.all(repos.paths.map(scanRepoPath)).then(renderRepos);
@@ -508,7 +510,7 @@
         ${c ? '<li>For deleted columns a <code>Table.RemoveColumns</code> step is added to the Power Query of the table, so they are no longer loaded either.</li>' : ''}
         <li><b>Close this project in Power BI Desktop first.</b> If it is still open and you save there, everything comes back.</li></ul>`;
     } else {
-      h += `<p class="warn">Deleting directly only works for a Power BI project (TMDL) that you loaded through the path field, with <code>node serve.js</code>. You can still download a script for Tabular Editor.</p>`;
+      h += `<p class="warn">Deleting directly only works for a Power BI project (TMDL) that you loaded through the path field (in the app, or with <code>node serve.js</code>). You can still download a script for Tabular Editor.</p>`;
     }
     h += `<div class="dlgbtn"><button data-act="cancel">Cancel</button><button data-act="script">Tabular Editor script</button>${canWrite() && p.ok.length ? `<button class="danger" data-act="go">Delete ${p.ok.length}</button>` : ''}</div>`;
     dlg.innerHTML = h;
@@ -1005,7 +1007,7 @@
     const editable = n.kind !== 'report measure' && ['measure', 'column', 'table'].includes(n.type) && !n.system;
     let h = (editable ? (canWrite() || (App.canLive && App.canLive(n))
       ? '<button class="editbtn" data-edit="1">Edit</button>'
-      : '<button class="editbtn" disabled title="Editing works for a Power BI project (TMDL) that you loaded through the path field, with node serve.js">Edit</button>') : '') +
+      : '<button class="editbtn" disabled title="Editing works for a Power BI project (TMDL) that you loaded through the path field (in the app, or with node serve.js)">Edit</button>') : '') +
       `<h2>${esc(n.name)}</h2>
       <div class="meta"><span class="k k-${kindClass(n)}">${esc(n.kind)}</span>${n.type === 'table' ? '' : '<span class="muted">in ' + esc(n.table) + '</span>'}
         <span class="badge s-${n.status}">${STATUS[n.status]}</span>${n.hidden ? '<span class="hid">hidden</span>' : ''}

@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Semantic Model Optimizer</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="icon.png" type="image/png">
+<meta name="application-name" content="Semantic Model Optimizer">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -56,8 +59,8 @@
       <li><b>.pbit</b> (template) — model and report.</li>
       <li><b>.pbix</b> — report only; the model inside a .pbix cannot be read. Combine it with the model as .pbip or .pbit.</li>
     </ul>
-    <p><b>Rows and MB per table?</b> Afterwards load a <b>.vpax</b> (DAX Studio › Advanced › Export Metrics), or start the tool with <code>node serve.js</code> and read the sizes straight from Power BI Desktop.</p>
-    <p><b>Working from a Git repository?</b> Start the tool with <code>node serve.js</code>, choose <b>Repositories</b> and connect the local folder. The tool finds every Power BI project in it and lets you pick the reports.</p>
+    <p><b>Rows and MB per table?</b> Choose <b>Sizes from Power BI Desktop</b> while the report is open there, or load a <b>.vpax</b> (DAX Studio › Advanced › Export Metrics).</p>
+    <p><b>Working from a Git repository?</b> Choose <b>Repositories</b> and connect the local folder. The tool finds every Power BI project in it and lets you pick the reports.</p>
     <p class="hint">Several reports on one model? Open the folder that holds them all, or add more reports after loading. Everything stays on this computer.</p>
   </div>
 </main>
