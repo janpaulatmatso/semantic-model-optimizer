@@ -346,14 +346,15 @@
         i = e < 0 ? n : e + 2;
       } else if (ch === "'") {
         let name = '';
+        const ts = i;
         i++;
         while (i < n) {
           if (s[i] === "'") { if (s[i + 1] === "'") { name += "'"; i += 2; continue; } i++; break; }
           name += s[i++];
         }
         const j = skipWs(i);
-        if (s[j] === '[') { const b = readBracket(j); refs.push({ t: 'q', table: name, name: b.name, ns: b.ns, ne: b.ne }); i = b.end; }
-        else refs.push({ t: 't', table: name });
+        if (s[j] === '[') { const b = readBracket(j); refs.push({ t: 'q', table: name, name: b.name, ns: b.ns, ne: b.ne, ts, te: i }); i = b.end; }
+        else refs.push({ t: 't', table: name, ts, te: i });
       } else if (ch === '[') {
         const b = readBracket(i);
         refs.push({ t: 'b', name: b.name, ns: b.ns, ne: b.ne });
@@ -363,9 +364,9 @@
         while (j < n && IDENT_PART.test(s[j])) j++;
         const ident = s.slice(i, j);
         const k = skipWs(j);
-        if (s[k] === '[') { const b = readBracket(k); refs.push({ t: 'q', table: ident, name: b.name, ns: b.ns, ne: b.ne }); i = b.end; }
+        if (s[k] === '[') { const b = readBracket(k); refs.push({ t: 'q', table: ident, name: b.name, ns: b.ns, ne: b.ne, ts: i, te: j }); i = b.end; }
         else if (s[k] === '(') { refs.push({ t: 'f', name: ident }); i = j; }
-        else { refs.push({ t: 't', table: ident }); i = j; }
+        else { refs.push({ t: 't', table: ident, ts: i, te: j }); i = j; }
       } else if (/[0-9]/.test(ch)) {
         while (i < n && /[0-9.eE]/.test(s[i])) i++;
       } else i++;
@@ -543,7 +544,7 @@
     const warnings = [];
     const modelGroups = new Map(), pbirGroups = new Map();
     const models = [], reports = [];
-    let stats = null;
+    let stats = null, config = null, performance = [];
     for (const f0 of files) {
       const f = { path: norm(f0.path), text: f0.text };
       const p = f.path, b = baseName(p);
@@ -552,6 +553,13 @@
         const rootDir = i >= 0 ? p.slice(0, i) : dirName(p);
         if (!modelGroups.has(rootDir)) modelGroups.set(rootDir, []);
         modelGroups.get(rootDir).push(f);
+      } else if (/\.json$/i.test(p) && f.text.includes('"Visual Container Lifecycle"')) {
+        const j = tryJson(f.text);
+        if (j) performance = performance.concat(parsePerformance(j, b));
+      } else if (b === 'smo.config.json') {
+        const j = tryJson(f.text);
+        if (j && !config) config = j;
+        else if (!j) warnings.push('Could not read ' + p + ' (not valid JSON).');
       } else if (b === 'DaxVpaView.json') {
         const j = tryJson(f.text);
         if (j) stats = statsFromVpax(j, 'VertiPaq export ' + niceName(dirName(p)).replace(/\.vpax$/i, ''));
@@ -591,7 +599,7 @@
     const out = real.length ? real : models;
     // thin reports whose model lives elsewhere (for example on Analysis Services): still show what the reports define and use
     if (!out.length && reports.length) out.push({ name: '(model not loaded)', root: '', model: emptyModel(), format: 'none', missing: true });
-    return { models: out, reports, warnings, stats };
+    return { models: out, reports, warnings, stats, config, performance };
   }
 
   // ---------------------------------------------------------------- Analysis
@@ -743,6 +751,25 @@
       const txt = r.fromTable + '[' + r.fromColumn + '] → ' + r.toTable + '[' + r.toColumn + ']' + (r.isActive ? '' : ' (inactive)');
       if (a) a.modelUses.push({ kind: 'relationship', detail: txt });
       if (b) b.modelUses.push({ kind: 'relationship', detail: txt });
+    }
+    {
+      const queries = model.tables.filter(t => t.source && t.kind === 'table').map(t => ({ name: t.name, text: String(t.source) }))
+        .concat((model.expressions || []).map(e => ({ name: e.name, text: String(e.expression || '') })));
+      for (const t of model.tables) {
+        const tn = tableIdx.get(lc(t.name));
+        if (!tn || tn.system) continue;
+        const esc = t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const refRe = new RegExp('#"' + esc + '"' + (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.name) ? '|(?<![\\w"#.])' + esc + '(?![\\w"])' : ''));
+        for (const q of queries) {
+          if (lc(q.name) === lc(t.name) || !refRe.test(q.text.replace(/(#?)"(?:[^"]|"")*"/g, (m, h) => (h ? m : '""')))) continue; // ignore text inside ordinary strings
+          tn.modelUses.push({ kind: 'Power Query', detail: 'read by the query of ' + q.name });
+          for (const c of t.columns) {
+            const src = unquoteValue(c.sourceColumn || c.name);
+            const cn = colIdx.get(lc(t.name) + '|' + lc(c.name));
+            if (cn && src && q.text.includes('"' + src.replace(/"/g, '""') + '"')) cn.modelUses.push({ kind: 'Power Query', detail: 'used in the query of ' + q.name });
+          }
+        }
+      }
     }
     for (const role of model.roles) {
       for (const p of role.permissions) {
@@ -1326,6 +1353,192 @@
     return count;
   }
 
+  /** Sets properties on one measure or column: {isHidden: true, formatString: '#,0'}. A value of true writes a flag. */
+  function setTmdlProps(text0, sel, props) {
+    const [bom, text] = splitBom(text0);
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    const scan = scanTmdl(text);
+    const o = findDecl(scan, sel);
+    if (!o) return { text: text0, found: false };
+    const lines = scan.lines;
+    const ind = '\t'.repeat(o.indent + 1);
+    const insert = [];
+    for (const key of Object.keys(props)) {
+      const line = props[key] === true ? ind + key : ind + key + ': ' + props[key];
+      const have = o.props.find(p => p.key === key);
+      if (have) lines[have.line] = line; else insert.push(line);
+    }
+    lines.splice(o.expr ? o.expr.endLine : o.declLine + 1, 0, ...insert);
+    return { text: bom + lines.join(eol), found: true };
+  }
+
+  const daxTable = n => "'" + String(n).replace(/'/g, "''") + "'";
+
+  /** Edits the JSON list in "annotation PBI_QueryOrder = [...]". */
+  function queryOrder(lines, fn) {
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^(\s*annotation PBI_QueryOrder\s*=\s*)(\[.*\])\s*$/.exec(lines[i]);
+      if (!m) continue;
+      try { lines[i] = m[1] + JSON.stringify(fn(JSON.parse(m[2]))); } catch (e) { /* leave as is */ }
+    }
+  }
+
+  /** Removes a whole table from one TMDL file: its definition, its "ref table" line and its entry in the query order. */
+  function removeTableTmdl(text0, table) {
+    const [bom, text] = splitBom(text0);
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    const scan = scanTmdl(text);
+    let lines = scan.lines, removed = false;
+    const drop = new Array(lines.length).fill(false);
+    for (const o of scan.all) {
+      const isDef = o.kw === 'table' && o.parent === scan.root;
+      const isOther = o.kw === 'perspectiveTable' || (o.kw === 'table' && o.parent !== scan.root);
+      if ((isDef || isOther) && lc(o.name) === lc(table)) {
+        for (let k = o.descStart; k < o.blockEnd; k++) drop[k] = true;
+        if (isDef) removed = true;
+      }
+    }
+    lines.forEach((l, i) => {
+      const m = /^\s*ref\s+table\s+(.+)$/.exec(l);
+      if (m && lc(readName(m[1]).name) === lc(table)) drop[i] = true;
+    });
+    lines = lines.filter((l, i) => !drop[i]);
+    queryOrder(lines, list => list.filter(n => lc(n) !== lc(table)));
+    const out = lines.join(eol);
+    return { text: bom + out, removed, empty: !out.trim() };
+  }
+
+  /** Renames a table in one TMDL file: the definition and every reference in DAX, relationships, roles and perspectives. */
+  function renameTableTmdl(text0, oldName, newName) {
+    const [bom, text] = splitBom(text0);
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    const scan = scanTmdl(text);
+    const lines = scan.lines, old = lc(oldName);
+    const up = (o, kws) => { for (let p = o; p; p = p.parent) if (kws.includes(p.kw)) return p; return null; };
+    const rewrite = e => {
+      const seg = [lines[e.line].slice(e.col)].concat(lines.slice(e.line + 1, e.endLine)).join('\n');
+      let out = seg;
+      for (const r of daxRefs(seg).filter(x => (x.t === 'q' || x.t === 't') && x.ts != null && lc(x.table) === old).sort((a, b) => b.ts - a.ts)) {
+        out = out.slice(0, r.ts) + daxTable(newName) + out.slice(r.te);
+      }
+      if (out === seg) return;
+      const parts = out.split('\n');
+      lines[e.line] = lines[e.line].slice(0, e.col) + parts[0];
+      for (let k = 1; k < parts.length; k++) lines[e.line + k] = parts[k];
+    };
+    const DAX = ['measure', 'column', 'calculationItem', 'tablePermission', 'function'];
+    for (const o of scan.all) {
+      const inModel = !up(o, ['cultureInfo', 'perspective']);
+      if (inModel) {
+        if (o.expr && DAX.includes(o.kw)) rewrite(o.expr);
+        const calcPart = o.kw === 'partition' && o.expr && lines[o.expr.line].slice(o.expr.col).trim() === 'calculated';
+        if (calcPart || ['measure', 'column', 'calculationItem'].includes(o.kw)) for (const ep of o.exprProps) rewrite(ep.expr);
+        if (o.kw === 'relationship') {
+          for (const p of o.props) {
+            if (p.key !== 'fromColumn' && p.key !== 'toColumn') continue;
+            const [t, c] = readQualified(p.value);
+            if (lc(t) === old) { const i = lines[p.line].indexOf(':'); lines[p.line] = lines[p.line].slice(0, i + 1) + ' ' + tmdlName(newName) + '.' + tmdlName(c); }
+          }
+        }
+      }
+      if (['table', 'perspectiveTable', 'tablePermission'].includes(o.kw) && lc(o.name) === old) {
+        const l = lines[o.declLine];
+        lines[o.declLine] = l.slice(0, o.nameCol[0]) + tmdlName(newName) + l.slice(o.nameCol[1]);
+      }
+    }
+    lines.forEach((l, i) => {
+      const m = /^(\s*ref\s+table\s+)(.+)$/.exec(l);
+      if (m && lc(readName(m[2]).name) === old) lines[i] = m[1] + tmdlName(newName);
+    });
+    queryOrder(lines, list => list.map(n => (lc(n) === old ? newName : n)));
+    return bom + lines.join(eol);
+  }
+
+  /** Renames a table in report JSON (PBIR); returns the number of places changed. */
+  function renameTableInReport(json, oldName, newName) {
+    const old = lc(oldName);
+    let count = 0;
+    const walk = n => {
+      if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+      if (!n || typeof n !== 'object') return;
+      if (typeof n.Entity === 'string' && lc(n.Entity) === old) { n.Entity = newName; count++; }
+      if (Array.isArray(n.entities)) for (const e of n.entities) if (e && typeof e.name === 'string' && lc(e.name) === old) { e.name = newName; count++; }
+      for (const k in n) {
+        const v = n[k];
+        if (typeof v === 'string') {
+          if (lc(v).startsWith(old + '.')) n[k] = newName + v.slice(oldName.length);
+          else if (lc(v).includes('(' + old + '.')) n[k] = v.replace(new RegExp('\\(' + oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.', 'gi'), '(' + newName + '.');
+        } else walk(v);
+      }
+    };
+    walk(json);
+    return count;
+  }
+
+  // ---------------------------------------------------------------- Comparing two versions
+
+  /** What changed between two analyses of the same model (for example a branch against main). */
+  function compareAnalyses(before, after) {
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const out = { added: [], removed: [], changed: [], newlyBroken: [], fixed: [], newBrokenRefs: [], nowUnused: [] };
+    const skip = n => n.system || n.type === 'function';
+    for (const n of after.list) {
+      if (skip(n)) continue;
+      const o = before.nodes.get(n.id);
+      if (!o) { out.added.push({ id: n.id, label: objLabel(n), kind: n.kind }); if (n.broken) out.newlyBroken.push({ id: n.id, label: objLabel(n), detail: n.problems.map(p => p.ref + ': ' + p.reason).join('; ') }); continue; }
+      const what = [];
+      if (norm(o.expression) !== norm(n.expression)) what.push('formula');
+      if (norm(o.description) !== norm(n.description)) what.push('description');
+      if (!!o.hidden !== !!n.hidden) what.push(n.hidden ? 'now hidden' : 'now visible');
+      if (n.type === 'measure' && norm(o.formatString) !== norm(n.formatString)) what.push('format');
+      if (n.type === 'column' && norm(o.dataType) !== norm(n.dataType)) what.push('data type');
+      if (what.length) out.changed.push({ id: n.id, label: objLabel(n), what });
+      if (n.broken && !o.broken) out.newlyBroken.push({ id: n.id, label: objLabel(n), detail: n.problems.map(p => p.ref + ': ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + objLabel(after.nodes.get(id)))).join('; ') });
+      if (!n.broken && o.broken) out.fixed.push({ id: n.id, label: objLabel(n) });
+      if (n.status === 'unused' && o.status !== 'unused' && n.type !== 'table') out.nowUnused.push({ id: n.id, label: objLabel(n) });
+    }
+    for (const o of before.list) if (!skip(o) && !after.nodes.has(o.id)) out.removed.push({ id: o.id, label: objLabel(o), kind: o.kind, wasUsed: o.status === 'direct' || o.status === 'indirect' });
+    const key = u => [u.table, u.name, u.report, u.page, u.visual, u.role].join('|');
+    const had = new Set(before.broken.map(key));
+    for (const u of after.broken) if (!had.has(key(u))) out.newBrokenRefs.push({ label: u.table + '[' + u.name + ']', detail: [u.report, u.page, u.visualTitle || u.visualType || u.visual].filter(Boolean).join(' › ') });
+    out.total = out.added.length + out.removed.length + out.changed.length;
+    return out;
+  }
+
+  // ---------------------------------------------------------------- Performance Analyzer
+
+  /**
+   * Export of Power BI Desktop's Performance Analyzer → one line per visual with where the time went.
+   * When a visual was refreshed several times, the slowest run is kept.
+   */
+  function parsePerformance(json, source) {
+    const events = (json && json.events) || [];
+    const byId = new Map(events.map(e => [e.id, e]));
+    const ms = e => (e.start && e.end ? Math.max(0, new Date(e.end) - new Date(e.start)) : 0);
+    const rootOf = e => { let cur = e, guard = 0; while (cur && cur.parentId && byId.has(cur.parentId) && guard++ < 50) cur = byId.get(cur.parentId); return cur; };
+    const runs = new Map();
+    for (const e of events) {
+      if (e.name !== 'Visual Container Lifecycle') continue;
+      const m = e.metrics || {};
+      runs.set(e.id, { visualId: m.visualId || '', title: m.visualTitle || '', type: m.visualType || '', total: ms(e), dax: 0, directQuery: 0, render: 0, rows: null, query: '', source: source || '' });
+    }
+    for (const e of events) {
+      const r = rootOf(e), run = r && r !== e ? runs.get(r.id) : null;
+      if (!run) continue;
+      if (e.name === 'Execute DAX Query') { run.dax += ms(e); const m = e.metrics || {}; if (m.QueryText) run.query = m.QueryText; if (m.RowCount != null) run.rows = m.RowCount; }
+      else if (e.name === 'Execute Direct Query') run.directQuery += ms(e);
+      else if (e.name === 'Render') run.render += ms(e);
+    }
+    const best = new Map();
+    for (const r of runs.values()) {
+      const k = r.visualId || r.title;
+      r.runs = (best.get(k) ? best.get(k).runs : 0) + 1;
+      if (!best.has(k) || r.total > best.get(k).total) best.set(k, Object.assign(r, { runs: r.runs }));
+      else best.get(k).runs = r.runs;
+    }
+    return [...best.values()].sort((a, b) => b.total - a.total);
+  }
+
   // ---------------------------------------------------------------- Best-practice checks
 
   const RULES = [
@@ -1347,8 +1560,9 @@
   ];
 
   /** model + analysis → {rules: [{…rule, items: [{id, label, detail}]}], counts: {error, warning, info}} */
-  function checkRules(model, analysis) {
+  function checkRules(model, analysis, config) {
     const noModel = !!analysis.stats.noModel;
+    const setting = (config && config.rules) || {};
     const found = new Map(RULES.map(r => [r.id, []]));
     const add = (rule, n, detail) => found.get(rule).push({ id: n ? n.id : null, label: n ? objLabel(n) : '', detail: detail || '' });
     const list = analysis.list.filter(n => !n.system);
@@ -1404,7 +1618,10 @@
       const auto = analysis.list.filter(n => n.type === 'table' && n.system);
       if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
     }
-    const rules = RULES.map(r => Object.assign({}, r, { items: found.get(r.id) })).filter(r => r.items.length);
+    // smo.config.json can switch a rule off or change how heavy it counts
+    const rules = RULES.filter(r => setting[r.id] !== 'off' && setting[r.id] !== false)
+      .map(r => Object.assign({}, r, { severity: /^(error|warning|info)$/.test(setting[r.id]) ? setting[r.id] : r.severity, items: found.get(r.id) }))
+      .filter(r => r.items.length);
     const counts = { error: 0, warning: 0, info: 0 };
     for (const r of rules) counts[r.severity] += r.items.length;
     return { rules, counts, total: counts.error + counts.warning + counts.info };
@@ -1412,7 +1629,7 @@
   const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
 
   return {
-    checkRules, RULES,
+    checkRules, RULES, parsePerformance, compareAnalyses, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,

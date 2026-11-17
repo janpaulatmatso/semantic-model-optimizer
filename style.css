@@ -207,3 +207,26 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .rule > p, .rule > table { margin: 0 10px 10px; width: calc(100% - 20px); }
 .rule .sev { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; }
 .sev-error .sev { color: var(--unused); } .sev-warning .sev { color: var(--model); } .sev-info .sev { color: var(--muted); }
+
+.fixbtn { margin-left: 8px; padding: 1px 8px; font-size: 12px; }
+#btnHistory { padding: 5px 12px; }
+#btnHistory[hidden] { display: none; }
+
+.pf { width: 100%; }
+.pf th { position: sticky; top: 0; background: var(--panel); text-align: left; font-size: 12px; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.pf td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pf td.num, .pf th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pf tbody tr { cursor: pointer; }
+.pf tbody tr:hover, .pf tbody tr.sel { background: var(--accent-soft); }
+.pfdetail { padding: 4px 12px 12px; }
+.pfdetail h3 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.rule summary .muted { font-weight: 400; }
+
+#btnCompare { padding: 5px 12px; }
+#btnCompare[hidden] { display: none; }
+.cmpout { max-height: 50vh; overflow: auto; margin-top: 10px; }
+.cmpout h3 { font-size: 13px; margin: 14px 0 4px; }
+.sg { display: block; margin: 10px 0; }
+.sg textarea { display: block; width: 100%; margin-top: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical; }
+#sgOut { max-height: 46vh; overflow: auto; }
+.wsbox input { flex: 1 1 200px; }

@@ -1,0 +1,16 @@
+{
+  "name": "semantic-model-optimizer",
+  "version": "1.0.0",
+  "description": "Find which measures and columns your Power BI reports use, which they don't, and see their lineage.",
+  "license": "MIT",
+  "private": true,
+  "bin": { "smo": "cli.js" },
+  "scripts": {
+    "start": "node serve.js",
+    "check": "node cli.js --check"
+  },
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "*"
+  }
+}

@@ -15,7 +15,8 @@ function stamp() {
 /** Copies every file about to change into smo-backup first, then writes. changed: Map(absPath → text) */
 function backupAndWrite(modelRootAbs, changed, relOf) {
   if (!changed.size) return '';
-  const backup = path.join(path.dirname(modelRootAbs), 'smo-backup', stamp());
+  let backup = path.join(path.dirname(modelRootAbs), 'smo-backup', stamp());
+  for (let i = 2, base = backup; fs.existsSync(backup); i++) backup = base + '-' + i;
   for (const f of changed.keys()) {
     const dest = path.join(backup, relOf(f));
     fs.mkdirSync(path.dirname(dest), { recursive: true });

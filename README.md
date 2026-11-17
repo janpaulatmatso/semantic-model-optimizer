@@ -33,6 +33,12 @@ After connecting you pick a model and load it. Load your thin reports before or 
 - A cloud server opens a sign-in window. Reading the definition needs admin or write permission on the model; a viewer cannot query the schema.
 - Windows only, and it needs ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS.
 
+### Reports from a workspace
+
+In the same panel you can read every report in a Power BI workspace that uses the model, so reports you do not have as files count too. Fill in the workspace and, optionally, the model. It uses the Azure CLI sign-in (`az login`), lists the reports with the Power BI REST API and fetches each definition with the Fabric REST API. Read-only; you need permission to edit a report to read its definition.
+
+Once a model is loaded from a server, *Sizes from server* reads rows and MB from that same server.
+
 ## Checks
 
 The **Checks** tab lists what the tool finds against a set of best-practice rules, grouped per rule with an explanation. Click an object to open it.
@@ -44,6 +50,36 @@ The **Checks** tab lists what the tool finds against a set of best-practice rule
 | Note | Measures without a description · Measures defined in a report · Column references without a table name · Measure references with a table name · Inactive relationships · Floating-point columns |
 
 The findings are also a sheet in the Excel export.
+
+### Fixing findings
+
+Three rules have a button that repairs every finding at once (project loaded by path, TMDL):
+
+- **Key columns that are not hidden** → hides them.
+- **Measures without a format** → sets a format: a percentage when the name says so, otherwise a whole or decimal number.
+- **Measures with the same formula** → keeps the most used one and rewrites the others to refer to it.
+
+For **Measures without a description** there is *Suggest descriptions*: the tool sends the names and DAX of those measures to the Claude API and shows a suggestion per measure, which you can edit and tick before anything is saved. This is optional: it needs `npm install @anthropic-ai/sdk` in the tool folder and API credentials in the environment (`ANTHROPIC_API_KEY`), and it costs tokens on that account. No data from your tables is sent.
+
+### Choosing the rules per project
+
+Put a `smo.config.json` in the project folder to switch a rule off or change how heavy it counts:
+
+```json
+{ "rules": { "inactive-relationship": "off", "measure-no-description": "warning", "measure-no-format": "error" } }
+```
+
+The rule ids are the ones `node cli.js <path> --rules` works with: `broken-formula`, `broken-reference`, `many-to-many`, `bidirectional`, `key-visible`, `calc-column-as-measure`, `duplicate-measure`, `measure-no-format`, `measure-no-description`, `report-only-measure`, `unqualified-column`, `qualified-measure`, `inactive-relationship`, `auto-date-time`, `double-data-type`.
+
+## History and compare
+
+- **History** lists the backups the tool made before each change. *Restore* puts those files back; the current files are backed up first, so a restore can be undone as well.
+- **Compare** shows what is added, removed, changed or newly broken in the files on disk compared with a Git branch, tag or commit of the same repository.
+
+## Pages and performance
+
+- **Pages** turns the usage around: per report page you see every visual and filter with the fields it uses.
+- **Performance** reads an export of the Performance Analyzer (in Power BI Desktop: *Optimize › Performance analyzer*, record, refresh the visuals, *Export*). Put the file in the project folder or open it with *Open file*. Per visual you see the total time, the DAX query, how much of that is waiting for the source (DirectQuery) and the drawing; click a visual for its fields and the query.
 
 ## Use in a pipeline
 
@@ -59,6 +95,16 @@ The findings are also a sheet in the Excel export.
 ```
 
 The check works on files, so it needs no Power BI and runs on any agent with Node 18 or newer.
+
+More options for a pipeline:
+
+| Option | What it does |
+|---|---|
+| `--format github` / `--format azure` | Prints each finding as an annotation, so it shows up in the pull request (GitHub) or the build summary (Azure DevOps). |
+| `--summary <file>` | Writes a Markdown summary. Use `$GITHUB_STEP_SUMMARY`, or post the file as a pull-request comment. |
+| `--compare-ref origin/main` | Lists what the branch adds, removes, changes and newly breaks compared with that Git version. `--compare <folder>` does the same against another folder. |
+| `--server <connection> --database <name>` | Loads the model over XMLA instead of from files (Windows agent). For a service principal put the whole connection string in the environment variable `SMO_XMLA_CONN`, for example `Data Source=powerbi://…;User ID=app:<client id>@<tenant id>;Password=<secret>`, so the secret is not on the command line. |
+| `--workspace <name> --dataset <name>` | Also reads every report in that Power BI workspace that uses the model. Tokens come from `SMO_POWERBI_TOKEN` and `SMO_FABRIC_TOKEN`, or from the Azure CLI when it is signed in. |
 
 ## Report measures and broken formulas
 
@@ -76,6 +122,7 @@ The **Export…** dropdown above the list exports what you see, with the current
 
 - **Excel (.xlsx):** a workbook with the sheets *Objects* (including description and DAX), *Report usage* (one row per place a field is used), *Relationships* and, if there are any, *Broken references*. Header row frozen, filter buttons on.
 - **CSV:** the object list, comma-separated, UTF-8.
+- **Documentation (.html):** a readable description of the whole model: every table with its description, measures with their DAX and columns, plus the relationships. Print it to PDF or open it in Word.
 - **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
 
 All three are generated in the browser; nothing is uploaded.
@@ -124,7 +171,7 @@ Tick unused measures and columns (the box in the header takes the whole filtered
 - **Close the project in Power BI Desktop first.** Desktop only reads the files when opening; if you save there afterwards, everything comes back.
 - In all other cases (pbit, `model.bim`, loaded through *Open folder*) you can download a **Tabular Editor script** that deletes the same objects.
 
-Deleting tables is not supported yet.
+A whole table can be deleted as well, as long as nothing uses it: switch the list to *Tables* and tick it. Its columns and measures go with it.
 
 ## Editing name, description and formula
 
@@ -134,7 +181,7 @@ Click a measure, column or table and choose *Edit*. You can change the name, the
 - **Renaming** updates all references: in formulas, sort-by columns, hierarchies, relationships, perspectives, and in the visuals and filters of reports in PBIR format. If a report in the legacy format or a `.pbix` uses the field, the rename is refused.
 - The tool only writes if the model still has exactly the same structure after the change (same objects, dependencies and report usage).
 - The formula is not checked by Power BI; you only see a DAX error when you open the project. The tool does warn about names that do not exist in the model.
-- Renaming tables is not supported yet. Usage outside the loaded folder (other reports, Excel) breaks on rename.
+- Tables can be renamed too; every formula, relationship and report field that names the table is updated. Usage outside the loaded folder (other reports, Excel) breaks on a rename.
 
 ## Status
 
@@ -146,7 +193,7 @@ Click a measure, column or table and choose *Edit*. You can change the name, the
 ## Limitations
 
 - Only the loaded reports count. The tool cannot see usage in other reports, Excel (Analyze in Excel), dashboards or external DAX queries.
-- Columns that are only used in Power Query (M) do not count as used.
+- A column that another query reads in Power Query counts as *Model only*. The tool recognises this by name, so an unusual M pattern can be missed.
 - The model inside a `.pbix` cannot be read; save as `.pbip` or `.pbit`.
 
 ## License

@@ -1,8 +1,9 @@
 # Reads row counts and memory usage from a file open in Power BI Desktop (read-only).
 #   powershell -File desktop-stats.ps1 -List         -> open files with their port
 #   powershell -File desktop-stats.ps1 -Port 12345   -> statistics as JSON
+# With a connection string in the environment variable SMO_XMLA_CONN (and -Database) it reads from that server instead.
 # Requires ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS, among others.
-param([switch]$List, [int]$Port = 0)
+param([switch]$List, [int]$Port = 0, [string]$Database = '')
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -24,8 +25,10 @@ function Get-Instances {
 
 if ($List) { Out-Json @{ instances = @(Get-Instances) }; exit 0 }
 
-$instances = @(Get-Instances)
-if (-not ($instances | Where-Object { $_.port -eq $Port })) {
+$remote = $env:SMO_XMLA_CONN
+$instances = @()
+if (-not $remote) { $instances = @(Get-Instances) }
+if (-not $remote -and -not ($instances | Where-Object { $_.port -eq $Port })) {
   Out-Json @{ error = 'This is not the port of a file open in Power BI Desktop.' }; exit 0
 }
 
@@ -41,7 +44,9 @@ if (-not $dll) {
 }
 Add-Type -Path $dll
 
-$conn = New-Object Microsoft.AnalysisServices.AdomdClient.AdomdConnection("Data Source=localhost:$Port")
+$connStr = "Data Source=localhost:$Port"
+if ($remote) { $connStr = $remote; if ($connStr -notmatch '=') { $connStr = "Data Source=$connStr" }; if ($Database -and $connStr -notmatch '(?i)initial catalog\s*=') { $connStr = "$connStr;Initial Catalog=$Database" } }
+$conn = New-Object Microsoft.AnalysisServices.AdomdClient.AdomdConnection($connStr)
 $conn.Open()
 function Query($sql) {
   $cmd = $conn.CreateCommand(); $cmd.CommandText = $sql
@@ -86,5 +91,6 @@ try {
   }
   foreach ($t in $tables.Values) { $t.size += $t.other }
   $name = ($instances | Where-Object { $_.port -eq $Port }).name
-  Out-Json @{ source = "Power BI Desktop: $name"; tables = @($tables.Values); columns = @($columns.Values) }
+  if ($remote) { $name = $Database }
+  Out-Json @{ source = $(if ($remote) { "server: $name" } else { "Power BI Desktop: $name" }); tables = @($tables.Values); columns = @($columns.Values) }
 } finally { $conn.Close() }

@@ -6,6 +6,7 @@
   const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model only', unused: 'Unused' };
   const STATUS_RANK = { unused: 0, model: 1, indirect: 2, direct: 3 };
 
+  const App = window.SMOApp = { views: {}, onRun: [] };
   const state = {
     files: [], project: null, modelIdx: 0, off: new Set(), analysis: null,
     q: '', type: 'mc', status: '', table: '', sort: 'status', dir: 1, selected: null, expand: false,
@@ -205,6 +206,16 @@
   }
   $('btnDesktop').onclick = () => {
     if (!state.project) return msg('Load the model first (Open folder), then the sizes.', true);
+    if (state.xmla) {
+      // the model came from a server: read the sizes from that same server
+      document.body.style.cursor = 'progress';
+      return apiPost('api/stats', state.xmla).then(r => {
+        $('msgs').innerHTML = '';
+        if (r.error) return msg(r.error, true);
+        if (!r.tables || !r.tables.length) return msg('This model has no tables with data in memory (DirectQuery models have no size).', true);
+        setStats(r);
+      }).catch(e => msg('Reading failed: ' + e.message, true)).finally(() => { document.body.style.cursor = ''; });
+    }
     loadDesktop();
   };
   $('pathForm').onsubmit = e => { e.preventDefault(); loadFromPath($('pathInput').value.trim()); };
@@ -222,6 +233,8 @@
       if (r.error) { $('xmlaInfo').textContent = r.error; return; }
       $('xmlaPanel').hidden = true;
       setProject(r.files, r.warnings || []);
+      state.xmla = { server, database };
+      $('btnDesktop').textContent = 'Sizes from server';
       msg('Model ' + r.name + ' loaded from ' + server + '. It is read-only here: editing and deleting need the model as files.');
     } catch (e) { $('xmlaInfo').textContent = 'Connecting failed: ' + e.message; }
     finally { document.body.style.cursor = ''; }
@@ -406,11 +419,24 @@
     finally { document.body.style.cursor = ''; }
   };
 
+  async function apiPost(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(x => x.json());
+  }
+  /** Reads the project again from disk after a change, keeping the current view. */
+  async function reloadFromDisk(selectId) {
+    const l = await fetch('api/load?path=' + encodeURIComponent(state.loadedPath)).then(x => x.json());
+    if (l.error) return msg(l.error, true);
+    const keepMsgs = $('msgs').innerHTML;
+    reloadKeep(l.files, [], { base: l.base, path: state.loadedPath });
+    $('msgs').innerHTML = keepMsgs;
+    if (selectId && state.analysis.nodes.has(selectId)) select(selectId);
+  }
+
   // ------------------------------------------------------------ selecting and deleting
 
   /** Only unused measures and columns that live in the model itself can be deleted. */
-  const canSel = n => (n.type === 'measure' || n.type === 'column') && n.status === 'unused' && n.kind !== 'report measure' &&
-    !(n.type === 'column' && n.tableKind && n.tableKind !== 'table');
+  const canSel = n => n.status === 'unused' && n.kind !== 'report measure' &&
+    (n.type === 'measure' || (n.type === 'column' && !(n.tableKind && n.tableKind !== 'table')) || (n.type === 'table' && !n.system));
   const canWrite = () => !!(state.base && state.project && state.project.models[state.modelIdx].format === 'tmdl');
 
   function renderSelBar() {
@@ -420,7 +446,8 @@
     if (!nodes.length) return;
     const m = nodes.filter(n => n.type === 'measure').length, c = nodes.length - m;
     const size = nodes.reduce((s, n) => s + (n.size || 0), 0);
-    bar.innerHTML = `<b>${nodes.length} selected</b> <span class="muted">${m} measures, ${c} columns${size ? ' · ' + mb(size) + ' MB' : ''}</span>
+    const tb = nodes.filter(n => n.type === 'table').length;
+    bar.innerHTML = `<b>${nodes.length} selected</b> <span class="muted">${m} measures, ${c - tb} columns${tb ? ', ' + tb + ' table' + (tb === 1 ? '' : 's') : ''}${size ? ' · ' + mb(size) + ' MB' : ''}</span>
       <span class="grow"></span><button class="danger" data-act="del">Delete…</button><button data-act="script" title="Script that deletes the same objects in Tabular Editor">Tabular Editor script</button><button data-act="clear">Clear selection</button>`;
   }
 
@@ -428,6 +455,13 @@
   function plan() {
     const a = state.analysis;
     const ok = new Set([...state.sel].filter(id => a.nodes.has(id) && canSel(a.nodes.get(id))));
+    // a selected table takes its columns and measures with it
+    const viaTable = new Set();
+    for (const id of [...ok]) {
+      const t = a.nodes.get(id);
+      if (t.type !== 'table') continue;
+      for (const n of a.list) if (n.type !== 'table' && n.table === t.name && !ok.has(n.id)) { ok.add(n.id); viaTable.add(n.id); }
+    }
     const blocked = [];
     for (let changed = true; changed;) {
       changed = false;
@@ -437,6 +471,8 @@
         if (by.length) { ok.delete(id); blocked.push({ n, by: by.map(u => a.nodes.get(u)) }); changed = true; }
       }
     }
+    // when a table cannot go, the objects that were only added because of it stay as well
+    for (const id of [...viaTable]) { const n = a.nodes.get(id); if (ok.has(id) && !ok.has('T|' + n.table)) ok.delete(id); }
     return { ok: [...ok].map(id => a.nodes.get(id)), blocked };
   }
 
@@ -489,13 +525,21 @@
     const model = state.project.models[state.modelIdx];
     document.body.style.cursor = 'progress';
     try {
-      const r = await fetch('api/delete', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: state.loadedPath, modelRoot: model.root, items: nodes.map(n => ({ type: n.type, table: n.table, name: n.name })) }),
-      }).then(x => x.json());
+      const tables = nodes.filter(n => n.type === 'table').map(n => n.name);
+      const rest = nodes.filter(n => n.type !== 'table' && !tables.includes(n.table));
+      let r = { removed: [], files: 0, backup: '', notFound: [], warnings: [] };
+      if (rest.length) {
+        r = await apiPost('api/delete', { path: state.loadedPath, modelRoot: model.root, items: rest.map(n => ({ type: n.type, table: n.table, name: n.name })) });
+        if (r.error) { $('msgs').innerHTML = ''; return msg(r.error, true); }
+      }
       $('msgs').innerHTML = '';
+      if (tables.length) {
+        const t = await apiPost('api/table', { op: 'delete', path: state.loadedPath, modelRoot: model.root, tables });
+        if (t.error) msg(t.error, true);
+        else { msg(`${t.removed} table${t.removed === 1 ? '' : 's'} deleted. Copy of the old files: ${t.backup}`); r.backup = r.backup || t.backup; }
+      }
       if (r.error) return msg(r.error, true);
-      msg(`${r.removed.length} objects deleted from ${r.files} files. Copy of the old files: ${r.backup}`);
+      if (r.removed.length) msg(`${r.removed.length} objects deleted from ${r.files} files. Copy of the old files: ${r.backup}`);
       if (r.notFound.length) msg(r.notFound.length + ' objects not found in the files: ' + r.notFound.slice(0, 5).map(x => x.table + '[' + x.name + ']').join(', '), true);
       for (const w of r.warnings) msg(w);
       const keepIdx = state.modelIdx, off = state.off, base = state.base, path = state.loadedPath;
@@ -532,22 +576,25 @@
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
     if (state.view === 'model') renderDiagram();
-    state.checks = SMO.checkRules(cur.model, state.analysis);
+    state.checks = SMO.checkRules(cur.model, state.analysis, p.config);
     const c = state.checks.counts;
     $('tabChecks').innerHTML = 'Checks' + (c.error ? ` <span class="cnt s-unused">${c.error}</span>` : '') + (c.warning ? ` <span class="cnt s-model">${c.warning}</span>` : '') + (!c.error && !c.warning && c.info ? ` <span class="cnt">${c.info}</span>` : '');
     if (state.view === 'checks') renderChecks();
+    if (App.views[state.view]) App.views[state.view]();
+    for (const fn of App.onRun) fn();
   }
 
   // ------------------------------------------------------------ best-practice checks
 
   const SEV = { error: 'Error', warning: 'Warning', info: 'Note' };
+  const FIXABLE = { 'key-visible': 'Hide these columns', 'measure-no-format': 'Set a number format', 'duplicate-measure': 'Point duplicates to one measure' };
   function renderChecks() {
     const r = state.checks, c = r.counts;
     $('checksInfo').textContent = r.total ? `${c.error} error${c.error === 1 ? '' : 's'} · ${c.warning} warning${c.warning === 1 ? '' : 's'} · ${c.info} note${c.info === 1 ? '' : 's'}` +
       (state.analysis.stats.noModel ? ' · the model is not loaded, so only the report could be checked' : '') : 'Nothing found. The model passes every check.';
     const open = state.checksOpen || (state.checksOpen = new Set(r.rules.filter(x => x.severity === 'error').map(x => x.id)));
     $('checksList').innerHTML = r.rules.map(rule => `<details class="rule sev-${rule.severity}" data-rule="${rule.id}"${open.has(rule.id) ? ' open' : ''}>
-      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b><span class="cnt">${rule.items.length}</span></summary>
+      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b>${FIXABLE[rule.id] && canWrite() ? `<button type="button" class="fixbtn" data-fix="${rule.id}">${FIXABLE[rule.id]}</button>` : ''}${rule.id === 'measure-no-description' && canWrite() ? '<button type="button" class="fixbtn" data-suggest="1">Suggest descriptions</button>' : ''}<span class="cnt">${rule.items.length}</span></summary>
       <p class="muted small">${esc(rule.help)}</p>
       <table class="uses">${rule.items.slice(0, 300).map(it => `<tr><td>${it.id ? `<span class="link" data-id="${esc(it.id)}">${esc(it.label)}</span>` : esc(it.label)}</td><td class="muted">${esc(it.detail)}</td></tr>`).join('')}</table>
       ${rule.items.length > 300 ? `<p class="muted small">… and ${rule.items.length - 300} more. Export to Excel for the full list.</p>` : ''}</details>`).join('');
@@ -563,10 +610,9 @@
   function setView(v) {
     state.view = v;
     for (const b of $('viewTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.view === v);
-    $('listView').hidden = v !== 'list';
-    $('modelView').hidden = v !== 'model';
-    $('checksView').hidden = v !== 'checks';
+    for (const el of $('split').querySelectorAll('.left[data-view]')) el.hidden = el.dataset.view !== v;
     if (v === 'checks') renderChecks();
+    if (App.views[v]) App.views[v]();
     $('split').classList.toggle('wide', v === 'model');
     if (v === 'model') { state.zoom = null; renderDiagram(); }
   }
@@ -974,7 +1020,6 @@
 
   /** Can the name be changed safely? Only if every report that uses the field is stored on disk as PBIR. */
   function renameBlock(n) {
-    if (n.type === 'table') return 'Renaming tables is not supported yet.';
     const bad = new Set();
     for (const u of n.reportUses) {
       const r = state.project.reports.find(x => x.name === u.report);
@@ -990,7 +1035,7 @@
     return `<form id="editForm" class="edit">
       <h2>Edit ${esc(n.kind)}</h2>
       <label>Name<input name="name" type="text" value="${esc(n.name)}" ${block ? 'disabled' : ''} spellcheck="false" autocomplete="off"></label>
-      ${block ? `<div class="muted small">${esc(block)}</div>` : n.type === 'table' ? '' : `<div class="muted small" id="renameNote"></div>`}
+      ${block ? `<div class="muted small">${esc(block)}</div>` : `<div class="muted small" id="renameNote"></div>`}
       <label>Description<textarea name="description" rows="3">${esc(n.description || '')}</textarea></label>
       ${hasExpr ? `<label>Formula (DAX)<textarea name="expression" class="code" rows="${rows}" spellcheck="false">${esc(n.expression)}</textarea></label><div class="warn small" id="exprNote"></div>` : ''}
       <div class="muted small">The change is written to the TMDL files; each changed file is first copied to <code>smo-backup</code>. Close the project in Power BI Desktop first. The formula is not validated by Power BI: you only see an error when you open the project.</div>
@@ -1026,10 +1071,14 @@
       if (f.elements.expression) changes.expression = f.elements.expression.value;
       document.body.style.cursor = 'progress';
       try {
-        const r = await fetch('api/edit', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: state.loadedPath, modelRoot: state.project.models[state.modelIdx].root, sel: { type: n.type, table: n.table, name: n.name }, changes }),
-        }).then(x => x.json());
+        const root = state.project.models[state.modelIdx].root;
+        const newTable = n.type === 'table' && changes.name !== undefined && changes.name.trim() !== n.name ? changes.name.trim() : '';
+        if (n.type === 'table') delete changes.name;
+        let r = await apiPost('api/edit', { path: state.loadedPath, modelRoot: root, sel: { type: n.type, table: n.table, name: n.name }, changes });
+        if (!r.error && newTable) {
+          const t = await apiPost('api/table', { op: 'rename', path: state.loadedPath, modelRoot: root, table: n.name, name: newTable });
+          r = t.error ? t : { changed: true, files: (r.files || 0) + t.files, backup: t.backup, renamed: true, reportFields: t.reportFields, id: t.id };
+        }
         $('msgs').innerHTML = '';
         if (r.error) return msg(r.error, true);
         state.editing = null;
@@ -1147,6 +1196,10 @@
       <span><i style="background:var(--calc)"></i>calculated</span><span><i style="background:var(--table)"></i>table</span><span><i style="background:var(--page)"></i>report page</span>
       <span>dot = status</span><span>left = source, right = consumer${more ? '' : ''}. Click a block to go there.</span></div>`;
   }
+
+  // what extras.js builds on
+  Object.assign(App, { state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath });
+  window.dispatchEvent(new Event('smo-ready'));
 
   // test hook: load a project from the address bar (?path=...) when serve.js is running
   const qp = new URLSearchParams(location.search).get('path');

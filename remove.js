@@ -65,6 +65,7 @@ function removeObjects(modelRoot, items) {
     const d = new Date(), p = n => String(n).padStart(2, '0');
     const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
     backup = path.join(path.dirname(modelRoot), 'smo-backup', stamp);
+    for (let i = 2, base = backup; fs.existsSync(backup); i++) backup = base + '-' + i;
     for (const f of changed) {
       const dest = path.join(backup, path.basename(modelRoot), path.relative(modelRoot, f));
       fs.mkdirSync(path.dirname(dest), { recursive: true });

@@ -10,13 +10,18 @@ const { execFile } = require('child_process');
 const { removeObjects } = require('./remove.js');
 const { editObject } = require('./edit.js');
 const { scanRepo } = require('./scan.js');
+const { compareWithRef } = require('./compare.js');
+const { suggestDescriptions } = require('./describe.js');
+const { workspaceReports } = require('./workspace.js');
+const { fixRule, removeTables, renameTable, listBackups, restoreBackup } = require('./fix.js');
 
 /** Rows and MB from a file open in Power BI Desktop (Windows only, read-only). */
-function desktopStats(port) {
+function desktopStats(port, server, database) {
   return new Promise(resolve => {
     if (process.platform !== 'win32') return resolve({ error: 'Reading from Power BI Desktop only works on Windows.' });
-    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'desktop-stats.ps1')].concat(port ? ['-Port', String(port)] : ['-List']);
-    execFile('powershell.exe', args, { maxBuffer: 256 * 1024 * 1024, timeout: 120000, windowsHide: true }, (err, stdout, stderr) => {
+    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'desktop-stats.ps1')].concat(server ? (database ? ['-Database', database] : []) : port ? ['-Port', String(port)] : ['-List']);
+    const env = server ? Object.assign({}, process.env, { SMO_XMLA_CONN: server }) : process.env;
+    execFile('powershell.exe', args, { maxBuffer: 256 * 1024 * 1024, timeout: server ? 600000 : 120000, windowsHide: !server || /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(server), env }, (err, stdout, stderr) => {
       try { resolve(JSON.parse(stdout.slice(stdout.indexOf('{')))); }
       catch (e) { resolve({ error: 'Reading failed: ' + String((stderr || (err && err.message) || 'no response')).trim().split(String.fromCharCode(10))[0].trim() }); }
     });
@@ -44,7 +49,7 @@ function xmlaModel(server, database, name) {
 }
 
 const PORT = Number(process.env.PORT || process.argv[2] || 5273);
-const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js' };
+const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js', '/extras.js': 'extras.js' };
 const TYPES = { html: 'text/html', js: 'text/javascript', css: 'text/css' };
 
 http.createServer(async (req, res) => {
@@ -92,6 +97,40 @@ http.createServer(async (req, res) => {
       for await (const chunk of req) { body += chunk; if (body.length > 1e6) throw new Error('Too large'); }
       const j = JSON.parse(body);
       return send(200, JSON.stringify(await xmlaModel(String(j.server || '').trim(), String(j.database || '').trim(), String(j.name || '').trim())), 'application/json');
+    }
+    // changes to files: only from this page itself, as JSON
+    const post = async () => {
+      const origin = String(req.headers.origin || '');
+      if (req.method !== 'POST' || !/^application\/json/.test(String(req.headers['content-type'] || '')) || !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return null;
+      let body = '';
+      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Too large'); }
+      return JSON.parse(body);
+    };
+    const routes = {
+      '/api/fix': j => fixRule(String(j.path), String(j.modelRoot), String(j.rule), j.ids),
+      '/api/table': j => (j.op === 'rename' ? renameTable(String(j.path), String(j.modelRoot), String(j.table), String(j.name)) : removeTables(String(j.path), String(j.modelRoot), (j.tables || []).map(String))),
+      '/api/compare': j => compareWithRef(String(j.path), String(j.modelRoot), String(j.ref || '')),
+      '/api/describe': j => suggestDescriptions(String(j.path), String(j.modelRoot), j.ids),
+      '/api/backups': j => listBackups(String(j.path), String(j.modelRoot)),
+      '/api/restore': j => restoreBackup(String(j.path), String(j.modelRoot), String(j.stamp)),
+    };
+    if (routes[url.pathname]) {
+      const j = await post();
+      if (!j) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
+      if (!j.path || !j.modelRoot) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
+      try { const r = await routes[url.pathname](j); delete r.analysis; return send(200, JSON.stringify(r), 'application/json'); }
+      catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
+    }
+    if (url.pathname === '/api/workspace') {
+      const j = await post();
+      if (!j) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
+      try { return send(200, JSON.stringify(await workspaceReports({ workspace: j.workspace, dataset: j.dataset })), 'application/json'); }
+      catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
+    }
+    if (url.pathname === '/api/stats') {
+      const j = await post();
+      if (!j || !j.server) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
+      return send(200, JSON.stringify(await desktopStats(0, String(j.server), String(j.database || ''))), 'application/json');
     }
     if (url.pathname === '/api/scan') {
       try { return send(200, JSON.stringify(scanRepo(url.searchParams.get('path') || '')), 'application/json'); }

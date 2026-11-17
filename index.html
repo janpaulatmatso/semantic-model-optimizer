@@ -82,7 +82,7 @@
   <div id="noModel" class="msg" hidden>The model is not loaded (for example because it lives on Analysis Services). You see the measures the reports define themselves and the fields they use; whether those fields exist cannot be checked. Load the model next to it as <code>model.bim</code>, a Power BI project or a .pbit to check everything.</div>
   <section id="tiles" class="tiles"></section>
   <section class="split" id="split">
-    <div class="left" id="modelView" hidden>
+    <div class="left" id="modelView" data-view="model" hidden>
       <div class="filters">
         <label class="inline">Centre on <select id="dCenter"></select></label>
         <label class="inline"><input type="checkbox" id="dOther" checked> Tables without relationships</label>
@@ -98,11 +98,11 @@
         <span>1 / * = cardinality</span><span>dashed = inactive</span><span>×n = several relationships</span><span>⇄ = filters both ways</span>
         <span>Click a table to select it, double-click to centre the star on it.</span></div>
     </div>
-    <div class="left" id="checksView" hidden>
+    <div class="left" id="checksView" data-view="checks" hidden>
       <div class="count" id="checksInfo"></div>
       <div class="tablewrap checks" id="checksList"></div>
     </div>
-    <div class="left" id="listView">
+    <div class="left" id="listView" data-view="list">
       <div class="filters">
         <input id="q" type="search" placeholder="Search by name, table or DAX">
         <select id="fType">
@@ -142,5 +142,6 @@
 <script src="diagram.js"></script>
 <script src="export.js"></script>
 <script src="app.js"></script>
+<script src="extras.js"></script>
 </body>
 </html>
