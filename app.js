@@ -167,7 +167,7 @@
   // via serve.js: paste a path and read sizes from Power BI Desktop
   if (location.protocol.startsWith('http')) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
-      $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false;
+      $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false; $('btnXmla').hidden = false;
       renderRepos();
       Promise.all(repos.paths.map(scanRepoPath)).then(renderRepos);
     } }).catch(() => {});
@@ -208,6 +208,67 @@
     loadDesktop();
   };
   $('pathForm').onsubmit = e => { e.preventDefault(); loadFromPath($('pathInput').value.trim()); };
+
+  // ------------------------------------------------------------ model from a server (XMLA)
+
+  async function xmlaCall(body) {
+    return fetch('api/xmla', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(x => x.json());
+  }
+  async function xmlaLoad(server, database, name) {
+    document.body.style.cursor = 'progress';
+    $('xmlaInfo').textContent = 'Reading the model…';
+    try {
+      const r = await xmlaCall({ server, database, name });
+      if (r.error) { $('xmlaInfo').textContent = r.error; return; }
+      $('xmlaPanel').hidden = true;
+      setProject(r.files, r.warnings || []);
+      msg('Model ' + r.name + ' loaded from ' + server + '. It is read-only here: editing and deleting need the model as files.');
+    } catch (e) { $('xmlaInfo').textContent = 'Connecting failed: ' + e.message; }
+    finally { document.body.style.cursor = ''; }
+  }
+  $('btnXmla').onclick = async () => {
+    $('xmlaPanel').hidden = !$('xmlaPanel').hidden;
+    if ($('xmlaPanel').hidden) return;
+    $('repoPanel').hidden = true;
+    $('xmlaServer').value = $('xmlaServer').value || store.get('smo.xmla', '');
+    $('xmlaDesktop').innerHTML = '<span class="muted">Open in Power BI Desktop: looking…</span>';
+    try {
+      const d = await fetch('api/desktop').then(x => x.json());
+      const list = d.instances || [];
+      $('xmlaDesktop').innerHTML = list.length
+        ? '<span class="muted">Open in Power BI Desktop:</span>' + list.map(i => `<span class="chip on" data-port="${i.port}" data-name="${esc(i.name)}">${esc(i.name)} <span class="muted">port ${i.port}</span></span>`).join('')
+        : '<span class="muted">No file is open in Power BI Desktop.</span>';
+    } catch (e) { $('xmlaDesktop').innerHTML = ''; }
+  };
+  $('xmlaDesktop').onclick = async e => {
+    const c = e.target.closest('[data-port]');
+    if (!c) return;
+    const server = 'localhost:' + c.dataset.port;
+    $('xmlaInfo').textContent = 'Connecting…';
+    const r = await xmlaCall({ server });
+    if (r.error) { $('xmlaInfo').textContent = r.error; return; }
+    if (!r.catalogs || !r.catalogs.length) { $('xmlaInfo').textContent = 'This file has no model.'; return; }
+    xmlaLoad(server, r.catalogs[0], c.dataset.name);
+  };
+  $('xmlaForm').onsubmit = async e => {
+    e.preventDefault();
+    const server = $('xmlaServer').value.trim();
+    if (!server) return;
+    if (!/password\s*=/i.test(server)) store.set('smo.xmla', server);
+    $('xmlaInfo').textContent = 'Connecting… a sign-in window may open.';
+    document.body.style.cursor = 'progress';
+    try {
+      const r = await xmlaCall({ server });
+      if (r.error) { $('xmlaInfo').textContent = r.error; return; }
+      if (r.files) { $('xmlaPanel').hidden = true; setProject(r.files, []); return; }
+      $('xmlaDb').innerHTML = (r.catalogs || []).map(n => `<option>${esc(n)}</option>`).join('');
+      $('xmlaDbWrap').hidden = !(r.catalogs || []).length;
+      $('xmlaInfo').textContent = (r.catalogs || []).length ? r.catalogs.length + ' model' + (r.catalogs.length === 1 ? '' : 's') + ' found. Pick one and load it.' : 'No models found on this server.';
+    } catch (err) { $('xmlaInfo').textContent = 'Connecting failed: ' + err.message; }
+    finally { document.body.style.cursor = ''; }
+  };
+  $('xmlaLoad').onclick = () => xmlaLoad($('xmlaServer').value.trim(), $('xmlaDb').value, $('xmlaDb').value);
+  $('xmlaClose').onclick = () => { $('xmlaPanel').hidden = true; };
 
   // ------------------------------------------------------------ repositories
 
@@ -471,7 +532,31 @@
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
     if (state.view === 'model') renderDiagram();
+    state.checks = SMO.checkRules(cur.model, state.analysis);
+    const c = state.checks.counts;
+    $('tabChecks').innerHTML = 'Checks' + (c.error ? ` <span class="cnt s-unused">${c.error}</span>` : '') + (c.warning ? ` <span class="cnt s-model">${c.warning}</span>` : '') + (!c.error && !c.warning && c.info ? ` <span class="cnt">${c.info}</span>` : '');
+    if (state.view === 'checks') renderChecks();
   }
+
+  // ------------------------------------------------------------ best-practice checks
+
+  const SEV = { error: 'Error', warning: 'Warning', info: 'Note' };
+  function renderChecks() {
+    const r = state.checks, c = r.counts;
+    $('checksInfo').textContent = r.total ? `${c.error} error${c.error === 1 ? '' : 's'} · ${c.warning} warning${c.warning === 1 ? '' : 's'} · ${c.info} note${c.info === 1 ? '' : 's'}` +
+      (state.analysis.stats.noModel ? ' · the model is not loaded, so only the report could be checked' : '') : 'Nothing found. The model passes every check.';
+    const open = state.checksOpen || (state.checksOpen = new Set(r.rules.filter(x => x.severity === 'error').map(x => x.id)));
+    $('checksList').innerHTML = r.rules.map(rule => `<details class="rule sev-${rule.severity}" data-rule="${rule.id}"${open.has(rule.id) ? ' open' : ''}>
+      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b><span class="cnt">${rule.items.length}</span></summary>
+      <p class="muted small">${esc(rule.help)}</p>
+      <table class="uses">${rule.items.slice(0, 300).map(it => `<tr><td>${it.id ? `<span class="link" data-id="${esc(it.id)}">${esc(it.label)}</span>` : esc(it.label)}</td><td class="muted">${esc(it.detail)}</td></tr>`).join('')}</table>
+      ${rule.items.length > 300 ? `<p class="muted small">… and ${rule.items.length - 300} more. Export to Excel for the full list.</p>` : ''}</details>`).join('');
+  }
+  $('checksList').addEventListener('toggle', e => {
+    const d = e.target.closest && e.target.closest('details[data-rule]');
+    if (d && state.checksOpen) { if (d.open) state.checksOpen.add(d.dataset.rule); else state.checksOpen.delete(d.dataset.rule); }
+  }, true);
+  $('checksList').onclick = e => { const x = e.target.closest('[data-id]'); if (x) select(x.dataset.id); };
 
   // ------------------------------------------------------------ model diagram
 
@@ -480,6 +565,8 @@
     for (const b of $('viewTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.view === v);
     $('listView').hidden = v !== 'list';
     $('modelView').hidden = v !== 'model';
+    $('checksView').hidden = v !== 'checks';
+    if (v === 'checks') renderChecks();
     $('split').classList.toggle('wide', v === 'model');
     if (v === 'model') { state.zoom = null; renderDiagram(); }
   }
@@ -757,7 +844,9 @@
     };
     if (kind === 'csv') return blobDown(base + '.csv', SMOExport.toCsv(state.status === 'broken' ? d.broken : d.objects), 'text/csv');
     if (kind === 'xlsx') {
-      const sheets = [d.objects, d.usage, d.rels].concat(d.broken.rows.length ? [d.broken] : []);
+      const checks = { name: 'Checks', head: ['Severity', 'Rule', 'Object', 'Detail', 'Why it matters'], rows: [] };
+      for (const rule of state.checks.rules) for (const it of rule.items) checks.rows.push([rule.severity, rule.title, it.label, it.detail, rule.help]);
+      const sheets = [d.objects, d.usage, d.rels].concat(checks.rows.length ? [checks] : [], d.broken.rows.length ? [d.broken] : []);
       return blobDown(base + '.xlsx', await SMOExport.toXlsx(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
     const s = d.a.stats, has = s.hasStats, multi = s.reportCount >= 2;

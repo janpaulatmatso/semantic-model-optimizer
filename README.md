@@ -6,7 +6,7 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 - **No install:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
 - **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
-- **Command line:** `node cli.js <folder> [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
+- **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
 
 ## What you can load
 
@@ -17,6 +17,48 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 | `.pbix` | no (binary) | yes |
 
 Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
+
+## Model from a server (XMLA)
+
+Run `node serve.js` and choose **Server** to load the model definition straight from where it lives, without having it as files:
+
+- **Azure Analysis Services:** `asazure://westeurope.asazure.windows.net/myserver`
+- **Power BI workspace** (Premium, PPU or Fabric, with the XMLA endpoint on): `powerbi://api.powerbi.com/v1.0/myorg/My Workspace`
+- **SQL Server Analysis Services:** the server name
+- **A file open in Power BI Desktop:** listed in the panel, one click
+
+After connecting you pick a model and load it. Load your thin reports before or after (*+ Add report*, *Repositories* or the path field); the tool then checks them against the server model.
+
+- Only the definition is read (tables, columns, measures, relationships, roles). Nothing is changed, and a model loaded this way cannot be edited from the tool.
+- A cloud server opens a sign-in window. Reading the definition needs admin or write permission on the model; a viewer cannot query the schema.
+- Windows only, and it needs ADOMD.NET, which ships with DAX Studio, Tabular Editor and SSMS.
+
+## Checks
+
+The **Checks** tab lists what the tool finds against a set of best-practice rules, grouped per rule with an explanation. Click an object to open it.
+
+| Severity | Rule |
+|---|---|
+| Error | Broken formulas · Broken references in reports |
+| Warning | Many-to-many relationships · Relationships that filter both ways · Key columns that are not hidden · Calculated columns that could be measures · Measures with the same formula · Measures without a format · Auto date/time is on |
+| Note | Measures without a description · Measures defined in a report · Column references without a table name · Measure references with a table name · Inactive relationships · Floating-point columns |
+
+The findings are also a sheet in the Excel export.
+
+## Use in a pipeline
+
+`node cli.js <paths> --check` exits with code 1 when there are broken formulas or broken references, so a build or pull request can be blocked. Add `--strict` to fail on warnings too, and `--rules` to print every finding. Exit code 2 means the tool itself could not run (for example a wrong path).
+
+```yaml
+# GitHub Actions
+- uses: actions/checkout@v4
+- uses: actions/setup-node@v4
+  with: { node-version: 20 }
+- run: git clone --depth 1 https://github.com/janpaulatmatso/semantic-model-optimizer smo
+- run: node smo/cli.js ./powerbi --check
+```
+
+The check works on files, so it needs no Power BI and runs on any agent with Node 18 or newer.
 
 ## Report measures and broken formulas
 

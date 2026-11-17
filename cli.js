@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-/* Usage: node cli.js <folder-or-file> [--csv out.csv] [--json out.json] [--lineage "Name"] */
+/* Usage: node cli.js <folder-or-file> [more paths] [--check] [--strict] [--rules] [--csv out.csv] [--json out.json] [--lineage "Name"]
+ * --check   exit code 1 when there are broken formulas or broken references (for a pipeline)
+ * --strict  with --check: also fail on warnings from the best-practice rules
+ * --rules   print the best-practice findings */
 'use strict';
 const fs = require('fs');
 const SMO = require('./core.js');
@@ -11,7 +14,9 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
   const args = process.argv.slice(2);
   const opt = k => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : null; };
   const csv = opt('--csv'), json = opt('--json'), lin = opt('--lineage');
-  if (!args.length) { console.log('Usage: node cli.js <folder-or-file> [--csv out.csv] [--json out.json] [--lineage "Name"]'); process.exit(1); }
+  const flag = k => { const i = args.indexOf(k); if (i < 0) return false; args.splice(i, 1); return true; };
+  const check = flag('--check'), strict = flag('--strict'), showRules = flag('--rules');
+  if (!args.length) { console.log('Usage: node cli.js <folder-or-file> [more paths] [--check] [--strict] [--rules] [--csv out.csv] [--json out.json] [--lineage "Name"]'); process.exit(1); }
 
   const files = [], warnings = [];
   for (const a of args) { const r = await loadPath(a); files.push(...r.files); warnings.push(...r.warnings); }
@@ -29,6 +34,7 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
   if (s.noModel) console.log('! Model not loaded: report measures and used fields are listed, but nothing can be checked against the model.');
 
   const label = n => (n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.table + '[' + n.name + ']');
+  const quiet = check || showRules;
   if (lin) {
     const hits = a.list.filter(n => n.name.toLowerCase() === lin.toLowerCase());
     for (const n of hits) {
@@ -38,7 +44,7 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
       for (const u of n.reportUses) console.log(`  report: ${u.report} › ${u.page} › ${u.visualTitle || u.visualType || u.visual} (${u.role})`);
     }
     if (!hits.length) console.log('Nothing found with the name ' + lin);
-  } else {
+  } else if (!quiet) {
     const rm = a.list.filter(n => n.kind === 'report measure');
     console.log(`\nMeasures only in a report (${rm.length}):`);
     for (const n of rm) console.log('  [' + n.name + ']  (report ' + n.report + ', table ' + n.table + ')');
@@ -66,4 +72,20 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
     fs.writeFileSync(json, JSON.stringify(a.list.map(n => Object.assign({}, n, { deps: [...n.deps], usedBy: [...n.usedBy] })), null, 1));
     console.log('JSON written: ' + json);
   }
-})().catch(e => { console.error(e.message); process.exit(1); });
+  if (check || showRules) {
+    const r = SMO.checkRules(proj.models[0].model, a);
+    const shown = r.rules.filter(x => showRules || x.severity === 'error' || (strict && x.severity === 'warning'));
+    for (const rule of shown) {
+      console.log(`\n${rule.severity.toUpperCase()}  ${rule.title} (${rule.items.length})`);
+      for (const it of rule.items.slice(0, showRules ? 1e9 : 50)) console.log('  ' + it.label + (it.detail ? '  —  ' + it.detail : ''));
+      if (!showRules && rule.items.length > 50) console.log('  … and ' + (rule.items.length - 50) + ' more');
+    }
+    console.log(`\nChecks: ${r.counts.error} errors, ${r.counts.warning} warnings, ${r.counts.info} notes`);
+    if (check) {
+      if (s.noModel) console.log('Note: the model is not loaded, so formulas and references could not be checked.');
+      const failed = r.counts.error > 0 || (strict && r.counts.warning > 0);
+      console.log(failed ? 'CHECK FAILED' : 'CHECK PASSED');
+      if (failed) process.exitCode = 1;
+    }
+  }
+})().catch(e => { console.error(e.message); process.exit(2); });

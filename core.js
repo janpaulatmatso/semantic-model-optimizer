@@ -1326,7 +1326,93 @@
     return count;
   }
 
+  // ---------------------------------------------------------------- Best-practice checks
+
+  const RULES = [
+    { id: 'broken-formula', severity: 'error', title: 'Broken formulas', help: 'The DAX refers to a table, column or measure that does not exist, or depends on a formula that does. These fail when the model is used.' },
+    { id: 'broken-reference', severity: 'error', title: 'Broken references in reports', help: 'A visual or filter uses a field that is not in the model. The visual shows an error.' },
+    { id: 'many-to-many', severity: 'warning', title: 'Many-to-many relationships', help: 'Both sides are "many". Results are easy to misread and slow on large tables; a bridge table or a proper dimension is usually better.' },
+    { id: 'bidirectional', severity: 'warning', title: 'Relationships that filter both ways', help: 'Bidirectional filtering can create ambiguous paths and hurts performance. Use it only where it is needed, or use CROSSFILTER inside a measure.' },
+    { id: 'key-visible', severity: 'warning', title: 'Key columns that are not hidden', help: 'These columns are used in a relationship but are visible and not used in any report. Hide them so report builders pick the dimension attributes instead.' },
+    { id: 'calc-column-as-measure', severity: 'warning', title: 'Calculated columns that could be measures', help: 'A numeric calculated column that is only used inside measures takes memory for every row. An iterator such as SUMX in the measure usually does the same without storing it.' },
+    { id: 'duplicate-measure', severity: 'warning', title: 'Measures with the same formula', help: 'Two or more measures have identical DAX. Keep one and let the others refer to it, or remove the duplicates.' },
+    { id: 'measure-no-format', severity: 'warning', title: 'Measures without a format', help: 'Visible measures without a format string show raw numbers. Set thousands separators, decimals or a percentage.' },
+    { id: 'measure-no-description', severity: 'info', title: 'Measures without a description', help: 'A description tells report builders (and Copilot) what the measure means. Hidden helper measures are skipped.' },
+    { id: 'report-only-measure', severity: 'info', title: 'Measures defined in a report', help: 'These measures live in one thin report. Other reports cannot use them and they are not maintained with the model. Consider moving them to the semantic model.' },
+    { id: 'unqualified-column', severity: 'info', title: 'Column references without a table name', help: 'Write columns as Table[Column] and measures as [Measure]. It makes formulas readable and avoids ambiguity.' },
+    { id: 'qualified-measure', severity: 'info', title: 'Measure references with a table name', help: 'Write measures as [Measure], without the table. A measure reference with a table name looks like a column.' },
+    { id: 'inactive-relationship', severity: 'info', title: 'Inactive relationships', help: 'Only used through USERELATIONSHIP. Listed so you can check that each one is still needed.' },
+    { id: 'auto-date-time', severity: 'warning', title: 'Auto date/time is on', help: 'Power BI created a hidden date table for every date column. That costs memory; use one shared date table and turn Auto date/time off.' },
+    { id: 'double-data-type', severity: 'info', title: 'Columns with a floating-point data type', help: 'Decimal number (double) can give rounding differences in totals. Fixed decimal number is exact for amounts with up to four decimals.' },
+  ];
+
+  /** model + analysis → {rules: [{…rule, items: [{id, label, detail}]}], counts: {error, warning, info}} */
+  function checkRules(model, analysis) {
+    const noModel = !!analysis.stats.noModel;
+    const found = new Map(RULES.map(r => [r.id, []]));
+    const add = (rule, n, detail) => found.get(rule).push({ id: n ? n.id : null, label: n ? objLabel(n) : '', detail: detail || '' });
+    const list = analysis.list.filter(n => !n.system);
+    const col = (t, c) => analysis.nodes.get('C|' + t + '|' + c) || list.find(n => n.type === 'column' && lc(n.table) === lc(t) && lc(n.name) === lc(c));
+
+    for (const n of list) {
+      if (n.broken) add('broken-formula', n, n.problems.map(p => p.ref + ': ' + p.reason).concat(n.brokenVia.map(id => 'depends on broken ' + objLabel(analysis.nodes.get(id)))).join('; '));
+      if (n.kind === 'report measure') add('report-only-measure', n, 'in report ' + n.report);
+    }
+    if (!noModel) for (const u of analysis.broken) found.get('broken-reference').push({ id: null, label: u.table + '[' + u.name + ']', detail: [u.report, u.page, u.visualTitle || u.visualType || u.visual, u.role].filter(Boolean).join(' › ') });
+
+    if (!noModel) {
+      const keyCols = new Set();
+      for (const r of model.relationships || []) {
+        const from = col(r.fromTable, r.fromColumn), to = col(r.toTable, r.toColumn);
+        const text = r.fromTable + '[' + r.fromColumn + '] → ' + r.toTable + '[' + r.toColumn + ']';
+        if ((r.fromCardinality || 'many') === 'many' && (r.toCardinality || 'one') === 'many') add('many-to-many', from, text);
+        if (/both/i.test(r.crossFilter || '')) add('bidirectional', from, text);
+        if (!r.isActive) add('inactive-relationship', from, text);
+        for (const c of [from, to]) if (c && !keyCols.has(c.id)) { keyCols.add(c.id); if (!c.hidden && c.status !== 'direct') add('key-visible', c, 'used in ' + text); }
+      }
+      const byExpr = new Map();
+      for (const n of list) {
+        if (n.type === 'measure') {
+          const key = String(n.expression || '').replace(/\s+/g, '').toLowerCase();
+          if (key) { if (!byExpr.has(key)) byExpr.set(key, []); byExpr.get(key).push(n); }
+        }
+        if (n.kind === 'measure' && !n.hidden) {
+          if (!n.formatString && !(n.extraExpressions || []).length) add('measure-no-format', n, '');
+          if (!String(n.description || '').trim()) add('measure-no-description', n, '');
+        }
+        if (n.kind === 'calculated column' && /^(int64|double|decimal)$/i.test(n.dataType || '') && !n.modelUses.length && !n.reportUses.length && n.usedBy.size) {
+          const users = [...n.usedBy].map(id => analysis.nodes.get(id));
+          if (users.every(u => u && u.type === 'measure')) add('calc-column-as-measure', n, 'only used by ' + users.slice(0, 3).map(objLabel).join(', ') + (users.length > 3 ? ' …' : ''));
+        }
+        if (n.type === 'column' && /^double$/i.test(n.dataType || '')) add('double-data-type', n, '');
+        if (n.type === 'measure' && n.expression) {
+          const bare = new Set(), qual = new Set();
+          for (const r of daxRefs(n.expression)) {
+            const hit = analysis.resolve(r, n.table);
+            if (!hit) continue;
+            if (r.t === 'b' && hit.type === 'column') bare.add('[' + r.name + ']');
+            if (r.t === 'q' && hit.type === 'measure') qual.add(r.table + '[' + r.name + ']');
+          }
+          if (bare.size) add('unqualified-column', n, [...bare].join(', '));
+          if (qual.size) add('qualified-measure', n, [...qual].join(', '));
+        }
+      }
+      for (const group of byExpr.values()) {
+        if (group.length < 2) continue;
+        for (const n of group) add('duplicate-measure', n, 'same formula as ' + group.filter(x => x !== n).map(objLabel).join(', '));
+      }
+      const auto = analysis.list.filter(n => n.type === 'table' && n.system);
+      if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
+    }
+    const rules = RULES.map(r => Object.assign({}, r, { items: found.get(r.id) })).filter(r => r.items.length);
+    const counts = { error: 0, warning: 0, info: 0 };
+    for (const r of rules) counts[r.severity] += r.items.length;
+    return { rules, counts, total: counts.error + counts.warning + counts.info };
+  }
+  const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
+
   return {
+    checkRules, RULES,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
