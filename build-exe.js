@@ -43,7 +43,7 @@ let bundle = "'use strict';\nconst __SMO_BUILD = " + JSON.stringify(build) + ";\
   "  return module.exports;\n" +
   "}\n";
 for (const m of MODULES) {
-  const src = fs.readFileSync(path.join(root, m), 'utf8').replace(/^#!.*\n/, '');
+  const src = fs.readFileSync(path.join(root, m), 'utf8').replace(/^#![^\n]*\n/, ''); // also with Windows line endings ("." does not match \r)
   bundle += `__mods[${JSON.stringify(m)}] = function (module, exports, require, __filename, __dirname) {\n${src}\n};\n`;
 }
 bundle += "__smoRequire('./exe-main.js');\n";
