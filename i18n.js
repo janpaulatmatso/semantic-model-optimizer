@@ -33,7 +33,7 @@
     // detail
     'Lineage': 'Herkomst', 'Depends directly on': 'Hangt direct af van', 'Used directly by': 'Wordt direct gebruikt door', 'Usage in reports': 'Gebruik in rapporten', 'Usage in the model': 'Gebruik in het model',
     'Problems': 'Problemen', 'Size': 'Grootte', 'Source': 'Bron', 'Security': 'Beveiliging', 'Query': 'Query', 'Page': 'Pagina', 'Visual': 'Visual', 'Role': 'Rol', 'Selected': 'Geselecteerd',
-    'Report page': 'Rapportpagina', 'Memory': 'Geheugen', 'Share of model': 'Aandeel model', 'Distinct values': 'Unieke waarden', 'Rows in table': 'Regels in tabel', 'Dictionary': 'Woordenboek',
+    'Report page': 'Rapportpagina', 'Visual': 'Visual', 'visual': 'visual', 'report page': 'rapportpagina', 'Measures and columns': 'Measures en kolommen', 'Memory': 'Geheugen', 'Share of model': 'Aandeel model', 'Distinct values': 'Unieke waarden', 'Rows in table': 'Regels in tabel', 'Dictionary': 'Woordenboek',
     'Data': 'Data', 'Hierarchy': 'Hiërarchie', 'In unused columns': 'In ongebruikte kolommen', 'Largest columns': 'Grootste kolommen', 'Description': 'Beschrijving', 'Formula (DAX)': 'Formule (DAX)',
     'Click a measure or column to see where it is used and what it depends on.': 'Klik op een measure of kolom om te zien waar die gebruikt wordt en waar die van afhangt.',
     'Not used in any loaded report or anywhere in the model.': 'Wordt in geen enkel geladen rapport en nergens in het model gebruikt.',

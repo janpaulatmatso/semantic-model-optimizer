@@ -2,7 +2,7 @@
   --bg: #f6f7f9; --panel: #ffffff; --line: #dfe3ea; --text: #1c2330; --muted: #677084;
   --accent: #2456d6; --accent-soft: #e6edff;
   --direct: #1f8f4e; --indirect: #1982a6; --model: #b77705; --unused: #c8372d;
-  --measure: #7a4fd6; --column: #2456d6; --calc: #c2570c; --table: #55627a; --page: #1f8f4e;
+  --measure: #7a4fd6; --column: #2456d6; --calc: #c2570c; --table: #55627a; --page: #1f8f4e; --visual: #0e8a8a;
   --code: #f1f3f7;
 }
 @media (prefers-color-scheme: dark) {
@@ -10,7 +10,7 @@
     --bg: #12151b; --panel: #1a1f28; --line: #2c3442; --text: #e6e9ef; --muted: #96a0b3;
     --accent: #7ea2ff; --accent-soft: #1f2b4a;
     --direct: #4cc37f; --indirect: #4fb6da; --model: #e0a63a; --unused: #f0736a;
-    --measure: #a98bf0; --column: #7ea2ff; --calc: #f09a55; --table: #9aa6bd; --page: #4cc37f;
+    --measure: #a98bf0; --column: #7ea2ff; --calc: #f09a55; --table: #9aa6bd; --page: #4cc37f; --visual: #3fc1c1;
     --code: #141922;
   }
 }
@@ -254,3 +254,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .bm tbody th:hover, .bm th.v:hover { color: var(--accent); }
 .bm tr.sel th, .bm th.v.sel { box-shadow: inset 0 0 0 2px var(--accent); }
 .bm td.sel, .bm tr.sel td { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
+
+.pffields { max-width: 420px; }
+.pffields .link { display: inline-block; margin: 0 4px 3px 0; font-size: 12px; padding: 1px 6px; }
+.pfdetail .links { margin-bottom: 4px; }

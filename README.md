@@ -106,7 +106,7 @@ When the model was loaded from an open Power BI Desktop file (and not from files
 ## Pages and performance
 
 - **Pages** turns the usage around: per report page you see every visual and filter with the fields it uses.
-- **Performance** reads an export of the Performance Analyzer (in Power BI Desktop: *Optimize › Performance analyzer*, record, refresh the visuals, *Export*). Put the file in the project folder or open it with *Open file*. Per visual you see the total time, the DAX query, how much of that is waiting for the source (DirectQuery) and the drawing; click a visual for its fields and the query.
+- **Performance** reads an export of the Performance Analyzer (in Power BI Desktop: *Optimize › Performance analyzer*, record, refresh the visuals, *Export*). Put the file in the project folder or open it with *Open file*. Per visual you see the measures and columns it uses, the total time, the DAX query, how much of that is waiting for the source (DirectQuery) and the drawing. Click a visual for the full list, the columns its measures read underneath, and the query.
 
 ## Use in a pipeline
 
@@ -153,6 +153,10 @@ The **Export…** dropdown above the list exports what you see, with the current
 - **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
 
 All three are generated in the browser; nothing is uploaded.
+
+## Lineage
+
+The lineage of a measure or column runs from the source columns on the left, through every measure that builds on it, to the **visuals** that show it and the **report pages** they are on. A visual shows its type and, when a Performance Analyzer export is loaded, its time; hover it to see every field on it. Click a visual or page to open it under *Pages*.
 
 ## Model diagram
 

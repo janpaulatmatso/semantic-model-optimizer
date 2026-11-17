@@ -145,6 +145,8 @@
       $('pgList').innerHTML = h;
     });
   $('pgQ').oninput = () => App.views.pages();
+  /** Opens the Pages view on one visual or page (from the lineage). */
+  App.openInPages = text => { App.setView('pages'); $('pgQ').value = text || ''; App.views.pages(); };
   $('pgList').onclick = e => { const x = e.target.closest('[data-id]'); if (x) App.select(x.dataset.id); };
 
   // ------------------------------------------------------------ performance: Performance Analyzer export
@@ -174,23 +176,45 @@
       }
       const max = Math.max(...list.map(v => v.total), 1), sum = list.reduce((x, v) => x + v.total, 0);
       $('pfInfo').textContent = `${list.length} visuals timed · slowest ${App.int(max)} ms · together ${App.int(sum)} ms. Click a visual to see its fields and query.`;
-      $('pfGrid').querySelector('thead').innerHTML = '<tr><th>Visual</th><th>Page</th><th class="num">Total ms</th><th class="num">DAX query</th><th class="num">of which source</th><th class="num">Render</th><th class="num">Rows</th></tr>';
+      $('pfGrid').querySelector('thead').innerHTML = '<tr><th>Visual</th><th>Page</th><th>Measures and columns</th><th class="num">Total ms</th><th class="num">DAX query</th><th class="num">of which source</th><th class="num">Render</th><th class="num">Rows</th></tr>';
       $('pfGrid').querySelector('tbody').innerHTML = list.map((v, i) => {
         const l = links.get(v.visualId);
+        const f = fieldsOf(l), shown = f.slice(0, 6);
         return `<tr data-i="${i}" class="${state.perfSel === i ? 'sel' : ''}"><td class="nm">${esc(v.title || v.type || v.visualId)}<div class="muted small" style="font-weight:400">${esc(v.type)}</div></td><td>${esc(l ? l.page : '')}</td>
+          <td class="pffields">${l ? shown.map(chip).join('') + (f.length > shown.length ? `<span class="muted small"> +${f.length - shown.length} more</span>` : '') : '<span class="muted small">not in the loaded reports</span>'}</td>
           <td class="num"><span class="sbar" style="--w:${Math.max(2, Math.round(v.total / max * 100))}%"></span>${App.int(v.total)}</td><td class="num">${App.int(v.dax)}</td><td class="num">${App.int(v.directQuery)}</td><td class="num">${App.int(v.render)}</td><td class="num">${v.rows == null ? '' : App.int(v.rows)}</td></tr>`;
       }).join('');
       const v = list[state.perfSel];
       if (!v) { $('pfDetail').innerHTML = ''; return; }
       const l = links.get(v.visualId);
-      const nodes = l ? [...l.nodes].map(id => state.analysis.nodes.get(id)).filter(Boolean) : [];
+      const nodes = fieldsOf(l);
+      const measures = nodes.filter(n => n.type === 'measure'), cols = nodes.filter(n => n.type !== 'measure');
+      // the columns the measures on this visual read, directly or through other measures: these are what the query scans
+      const read = new Map();
+      for (const m of measures) for (const layer of SMO.layers(state.analysis, m.id, 'deps')) for (const id of layer) { const x = state.analysis.nodes.get(id); if (x && x.type === 'column') read.set(id, x); }
+      for (const c of cols) read.delete(c.id);
+      const sizeOf = x => (x.size ? ` <span class="muted small">${App.mb(x.size)} MB</span>` : '');
       $('pfDetail').innerHTML = `<h3>${esc(v.title || v.type)}</h3>` +
         (v.total ? `<p class="small">${Math.round(v.dax / v.total * 100)}% of the time is the DAX query${v.directQuery ? `, of which ${Math.round(v.directQuery / Math.max(1, v.dax) * 100)}% is waiting for the source (DirectQuery)` : ''}; ${Math.round(v.render / v.total * 100)}% is drawing.</p>` : '') +
-        (nodes.length ? '<div class="links">' + nodes.map(n => `<span class="link" data-id="${esc(n.id)}"><span class="k-${n.type === 'measure' ? 'measure' : 'column'}">●</span> ${esc(App.label(n))}</span>`).join('') + '</div>'
-          : '<p class="muted small">This visual is not in the loaded reports, so its fields are unknown.</p>') +
+        (!l ? '<p class="muted small">This visual is not in the loaded reports, so its fields are unknown.</p>' :
+          (measures.length ? `<h3>Measures (${measures.length})</h3><div class="links">${measures.map(chip).join('')}</div>` : '') +
+          (cols.length ? `<h3>Columns (${cols.length})</h3><div class="links">${cols.map(n => chip(n) + sizeOf(n)).join('')}</div>` : '') +
+          (read.size ? `<h3>Columns the measures read (${read.size})</h3><p class="muted small">Not on the visual itself, but the measures above calculate with them, so the query reads them too.</p><div class="links">${[...read.values()].sort((x, y) => App.label(x).localeCompare(App.label(y))).map(n => chip(n) + sizeOf(n)).join('')}</div>` : '')) +
         (v.query ? `<h3>Query</h3><pre class="dax">${esc(v.query)}</pre>` : '');
     });
-  $('pfGrid').onclick = e => { const tr = e.target.closest('tr[data-i]'); if (tr) { state.perfSel = +tr.dataset.i; App.views.perf(); } };
+  /** The objects a visual uses, measures first. */
+  function fieldsOf(l) {
+    if (!l) return [];
+    return [...l.nodes].map(id => state.analysis.nodes.get(id)).filter(Boolean)
+      .sort((x, y) => (x.type === 'measure' ? 0 : 1) - (y.type === 'measure' ? 0 : 1) || App.label(x).localeCompare(App.label(y)));
+  }
+  const chip = n => `<span class="link" data-id="${esc(n.id)}" title="${esc(n.kind + ' · ' + App.STATUS[n.status])}"><span class="k-${n.type === 'measure' ? 'measure' : n.kind === 'calculated column' ? 'calc' : 'column'}">●</span> ${esc(App.label(n))}${n.broken ? ' <span class="brk">broken</span>' : ''}</span>`;
+  $('pfGrid').onclick = e => {
+    const x = e.target.closest('[data-id]');
+    if (x) return App.select(x.dataset.id);
+    const tr = e.target.closest('tr[data-i]');
+    if (tr) { state.perfSel = +tr.dataset.i; App.views.perf(); }
+  };
   $('pfDetail').onclick = e => { const x = e.target.closest('[data-id]'); if (x) App.select(x.dataset.id); };
   App.onRun.push(() => {
     const n = ((state.project && state.project.performance) || []).length;

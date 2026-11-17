@@ -1108,6 +1108,8 @@
     if (state.editing) return;
     const x = e.target.closest('[data-id]');
     if (x) return select(x.dataset.id);
+    const vp = e.target.closest('[data-visual], [data-page]');
+    if (vp && App.openInPages) return App.openInPages(vp.dataset.visual || vp.dataset.page);
     if (e.target.closest('[data-more]')) { state.expand = true; renderDetail(); }
   };
 
@@ -1144,19 +1146,37 @@
     up.slice().reverse().forEach((l, i) => cols.push({ title: up.length - i === 1 ? 'Depends on' : 'Level −' + (up.length - i), items: l.map(nodeItem).sort(byName) }));
     cols.push({ title: 'Selected', items: [Object.assign(nodeItem(n.id), { center: true })] });
     down.forEach((l, i) => cols.push({ title: i === 0 ? 'Used by' : 'Level +' + (i + 1), items: l.map(nodeItem).sort(byName) }));
-    // report pages that show this object or something that depends on it
-    const pages = new Map();
+    // visuals (and filters) that show this object or something that depends on it, then the pages they are on
+    const visuals = new Map(), pages = new Map();
+    const perf = new Map(((state.project && state.project.performance) || []).map(v => [v.visualId, v]));
     for (const id of [n.id].concat(...down)) {
       for (const u of a.nodes.get(id).reportUses) {
-        const key = 'P|' + u.report + '|' + u.page;
-        if (!pages.has(key)) pages.set(key, { key, page: true, name: u.page || '(report level)', report: u.report, from: new Set(), visuals: new Set(), cls: 'page' });
-        const p = pages.get(key);
-        p.from.add(id); p.visuals.add(u.visual + '|' + u.role);
+        const pk = 'P|' + u.report + '|' + u.page;
+        const vk = 'V|' + u.report + '|' + u.page + '|' + (u.visual || u.role);
+        if (!visuals.has(vk)) {
+          const t = perf.get(u.visual);
+          visuals.set(vk, { key: vk, visual: true, name: u.visualTitle || u.visualType || u.visual || u.role || 'filter', type: u.visualType || u.role, report: u.report, page: u.page, visualId: u.visual,
+            from: new Set(), roles: new Set(), fields: new Set(), pk, cls: 'visual', ms: t ? t.total : null });
+        }
+        const v = visuals.get(vk);
+        v.from.add(id); v.roles.add(u.role);
+        if (!pages.has(pk)) pages.set(pk, { key: pk, page: true, name: u.page || '(report level)', report: u.report, from: new Set(), cls: 'page' });
+        pages.get(pk).from.add(vk);
       }
+    }
+    if (visuals.size) {
+      // every field each visual uses, so the tooltip shows what else is on it
+      for (const x of a.list) for (const u of x.reportUses) { const v = visuals.get('V|' + u.report + '|' + u.page + '|' + (u.visual || u.role)); if (v) v.fields.add(label(x)); }
+      const items = [...visuals.values()].sort((x, y) => x.page.localeCompare(y.page) || x.name.localeCompare(y.name));
+      for (const v of items) {
+        v.sub = [v.type, v.ms != null ? int(v.ms) + ' ms' : ''].filter(Boolean).join(' · ');
+        v.tip = v.name + ' — ' + v.type + ' on ' + (v.page || 'report level') + (v.ms != null ? ' — ' + int(v.ms) + ' ms' : '') + '\nFields: ' + [...v.fields].join(', ');
+      }
+      cols.push({ title: 'Visual', items });
     }
     if (pages.size) {
       const items = [...pages.values()].sort((x, y) => x.name.localeCompare(y.name));
-      for (const p of items) p.sub = p.report + ' · ' + p.visuals.size + '×';
+      for (const p of items) p.sub = p.report + ' · ' + p.from.size + ' visual' + (p.from.size === 1 ? '' : 's');
       cols.push({ title: 'Report page', items });
     }
     if (cols.length === 1) return '<p class="muted">No dependencies and nothing that uses this.</p>';
@@ -1181,7 +1201,7 @@
     };
     let edges = '';
     for (const it of pos.values()) {
-      if (it.page) { for (const f of it.from) if (pos.has(f)) edges += edge(pos.get(f), it, f === n.id); continue; }
+      if (it.page || it.visual) { for (const f of it.from) if (pos.has(f)) edges += edge(pos.get(f), it, f === n.id); continue; }
       for (const d of it.node.deps) if (pos.has(d)) edges += edge(pos.get(d), it, d === n.id || it.key === n.id);
     }
     const cut = (s, m) => s.length > m ? s.slice(0, m - 1) + '…' : s;
@@ -1189,9 +1209,9 @@
     for (const c of cols) {
       boxes += `<text class="col" x="${c.x}" y="16">${esc(c.title)}</text>`;
       for (const it of c.items) {
-        const attr = it.more ? 'data-more="1"' : it.page ? '' : `data-id="${esc(it.key)}"`;
+        const attr = it.more ? 'data-more="1"' : it.visual ? `data-visual="${esc(it.name)}"` : it.page ? `data-page="${esc(it.name)}"` : `data-id="${esc(it.key)}"`;
         boxes += `<g class="node${it.center ? ' center' : ''}" ${attr} transform="translate(${it.x},${it.y})">
-          <title>${esc(it.name + (it.sub ? ' — ' + it.sub : '') + (it.status ? ' — ' + STATUS[it.status] : ''))}</title>
+          <title>${esc(it.tip || (it.name + (it.sub ? ' — ' + it.sub : '') + (it.status ? ' — ' + STATUS[it.status] : '')))}</title>
           <rect class="box" width="${W}" height="${H}" rx="6"/>
           <rect width="4" height="${H - 8}" x="4" y="4" rx="2" fill="var(--${it.cls})"/>
           <text x="14" y="16">${esc(cut(it.name, 27))}</text><text class="sub" x="14" y="30">${esc(cut(it.sub || '', 32))}</text>
@@ -1200,8 +1220,8 @@
     }
     return `<div class="graphwrap"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Lineage of ${esc(n.name)}">${edges}${boxes}</svg></div>
       <div class="legend"><span><i style="background:var(--measure)"></i>measure</span><span><i style="background:var(--column)"></i>column</span>
-      <span><i style="background:var(--calc)"></i>calculated</span><span><i style="background:var(--table)"></i>table</span><span><i style="background:var(--page)"></i>report page</span>
-      <span>dot = status</span><span>left = source, right = consumer${more ? '' : ''}. Click a block to go there.</span></div>`;
+      <span><i style="background:var(--calc)"></i>calculated</span><span><i style="background:var(--table)"></i>table</span><span><i style="background:var(--visual)"></i>visual</span><span><i style="background:var(--page)"></i>report page</span>
+      <span>dot = status</span><span>left = source, right = consumer. Click a block to go there; a visual or page opens it under Pages.</span></div>`;
   }
 
   // what extras.js builds on
