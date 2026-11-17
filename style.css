@@ -261,3 +261,4 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .filters select#chkGroup { max-width: none; }
 #chkScore { color: var(--muted); }
 #btnRI[hidden] { display: none; }
+#btnDesign[hidden] { display: none; }

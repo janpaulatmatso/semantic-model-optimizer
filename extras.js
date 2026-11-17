@@ -586,16 +586,21 @@
 
   $('btnRI').onclick = () => busy(async () => {
     const dlg = $('dlg');
-    const queries = SMO.riQueries(model().model);
+    const queries = SMO.dataQueries(model().model, state.analysis, state.project.design);
+    const count = k => queries.filter(q => q.kind === k).length;
     let list = [];
     try { list = (await fetch('api/desktop').then(x => x.json())).instances || []; } catch (e) { /* none */ }
     const opts = (state.xmla && !/^(localhost|127\.0\.0\.1):/.test(state.xmla.server) ? [`<option value="server">${esc(state.xmla.database || state.xmla.server)} on ${esc(state.xmla.server)}</option>`] : [])
       .concat(list.map(i => `<option value="${i.port}"${i.name === model().name ? ' selected' : ''}>${esc(i.name)} in Power BI Desktop (port ${i.port})</option>`));
-    dlg.innerHTML = `<h2>Check referential integrity</h2>
-      <p class="small">Runs one query per relationship (${queries.length}) on the model and checks, for each fact table, that every key exists in the dimension, that no key is blank, that the dimension key is unique, and that the dimension has the row -1 Unknown. Read-only. On a DirectQuery model the queries go to the source and can take a while.</p>
+    dlg.innerHTML = `<h2>Check data</h2>
+      <p class="small">Runs ${queries.length} queries on the model. Read-only; on a DirectQuery model they go to the source and can take a while.</p>
+      <ul class="small"><li><b>Referential integrity</b> (${count('ri')} relationships): every key in a fact table exists in the dimension, no key is blank, the dimension key is unique, the rows -1 and -2 exist.</li>
+      <li><b>Grain</b> (${count('grain')} fact tables): no two rows share all their dimension keys and degenerate dimensions.</li>
+      <li><b>SCD type 2</b> (${count('scd2')} dimensions): one current row per natural key, no overlapping validity periods.</li>
+      <li><b>Flags</b> (${count('flags')} dimensions): text columns that only hold codes like 0/1 or Y/N.</li></ul>
       ${opts.length ? `<label class="inline">Model <select id="riWhere">${opts.join('')}</select></label>` : '<p class="warn small">Open the model in Power BI Desktop, or load it with Server, to check the data.</p>'}
       <div id="riOut" class="cmpout"></div>
-      <div class="dlgbtn"><button data-act="cancel">Close</button><button class="primary" data-act="go"${opts.length && queries.length ? '' : ' disabled'}>Check ${queries.length} relationships</button></div>`;
+      <div class="dlgbtn"><button data-act="cancel">Close</button><button class="primary" data-act="go"${opts.length && queries.length ? '' : ' disabled'}>Run ${queries.length} checks</button></div>`;
     dlg.onclick = e => {
       const act = e.target.dataset && e.target.dataset.act;
       if (act === 'cancel') return dlg.close();
@@ -603,7 +608,7 @@
       busy(async () => {
         const out = dlg.querySelector('#riOut'), where = dlg.querySelector('#riWhere').value;
         e.target.disabled = true;
-        out.innerHTML = `<p class="muted">Checking ${queries.length} relationships…</p>`;
+        out.innerHTML = `<p class="muted">Running ${queries.length} checks…</p>`;
         let server, database;
         if (where === 'server') ({ server, database } = state.xmla);
         else {
@@ -620,13 +625,46 @@
         App.setView('checks');
         $('chkGroup').value = state.checkGroup = 'kimball';
         App.run();
-        const bad = state.ri.results.filter(x => x.values && (x.values.orphanKeys > 0 || x.values.blankRows > 0 || x.values.dimRows > x.values.dimKeys)).length, failed = state.ri.results.filter(x => x.error).length;
+        const failed = state.ri.results.filter(x => x.error).length;
+        const bad = state.checks.rules.filter(x => /^(ri|kd)-/.test(x.id) && x.id !== 'ri-failed').reduce((t, x) => t + x.items.length, 0);
         $('msgs').innerHTML = '';
-        msg(`Referential integrity checked on ${queries.length} relationships: ${bad ? bad + ' with problems' : 'no problems found'}` + (failed ? `, ${failed} could not be checked` : '') + '.', !!bad);
+        msg(`Data checked with ${queries.length} queries: ${bad ? bad + ' finding' + (bad === 1 ? '' : 's') : 'no problems found'}` + (failed ? `, ${failed} could not run` : '') + '.', !!bad);
       });
     };
     dlg.showModal();
   });
+
+  const designBtn = el('button', { type: 'button', id: 'btnDesign', title: 'Load the design of the model (YAML specification and bus matrix) to compare the model with it' }, 'Design…');
+  $('btnRI').before(designBtn);
+  App.onRun.push(() => { designBtn.hidden = $('pathForm').hidden || !!state.analysis.stats.noModel; });
+  designBtn.onclick = () => {
+    const dlg = $('dlg'), d = SMO.matchDesign(model().model, state.project.design);
+    const loaded = state.project.design.specs.map(s => esc((s.model || 'model') + ' — ' + s.path)).concat(state.project.design.busmatrices.map(b => esc('bus matrix — ' + b.path)));
+    dlg.innerHTML = `<h2>Design</h2><p class="small">The design from the Kimball modelling skill: a YAML specification per model and the bus matrix in Markdown. The tool compares the model with it: tables, columns, data types, relationships and active roles, the grain sentence, and the bus matrix. Paste the path of a YAML file, a bus matrix or a folder such as <code>modellen</code>.</p>` +
+      (loaded.length ? `<p class="small">Loaded: ${loaded.join('<br>')}</p><p class="small ${d.specs.length || d.busmatrices.length ? 's-direct' : 'warn'}">${d.specs.length || d.busmatrices.length ? 'Matches this model.' : 'None of it names a table of this model.'}</p>` : '') +
+      `<form id="dsForm" class="addrep"><input id="dsPath" type="text" placeholder="C:\\…\\modellen" spellcheck="false" value="${esc(App.store.get('smo.designPath', ''))}"><button class="primary">Load</button></form><div id="dsOut"></div><div class="dlgbtn"><button type="button" data-act="cancel">Close</button></div>`;
+    dlg.onclick = e => { if (e.target.dataset && e.target.dataset.act) dlg.close(); };
+    dlg.querySelector('#dsForm').onsubmit = ev => {
+      ev.preventDefault();
+      const p = dlg.querySelector('#dsPath').value.trim();
+      if (!p) return;
+      App.store.set('smo.designPath', p);
+      busy(async () => {
+        const joined = state.loadedPath ? state.loadedPath + ';' + p : p;
+        const l = await fetch('api/load?path=' + encodeURIComponent(joined)).then(x => x.json());
+        if (l.error) { dlg.querySelector('#dsOut').innerHTML = `<p class="warn">${esc(l.error)}</p>`; return; }
+        const before = state.project.design.specs.length + state.project.design.busmatrices.length;
+        App.reloadKeep(l.files, [], { base: l.base, path: l.target });
+        $('pathInput').value = l.target;
+        const got = state.project.design.specs.length + state.project.design.busmatrices.length - before;
+        dlg.close();
+        App.setView('checks'); $('chkGroup').value = state.checkGroup = 'kimball'; App.run();
+        const m = SMO.matchDesign(model().model, state.project.design);
+        msg(got ? `${got} design file${got === 1 ? '' : 's'} loaded` + (m.specs.length || m.busmatrices.length ? '; the model is compared with it under Checks.' : ', but none names a table of this model.') : 'No YAML specification or bus matrix found there.', !got);
+      });
+    };
+    dlg.showModal();
+  };
 
   App.el = el; App.busy = busy; App.model = model;
   window.dispatchEvent(new Event('smo-extras'));

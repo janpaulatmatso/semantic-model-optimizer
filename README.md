@@ -121,7 +121,18 @@ The *Checks* tab can show only the **Kimball** rules (choose *Kimball dimensiona
 
 Which tables are facts and which are dimensions follows from the relationships, as in the bus matrix.
 
-**Referential integrity** needs the data. *Check data (referential integrity)* runs one query per relationship on the model open in Power BI Desktop (or loaded with *Server*) and checks that every key in a fact table exists in the dimension, that no fact key is blank, that the dimension key is unique and that the dimension has the row -1. Read-only; on a DirectQuery model the queries go to the source. On the command line: `--ri localhost:<port>` (or a server connection with `--database`), and `--kimball` to limit `--check` and `--rules` to these rules.
+**Data checks.** *Check data* runs read-only queries on the model open in Power BI Desktop (or loaded with *Server*). On a DirectQuery model the queries go to the source.
+
+- **Referential integrity**, per relationship: every key in the fact table exists in the dimension, no fact key is blank, the dimension key is unique, and the rows -1 Unknown and -2 Not applicable exist.
+- **Grain**, per fact table: no two rows share all their dimension keys and degenerate dimensions (taken from the design when there is one).
+- **SCD type 2**, per dimension with validity columns: one current row per natural key and no overlapping periods.
+- **Flags**: text columns in dimensions that only hold codes like 0/1 or Y/N.
+
+On the command line: `--ri localhost:<port>` (or a server connection with `--database`), and `--kimball` to limit `--check` and `--rules` to these rules.
+
+**Semi-additive facts.** A stock or balance in a periodic snapshot cannot be summed over time. A measure that sums such a column without taking the last value in the period (`LASTNONBLANK`, `LASTDATE`, a filter on `MAX` of the date, …) is reported. Which columns are semi-additive comes from the design (`additiviteit: semi-additief`) or, without one, from a fact table described or named as a snapshot.
+
+**Compare with the design.** The tool reads the YAML specification and the bus matrix that the Kimball modelling skill produces (`modellen/<domain>/<model>.yaml`, `modellen/busmatrix.md`). They are picked up when they sit in a loaded folder, or load them with *Design…* in the Checks tab. The model is then compared with them: missing tables and columns, data types, relationships and which role is active, the grain sentence in the description of the fact table, columns the design does not mention, and the bus matrix against the relationships. Only designs that name a table of the loaded model are used.
 
 The naming convention can be changed or switched off in `smo.config.json`:
 

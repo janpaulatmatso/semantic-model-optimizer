@@ -132,6 +132,108 @@ test('kimball: fact tables related to each other and snowflakes', async () => {
   assert.ok(r['k-natural-key'].some(d => /Customer\[Region\] → Region\[Region\]/.test(d)));
 });
 
+test('design: the model is compared with its YAML specification and bus matrix', async () => {
+  const dir = makeProject();
+  fs.mkdirSync(path.join(dir, 'modellen'));
+  fs.writeFileSync(path.join(dir, 'modellen', 'sales.yaml'), [
+    'model: Sales',
+    'versie: 1.0',
+    'status: ontwerp   # ontwerp | review | vastgesteld',
+    'bedrijfsvraag: >',
+    '  Revenue per customer',
+    '  and month.',
+    'bus_matrix_processen: [Sales]',
+    'feittabellen:',
+    '  - naam: Sales',
+    '    type: transactie',
+    '    grain: Eén rij per orderregel.',
+    '    dimensies:',
+    '      - {sleutel: DateKey, dimensie: Date, rol: Order date, actief: true}',
+    '      - sleutel: CustKey',
+    '        dimensie: Customer',
+    '      - {sleutel: StoreKey, dimensie: Store}',
+    '    degenerate:',
+    '      - {naam: Order number, type: varchar(20)}',
+    '    feiten:',
+    "      - {naam: Amount, type: 'decimal(18,2)', additiviteit: additief,",
+    "         aggregatie: som, definitie: 'Net amount, in euro.'}",
+    '      - naam: Qty',
+    '        type: varchar(10)',
+    'dimensies:',
+    '  - naam: Customer',
+    '    natuurlijke_sleutel: CustKey',
+    '    standaardrijen: [-1 Onbekend, -2 Niet van toepassing]',
+    '    kolommen:',
+    '      - {naam: Name, type: varchar(200), scd: 1}',
+    '      - Region',
+    '  - naam: Product',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'modellen', 'busmatrix.md'), '# Bus matrix\n\n| Proces | Feittabel | Datum | Customer | Store |\n|---|---|:-:|:-:|:-:|\n| Sales | Sales | X | | X |\n');
+  const { p, m, a } = await load(dir);
+  assert.equal(p.design.specs.length, 1);
+  assert.equal(p.design.specs[0].bedrijfsvraag, 'Revenue per customer and month.');
+  assert.equal(p.design.specs[0].feittabellen[0].feiten[0].definitie, 'Net amount, in euro.');
+  assert.equal(p.design.busmatrices.length, 1);
+  const r = Object.fromEntries(SMO.checkRules(m.model, a, null, null, p.design).rules.map(x => [x.id, x.items.map(i => (i.label + ' ' + i.detail).trim())]));
+  assert.deepEqual(r['spec-missing-table'].sort(), ['Product (dimension in Sales)', 'Store (dimension of Sales)']);
+  assert.ok(r['spec-missing-column'].some(s => /Order number \(degenerate dimension\)/.test(s)));
+  assert.ok(r['spec-missing-column'].some(s => /StoreKey/.test(s)));
+  assert.ok(r['spec-type'].some(s => /Sales\[Qty\] design: varchar\(10\), model: int64/.test(s)));
+  assert.ok(r['spec-type'].some(s => /Sales\[DateKey\] design: int, model: dateTime/.test(s)));
+  assert.ok(r['spec-grain'][0].includes('Eén rij per orderregel'));
+  assert.ok(r['spec-extra'].includes('Customer[Phone] not in the design'));
+  assert.ok(r['spec-busmatrix'].some(s => /Customer: related, but not in the bus matrix/.test(s)));
+  assert.ok(r['spec-busmatrix'].some(s => /Store: in the bus matrix, but the model has no such dimension/.test(s)));
+  assert.equal(r['spec-relationship'], undefined);
+});
+
+test('data checks: grain, SCD type 2, flags and the row -2', async () => {
+  const dir = makeProject();
+  const cust = path.join(dir, 'Demo.SemanticModel/definition/tables/Customer.tmdl');
+  fs.writeFileSync(cust, fs.readFileSync(cust, 'utf8').replace('\tcolumn Name', "\tcolumn 'Customer id'\n\t\tdataType: string\n\t\tsourceColumn: cid\n\n\tcolumn 'Valid from'\n\t\tdataType: dateTime\n\t\tsourceColumn: vf\n\n\tcolumn 'Valid to'\n\t\tdataType: dateTime\n\t\tsourceColumn: vt\n\n\tcolumn 'Is current'\n\t\tdataType: boolean\n\t\tsourceColumn: cur\n\n\tcolumn Active\n\t\tdataType: string\n\t\tsourceColumn: act\n\n\tcolumn Name"));
+  const { m, a } = await load(dir);
+  const q = SMO.dataQueries(m.model, a, null);
+  const kinds = q.reduce((o, x) => ((o[x.kind] = (o[x.kind] || 0) + 1), o), {});
+  assert.deepEqual(kinds, { ri: 2, grain: 1, scd2: 1, flags: 2 });
+  const g = q.find(x => x.kind === 'grain'), s = q.find(x => x.kind === 'scd2'), f = q.find(x => x.kind === 'flags' && x.table === 'Customer');
+  assert.deepEqual(g.keys.sort(), ['CustKey', 'DateKey']);
+  assert.match(s.dax, /'Customer'\[Is current\] = TRUE \(\)/);
+  assert.equal(s.natural, 'Customer id');
+  const ri = { results: [
+    Object.assign({}, g, { values: { rows: 10, combos: 8 } }),
+    Object.assign({}, s, { values: { multiCurrent: 2, overlaps: 1 } }),
+    Object.assign({}, f, { values: Object.fromEntries(f.columns.flatMap((c, i) => [['n' + i, c === 'Active' ? 2 : 40], ['v' + i, c === 'Active' ? '0|1' : 'A|B|C']])) }),
+  ] };
+  const r = Object.fromEntries(SMO.checkRules(m.model, a, null, ri, null).rules.map(x => [x.id, x.items.map(i => i.label)]));
+  assert.deepEqual(r['kd-grain-duplicates'], ["'Sales'"]);
+  assert.deepEqual(r['kd-scd2-current'], ["'Customer'"]);
+  assert.deepEqual(r['kd-scd2-overlap'], ["'Customer'"]);
+  assert.deepEqual(r['kd-flag-codes'], ['Customer[Active]']);
+});
+
+test('semi-additive: a stock in a periodic snapshot summed over time', async () => {
+  const dir = makeProject();
+  fs.writeFileSync(path.join(dir, 'Demo.SemanticModel/definition/tables/Stock.tmdl'), [
+    '/// One row per product per month (periodic snapshot).',
+    'table Stock',
+    "\tmeasure 'Stock sum' = SUM ( Stock[Units] )",
+    '',
+    "\tmeasure 'Stock last' = CALCULATE ( SUM ( Stock[Units] ), LASTDATE ( 'Date'[Date] ) )",
+    '',
+    '\tcolumn Units',
+    '\t\tdataType: int64',
+    '\t\tsourceColumn: units',
+    '',
+    '\tcolumn DateKey',
+    '\t\tdataType: dateTime',
+    '\t\tsourceColumn: d',
+  ].join('\n') + '\n');
+  fs.appendFileSync(path.join(dir, 'Demo.SemanticModel/definition/relationships.tmdl'), '\nrelationship r9\n\tfromColumn: Stock.DateKey\n\ttoColumn: Date.Date\n');
+  const { m, a } = await load(dir);
+  const r = Object.fromEntries(SMO.checkRules(m.model, a, null).rules.map(x => [x.id, x.items.map(i => i.label)]));
+  assert.deepEqual(r['k-semi-additive'], ['[Stock sum]']);
+});
+
 test('bus matrix: one business process, its dimensions and its grain', async () => {
   const { m, a } = await load(makeProject());
   const b = SMO.busMatrix(m.model, a);

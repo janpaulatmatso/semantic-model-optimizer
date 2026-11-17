@@ -536,7 +536,8 @@
   function wantsFile(path) {
     const p = norm(path);
     if (/(^|\/)(\.pbi|StaticResources|RegisteredResources|\.git|node_modules|smo-backup)\//i.test(p)) return false;
-    return /\.(tmdl|bim|json|pbir)$/i.test(p) || /(^|\/)(Layout|DataModelSchema)$/.test(p);
+    if (/(^|\/)\.github\//i.test(p)) return false;
+    return /\.(tmdl|bim|json|pbir|ya?ml)$/i.test(p) || /(^|\/)(Layout|DataModelSchema)$/.test(p) || /(^|\/)[^/]*bus[ -]?matri[xc][^/]*\.md$/i.test(p);
   }
 
   /** files: [{path, text}] → {models: [{name, root, model}], reports: [...], warnings: []} */
@@ -545,6 +546,7 @@
     const modelGroups = new Map(), pbirGroups = new Map();
     const models = [], reports = [];
     let stats = null, config = null, performance = [];
+    const design = { specs: [], busmatrices: [] };
     for (const f0 of files) {
       const f = { path: norm(f0.path), text: f0.text };
       const p = f.path, b = baseName(p);
@@ -556,6 +558,13 @@
       } else if (/\.json$/i.test(p) && f.text.includes('"Visual Container Lifecycle"')) {
         const j = tryJson(f.text);
         if (j) performance = performance.concat(parsePerformance(j, b));
+      } else if (/\.ya?ml$/i.test(p)) {
+        let y = null;
+        try { y = parseYaml(f.text); } catch (e) { warnings.push('Could not read ' + p + ' as YAML: ' + e.message); }
+        if (y && typeof y === 'object' && !Array.isArray(y) && (y.feittabellen || y.dimensies)) design.specs.push(Object.assign({ path: p }, y));
+      } else if (/\.md$/i.test(p)) {
+        const bm = parseBusMatrixMd(f.text);
+        if (bm) design.busmatrices.push(Object.assign({ path: p }, bm));
       } else if (b === 'smo.config.json') {
         const j = tryJson(f.text);
         if (j && !config) config = j;
@@ -599,7 +608,7 @@
     const out = real.length ? real : models;
     // thin reports whose model lives elsewhere (for example on Analysis Services): still show what the reports define and use
     if (!out.length && reports.length) out.push({ name: '(model not loaded)', root: '', model: emptyModel(), format: 'none', missing: true });
-    return { models: out, reports, warnings, stats, config, performance };
+    return { models: out, reports, warnings, stats, config, performance, design };
   }
 
   // ---------------------------------------------------------------- Analysis
@@ -1714,7 +1723,7 @@
   ];
 
   /** model + analysis → {rules: [{…rule, items: [{id, label, detail}]}], counts: {error, warning, info}} */
-  function checkRules(model, analysis, config, ri) {
+  function checkRules(model, analysis, config, ri, design) {
     const noModel = !!analysis.stats.noModel;
     const setting = (config && config.rules) || {};
     const found = new Map(RULES.map(r => [r.id, []]));
@@ -1790,7 +1799,7 @@
       }
       const auto = analysis.list.filter(n => n.type === 'table' && n.system);
       if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
-      kimballFindings(model, analysis, config, ri, add, found, col, list);
+      kimballFindings(model, analysis, config, ri, add, found, col, list, design);
     }
     // smo.config.json can switch a rule off or change how heavy it counts
     const rules = RULES.filter(r => setting[r.id] !== 'off' && setting[r.id] !== false)
@@ -1800,6 +1809,264 @@
     for (const r of rules) counts[r.severity] += r.items.length;
     return { rules, counts, total: counts.error + counts.warning + counts.info };
   }
+  // ---------------------------------------------------------------- Design: YAML specification and bus matrix
+
+  /** A YAML reader for the subset the model specifications use: block maps and lists, flow {…} and […] (over several lines), quoted strings, > and | blocks, comments. */
+  function parseYaml(text) {
+    const raw = String(text || '').replace(/^﻿/, '').replace(/\t/g, '  ').split(/\r?\n/);
+    const stripComment = s => {
+      let q = '';
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (q) { if (ch === q) q = q === "'" && s[i + 1] === "'" ? (i++, q) : ''; continue; }
+        if (ch === '"' || ch === "'") { if (i === 0 || /[\s\[{,:]/.test(s[i - 1])) q = ch; continue; }
+        if (ch === '#' && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i);
+      }
+      return s;
+    };
+    const depth = s => { let d = 0, q = ''; for (const ch of s) { if (q) { if (ch === q) q = ''; continue; } if (ch === '"' || ch === "'") q = ch; else if (ch === '{' || ch === '[') d++; else if (ch === '}' || ch === ']') d--; } return d; };
+    const lines = [];
+    for (let i = 0; i < raw.length; i++) {
+      const t = raw[i];
+      const body = stripComment(t).replace(/\s+$/, '');
+      if (!body.trim()) { lines.push({ indent: -1, text: '', raw: t }); continue; }
+      let text = body.trim(), d = depth(text);
+      while (d > 0 && i + 1 < raw.length) { i++; const more = stripComment(raw[i]).trim(); text += ' ' + more; d = depth(text); }
+      lines.push({ indent: body.length - body.trimStart().length, text, raw: t });
+    }
+    let pos = 0;
+    const skip = () => { while (pos < lines.length && lines[pos].indent < 0) pos++; };
+    const isDash = s => s === '-' || s.startsWith('- ');
+    const keyRe = /^("(?:[^"]|\\")*"|'(?:[^']|'')*'|[A-Za-z_][\w .-]*?)\s*:(\s+|$)/;
+    const unq = s => (s[0] === '"' ? s.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, '\n') : s[0] === "'" ? s.slice(1, -1).replace(/''/g, "'") : s);
+    const scalar = s => {
+      s = s.trim();
+      if (!s) return null;
+      if (s[0] === '"' || s[0] === "'") return unq(s);
+      if (s[0] === '{' || s[0] === '[') return flow(s);
+      if (/^(true|yes)$/i.test(s)) return true;
+      if (/^(false|no)$/i.test(s)) return false;
+      if (/^(null|~)$/i.test(s)) return null;
+      return s;
+    };
+    function flow(s) {
+      let i = 0;
+      const ws = () => { while (i < s.length && /\s/.test(s[i])) i++; };
+      const plain = stops => {
+        let out = '', par = 0;
+        while (i < s.length) {
+          const ch = s[i];
+          if (par === 0 && stops.includes(ch)) break;
+          if (ch === '(') par++; else if (ch === ')') par--;
+          out += ch; i++;
+        }
+        return out.trim();
+      };
+      const quoted = () => { const q = s[i]; let out = ''; i++; while (i < s.length) { if (s[i] === q) { if (q === "'" && s[i + 1] === "'") { out += "'"; i += 2; continue; } i++; break; } if (q === '"' && s[i] === '\\') { out += s[i + 1]; i += 2; continue; } out += s[i++]; } return out; };
+      function value(stops) {
+        ws();
+        if (s[i] === '{') {
+          i++; const o = {};
+          for (;;) {
+            ws(); if (s[i] === '}') { i++; break; }
+            const k = s[i] === '"' || s[i] === "'" ? quoted() : plain([':']);
+            ws(); if (s[i] === ':') i++;
+            o[k] = value([',', '}']);
+            ws(); if (s[i] === ',') { i++; continue; } if (s[i] === '}') { i++; break; } if (i >= s.length) break;
+          }
+          return o;
+        }
+        if (s[i] === '[') {
+          i++; const a = [];
+          for (;;) {
+            ws(); if (s[i] === ']') { i++; break; }
+            a.push(value([',', ']']));
+            ws(); if (s[i] === ',') { i++; continue; } if (s[i] === ']') { i++; break; } if (i >= s.length) break;
+          }
+          return a;
+        }
+        if (s[i] === '"' || s[i] === "'") return quoted();
+        return scalar(plain(stops));
+      }
+      return value([]);
+    }
+    function block(ind) {
+      const out = [];
+      while (pos < lines.length) { const l = lines[pos]; if (l.indent >= 0 && l.indent <= ind) break; out.push(l.raw); pos++; }
+      while (out.length && !out[out.length - 1].trim()) out.pop();
+      const min = Math.min(...out.filter(l => l.trim()).map(l => l.length - l.trimStart().length));
+      return out.map(l => l.slice(isFinite(min) ? min : 0));
+    }
+    function node(ind) {
+      skip();
+      if (pos >= lines.length) return null;
+      const l = lines[pos];
+      if (isDash(l.text)) return list(l.indent);
+      if (keyRe.test(l.text)) return map(l.indent);
+      pos++;
+      return scalar(l.text);
+    }
+    function value(rest, ind) {
+      if (/^[>|][+-]?$/.test(rest)) { const b = block(ind); return rest[0] === '|' ? b.join('\n') : b.join(' ').replace(/\s+/g, ' ').trim(); }
+      if (rest) return scalar(rest);
+      skip();
+      if (pos < lines.length && (lines[pos].indent > ind || (lines[pos].indent === ind && isDash(lines[pos].text)))) return node(ind);
+      return null;
+    }
+    function map(ind) {
+      const o = {};
+      for (;;) {
+        skip();
+        if (pos >= lines.length) break;
+        const l = lines[pos];
+        if (l.indent !== ind || isDash(l.text)) break;
+        const m = keyRe.exec(l.text);
+        if (!m) break;
+        pos++;
+        o[unq(m[1].trim())] = value(l.text.slice(m[0].length).trim(), ind);
+      }
+      return o;
+    }
+    function list(ind) {
+      const a = [];
+      for (;;) {
+        skip();
+        if (pos >= lines.length) break;
+        const l = lines[pos];
+        if (l.indent !== ind || !isDash(l.text)) break;
+        const rest = l.text.slice(1).trimStart(), ci = ind + (l.text.length - rest.length);
+        if (!rest) { pos++; a.push(value('', ind)); }
+        else if (keyRe.test(rest) && rest[0] !== '{') { lines[pos] = { indent: ci, text: rest, raw: ' '.repeat(ci) + rest }; a.push(map(ci)); }
+        else { pos++; a.push(value(rest, ind)); }
+      }
+      return a;
+    }
+    return node(-1);
+  }
+
+  /** The bus matrix as a Markdown table: rows are processes, columns dimensions. "X" uses it, "(X)" a role or shrunken variant. */
+  function parseBusMatrixMd(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    for (let i = 0; i + 1 < lines.length; i++) {
+      if (!/^\s*\|/.test(lines[i]) || !/^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) continue;
+      const cells = l => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+      const head = cells(lines[i]);
+      const pi = head.findIndex(h => /^(proces|process|bedrijfsproces|business process)$/i.test(h));
+      if (pi < 0) continue;
+      const fi = head.findIndex(h => /^(feittabel|fact table|fact)$/i.test(h));
+      const skipCol = new Set([pi, fi].concat(head.map((h, j) => (/^(#|nr|type|grain|korrel)$/i.test(h) ? j : -1))));
+      const dims = head.map((h, j) => (skipCol.has(j) || !h ? null : h));
+      const processes = [];
+      for (let k = i + 2; k < lines.length && /^\s*\|/.test(lines[k]); k++) {
+        const c = cells(lines[k]);
+        const marks = {};
+        dims.forEach((d, j) => { if (d && /x|✓|✔/i.test(c[j] || '')) marks[d] = /\(/.test(c[j]) ? 'shrunken' : 'x'; });
+        processes.push({ name: c[pi] || '', fact: fi >= 0 ? (c[fi] || '').replace(/`/g, '') : '', dims: marks });
+      }
+      return { dims: dims.filter(Boolean), processes };
+    }
+    return null;
+  }
+
+  const TYPE_GROUPS = [
+    [/^(int|integer|bigint|smallint|tinyint|int64)\b/i, 'int64'], [/^(decimal|numeric|money|smallmoney)\b/i, 'decimal'],
+    [/^(float|real|double)\b/i, 'double'], [/^(n?varchar|n?char|n?text|string)\b/i, 'string'],
+    [/^(date|datetime|datetime2|smalldatetime|datetimeoffset|time)\b/i, 'dateTime'], [/^(bit|bool|boolean)\b/i, 'boolean'],
+  ];
+  const specType = t => { for (const [re, v] of TYPE_GROUPS) if (re.test(String(t || '').trim())) return v; return ''; };
+  const normText = s => String(s || '').toLowerCase().replace(/[^a-z0-9à-ÿ]+/g, ' ').trim();
+  const arr = v => (Array.isArray(v) ? v : v == null ? [] : [v]);
+
+  /** The specifications and bus matrices that belong to this model (they name tables it has). */
+  function matchDesign(model, design) {
+    const has = new Set((model.tables || []).map(t => lc(t.name)));
+    const specs = (design && design.specs || []).filter(s => arr(s.feittabellen).concat(arr(s.dimensies)).some(t => t && has.has(lc(t.naam))));
+    const bms = (design && design.busmatrices || []).filter(b => b.processes.some(p => has.has(lc(p.fact))) || specs.some(s => arr(s.bus_matrix_processen).some(n => b.processes.some(p => lc(p.name) === lc(n)))));
+    return { specs, busmatrices: bms, loaded: (design && design.specs || []).length + (design && design.busmatrices || []).length };
+  }
+
+  function designFindings(model, analysis, design, add, found, col, k) {
+    const d = matchDesign(model, design);
+    if (!d.loaded) return d;
+    if (!d.specs.length && !d.busmatrices.length) {
+      found.get('spec-not-matched').push({ id: null, label: design.specs.map(s => s.model || s.path).concat(design.busmatrices.map(b => b.path)).join(', '), detail: 'no table of this model is named in these designs' });
+      return d;
+    }
+    const table = name => analysis.nodes.get('T|' + name) || analysis.list.find(n => n.type === 'table' && lc(n.name) === lc(name));
+    const rels = model.relationships || [];
+    const related = (ft, fc, dt) => rels.filter(r => (lc(r.fromTable) === lc(ft) && lc(r.fromColumn) === lc(fc) && lc(r.toTable) === lc(dt)) || (lc(r.toTable) === lc(ft) && lc(r.toColumn) === lc(fc) && lc(r.fromTable) === lc(dt)));
+    const covered = new Map(); // table → set of column names the design names
+    const cover = (t, c) => { if (!covered.has(lc(t))) covered.set(lc(t), new Set()); covered.get(lc(t)).add(lc(c)); };
+    const checkCol = (t, c, type, where) => {
+      cover(t, c);
+      const n = col(t, c);
+      if (!n) { add('spec-missing-column', table(t), c + ' (' + where + ')'); return; }
+      const want = specType(type), got = String(n.dataType || '');
+      if (want && got && lc(want) !== lc(got) && !(want === 'int64' && /^int64$/i.test(got))) add('spec-type', n, 'design: ' + type + ', model: ' + got);
+    };
+    const seenMissing = new Set();
+    for (const s of d.specs) {
+      for (const f of arr(s.feittabellen)) {
+        if (!f || !f.naam) continue;
+        const t = table(f.naam);
+        if (!t) { add('spec-missing-table', null, f.naam + ' (fact table in ' + (s.model || 'design') + ')'); continue; }
+        if (f.grain && !normText(t.description).includes(normText(f.grain))) add('spec-grain', t, 'design: "' + f.grain + '"' + (t.description ? '; description: "' + t.description.slice(0, 120) + '"' : '; the table has no description'));
+        for (const dim of arr(f.dimensies)) {
+          if (!dim || !dim.sleutel) continue;
+          checkCol(f.naam, dim.sleutel, 'int', 'key to ' + dim.dimensie);
+          if (!dim.dimensie) continue;
+          if (!table(dim.dimensie)) { if (!seenMissing.has(lc(dim.dimensie))) { seenMissing.add(lc(dim.dimensie)); add('spec-missing-table', null, dim.dimensie + ' (dimension of ' + f.naam + ')'); } continue; }
+          if (!col(f.naam, dim.sleutel)) continue;
+          const rs = related(f.naam, dim.sleutel, dim.dimensie);
+          if (!rs.length) add('spec-relationship', col(f.naam, dim.sleutel), 'no relationship to ' + dim.dimensie + (dim.rol ? ' (role ' + dim.rol + ')' : ''));
+          else {
+            const want = dim.actief === undefined ? true : dim.actief !== false && dim.actief !== 'false';
+            if (rs.every(r => r.isActive !== want)) add('spec-role-active', col(f.naam, dim.sleutel), 'design: ' + (want ? 'active' : 'inactive') + ', model: ' + (want ? 'inactive' : 'active') + (dim.rol ? ' (role ' + dim.rol + ')' : ''));
+          }
+        }
+        for (const g of arr(f.degenerate)) if (g && g.naam) checkCol(f.naam, g.naam, g.type, 'degenerate dimension');
+        for (const x of arr(f.feiten)) if (x && x.naam) checkCol(f.naam, x.naam, x.type, 'fact, ' + (x.additiviteit || ''));
+      }
+      for (const dm of arr(s.dimensies)) {
+        if (!dm || !dm.naam) continue;
+        if (!table(dm.naam)) { if (!seenMissing.has(lc(dm.naam))) { seenMissing.add(lc(dm.naam)); add('spec-missing-table', null, dm.naam + ' (dimension in ' + (s.model || 'design') + ')'); } continue; }
+        if (dm.natuurlijke_sleutel) checkCol(dm.naam, dm.natuurlijke_sleutel, '', 'natural key');
+        for (const c of arr(dm.kolommen)) { if (typeof c === 'string') checkCol(dm.naam, c, '', 'dimension attribute'); else if (c && c.naam) checkCol(dm.naam, c.naam, c.type, 'SCD ' + (c.scd == null ? '?' : c.scd)); }
+        if (/scd|2/.test(JSON.stringify(arr(dm.kolommen).map(c => c && c.scd)))) for (const c of ['Geldig vanaf', 'Geldig tot', 'Is actueel']) cover(dm.naam, c);
+      }
+    }
+    // columns the model has that the design does not mention (keys that carry a relationship and audit columns excepted)
+    const relCols = new Set();
+    for (const r of rels) { relCols.add(lc(r.fromTable) + '|' + lc(r.fromColumn)); relCols.add(lc(r.toTable) + '|' + lc(r.toColumn)); }
+    for (const [t, names] of covered) {
+      if (!names.size) continue;
+      for (const n of analysis.list) {
+        if (n.type !== 'column' || lc(n.table) !== t || names.has(lc(n.name)) || relCols.has(t + '|' + lc(n.name))) continue;
+        if (/^(geladen op|bronsysteem|laaddatum|loaded at|source system)$/i.test(n.name)) continue;
+        add('spec-extra', n, 'not in the design');
+      }
+    }
+    // bus matrix against the relationships
+    const bm = busMatrix(model, analysis);
+    const dimTable = name => [k.dim + name, name, 'Dim_' + name, 'Dim ' + name].map(table).find(Boolean);
+    for (const b of d.busmatrices) {
+      for (const p of b.processes) {
+        let facts = p.fact ? [p.fact] : [];
+        if (!facts.length) for (const s of d.specs) { const ps = arr(s.bus_matrix_processen), fs = arr(s.feittabellen); const i = ps.findIndex(x => lc(x) === lc(p.name)); if (i >= 0 && fs.length === ps.length && fs[i]) facts = [fs[i].naam]; }
+        const ft = facts.map(table).find(Boolean);
+        if (!ft) continue;
+        for (const dn of b.dims) {
+          const dt = dimTable(dn), mark = p.dims[dn];
+          const cell = dt ? bm.cell(ft.name, dt.name) : null;
+          if (mark && !dt) add('spec-busmatrix', ft, dn + ': in the bus matrix, but the model has no such dimension');
+          else if (mark && !cell) add('spec-busmatrix', ft, dn + ': in the bus matrix, but not related');
+          else if (!mark && cell && !cell.via) add('spec-busmatrix', ft, dn + ': related, but not in the bus matrix');
+        }
+      }
+    }
+    return d;
+  }
+
   // ---------------------------------------------------------------- Kimball dimensional modelling
 
   RULES.push(
@@ -1824,8 +2091,76 @@
     { id: 'k-role-unused', group: 'kimball', severity: 'info', title: 'Role relationships no measure uses', help: 'A role (for example ship date) is an inactive relationship that a measure switches on with USERELATIONSHIP. No measure uses this one.' },
     { id: 'k-personal-data', group: 'kimball', severity: 'info', title: 'Personal data', help: 'Only include personal data when the business question needs it; otherwise use bands (age group, four-digit postcode area).' },
     { id: 'ri-not-checked', group: 'kimball', severity: 'info', title: 'Referential integrity not checked against the data', help: 'The model only says how tables relate, not whether the data matches. Run "Check data" with the model open in Power BI Desktop or on a server.' },
-    { id: 'ri-failed', group: 'kimball', severity: 'info', title: 'Referential integrity could not be checked', help: 'The query for these relationships failed; the message says why.' },
+    { id: 'ri-failed', group: 'kimball', severity: 'info', title: 'Data check could not run', help: 'The query failed; the message says why.' },
+    { id: 'k-semi-additive', group: 'kimball', severity: 'warning', title: 'Semi-additive facts summed over time', help: 'A stock or balance (a periodic snapshot) cannot be added up over time: three monthly stands of 100 are not 300. Take the last value in the period, for example with LASTNONBLANK or a filter on the last date.' },
+    { id: 'kd-grain-duplicates', group: 'kimball', severity: 'warning', title: 'Fact rows that are not unique on their keys', help: 'Several rows share every dimension key and degenerate dimension. Either the grain is mixed, or a key that identifies the row is missing from the table.' },
+    { id: 'kd-scd2-current', group: 'kimball', severity: 'error', title: 'SCD type 2: more than one current row', help: 'Each natural key has exactly one current row in a type 2 dimension.' },
+    { id: 'kd-scd2-overlap', group: 'kimball', severity: 'error', title: 'SCD type 2: overlapping validity periods', help: 'The versions of one natural key follow each other without overlap; otherwise a fact matches two versions.' },
+    { id: 'kd-flag-codes', group: 'kimball', severity: 'info', title: 'Flags stored as codes', help: 'The column only holds values like 0/1, Y/N or True/False. Kimball: show readable values ("Yes"/"No").' },
+    { id: 'ri-na-row', group: 'kimball', severity: 'warning', title: 'Dimensions without the row -2 Not applicable', help: 'The design asks for the fixed row -2 Not applicable, but the dimension does not have it.' },
+    { id: 'spec-missing-table', group: 'kimball', severity: 'error', title: 'Design: tables missing from the model', help: 'The design (YAML specification) names this table, but the model does not have it.' },
+    { id: 'spec-missing-column', group: 'kimball', severity: 'error', title: 'Design: columns missing from the model', help: 'The design names this column, but the table in the model does not have it.' },
+    { id: 'spec-relationship', group: 'kimball', severity: 'error', title: 'Design: relationships missing from the model', help: 'The design relates this key to a dimension, but the model has no such relationship.' },
+    { id: 'spec-role-active', group: 'kimball', severity: 'warning', title: 'Design: role active or inactive the other way round', help: 'The design says which role of a dimension is the active relationship; the model has it the other way round.' },
+    { id: 'spec-type', group: 'kimball', severity: 'warning', title: 'Design: data type differs', help: 'The column has another data type than the design. Kimball: amounts as decimal(18,2), keys as integers.' },
+    { id: 'spec-grain', group: 'kimball', severity: 'warning', title: 'Design: grain not in the description', help: 'The description of the fact table does not contain the grain sentence from the design. Copy it, so report builders see what one row is.' },
+    { id: 'spec-busmatrix', group: 'kimball', severity: 'warning', title: 'Design: bus matrix and model differ', help: 'The bus matrix says which dimensions a business process uses. The relationships in the model say otherwise.' },
+    { id: 'spec-extra', group: 'kimball', severity: 'info', title: 'Design: columns not in the design', help: 'The model has these columns, the design does not mention them. Add them to the design or remove them from the model.' },
+    { id: 'spec-not-matched', group: 'kimball', severity: 'info', title: 'Design loaded, but not for this model', help: 'None of the tables in these designs is in this model.' },
   );
+
+  /** Extra data checks next to referential integrity: grain, SCD type 2 and flag values. */
+  function dataQueries(model, analysis, design) {
+    const out = riQueries(model).map(q => Object.assign({ kind: 'ri' }, q));
+    const bm = busMatrix(model, analysis);
+    const d = matchDesign(model, design);
+    const specFact = name => { for (const s of d.specs) for (const f of arr(s.feittabellen)) if (f && lc(f.naam) === lc(name)) return f; return null; };
+    const specDim = name => { for (const s of d.specs) for (const x of arr(s.dimensies)) if (x && lc(x.naam) === lc(name)) return x; return null; };
+    const cols = t => analysis.list.filter(n => n.type === 'column' && n.table === t && !n.system);
+    const relKeys = new Set();
+    for (const r of model.relationships || []) { relKeys.add(lc(r.fromTable + '|' + r.fromColumn)); relKeys.add(lc(r.toTable + '|' + r.toColumn)); }
+    const T = t => "'" + String(t).replace(/'/g, "''") + "'";
+    // grain: rows against distinct combinations of dimension keys and degenerate dimensions
+    for (const f of bm.facts) {
+      const sf = specFact(f.name);
+      let keys;
+      if (sf) keys = arr(sf.dimensies).map(x => x && x.sleutel).concat(arr(sf.degenerate).map(x => x && x.naam)).filter(Boolean);
+      else {
+        const stem = lc(f.name).replace(/^feit[_ ]/, '').replace(/(en|s)$/, '');
+        keys = cols(f.name).filter(c => relKeys.has(lc(c.table + '|' + c.name)) ||
+          (/(nummer|number|nr|versie|version)$/i.test(c.name.replace(/\s+/g, '')) && !(lc(c.name).startsWith(stem) && /(sleutel|key|id)$/i.test(c.name)))).map(c => c.name);
+      }
+      keys = [...new Set(keys)].filter(c => analysis.nodes.get('C|' + f.name + '|' + c));
+      if (!keys.length) continue;
+      out.push({ kind: 'grain', key: 'grain|' + lc(f.name), table: f.name, keys,
+        dax: `EVALUATE ROW (\n  "rows", COUNTROWS ( ${T(f.name)} ) + 0,\n  "combos", COUNTROWS ( SUMMARIZE ( ${T(f.name)}, ${keys.map(c => daxCol(f.name, c)).join(', ')} ) ) + 0\n)` });
+    }
+    // SCD type 2: one current row per natural key, no overlapping periods
+    for (const dm of bm.dims) {
+      const cs = cols(dm.name), find = re => cs.find(c => re.test(c.name));
+      const from = find(/geldig vanaf|valid from|effective from/i), to = find(/geldig tot|valid to|valid until|effective to/i);
+      const cur = cs.find(c => /actueel|huidige versie|is current|current/i.test(c.name) && /^boolean$/i.test(c.dataType || ''));
+      const sd = specDim(dm.name);
+      const nk = (sd && sd.natuurlijke_sleutel && cs.find(c => lc(c.name) === lc(sd.natuurlijke_sleutel))) ||
+        cs.find(c => !relKeys.has(lc(c.table + '|' + c.name)) && /([- ]id|nummer|number|code)$/i.test(c.name) && !/^dk_/i.test(c.name));
+      if (!from || !nk) continue;
+      const parts = [];
+      if (cur) parts.push(`"multiCurrent", COUNTROWS ( FILTER ( VALUES ( ${daxCol(dm.name, nk.name)} ), CALCULATE ( COUNTROWS ( ${T(dm.name)} ), ${daxCol(dm.name, cur.name)} = TRUE () ) > 1 ) ) + 0`);
+      if (to) {
+        const incl = /en met|inclusive|t\/m/i.test(to.name);
+        parts.push(`"overlaps", COUNTROWS ( FILTER ( ${T(dm.name)}, VAR k = ${daxCol(dm.name, nk.name)} VAR f = ${daxCol(dm.name, from.name)} VAR t = ${daxCol(dm.name, to.name)} RETURN NOT ISBLANK ( t ) && COUNTROWS ( FILTER ( ALL ( ${daxCol(dm.name, nk.name)}, ${daxCol(dm.name, from.name)} ), ${daxCol(dm.name, nk.name)} = k && ${daxCol(dm.name, from.name)} > f && ${daxCol(dm.name, from.name)} ${incl ? '<=' : '<'} t ) ) > 0 ) ) + 0`);
+      }
+      if (parts.length) out.push({ kind: 'scd2', key: 'scd2|' + lc(dm.name), table: dm.name, natural: nk.name, dax: 'EVALUATE ROW (\n  ' + parts.join(',\n  ') + '\n)' });
+    }
+    // flags kept as codes: the distinct values of short text columns in dimensions
+    for (const dm of bm.dims) {
+      const cs = cols(dm.name).filter(c => /^string$/i.test(c.dataType || '') && !relKeys.has(lc(c.table + '|' + c.name)) && !/naam|name|omschrijving|description|adres|address|e-?mail|nummer|number|code|id$/i.test(c.name)).slice(0, 40);
+      if (!cs.length) continue;
+      out.push({ kind: 'flags', key: 'flags|' + lc(dm.name), table: dm.name, columns: cs.map(c => c.name),
+        dax: 'EVALUATE ROW (\n  ' + cs.map((c, i) => `"n${i}", COUNTROWS ( DISTINCT ( ${daxCol(dm.name, c.name)} ) ) + 0, "v${i}", CONCATENATEX ( TOPN ( 6, DISTINCT ( ${daxCol(dm.name, c.name)} ), ${daxCol(dm.name, c.name)}, ASC ), ${daxCol(dm.name, c.name)}, "|" )`).join(',\n  ') + '\n)' });
+    }
+    return out;
+  }
 
   /** One relationship normalised to fact ("many") side and dimension ("one") side; null for many-to-many. */
   function relSides(r) {
@@ -1858,14 +2193,15 @@
           `  "blankRows", CALCULATE ( COUNTROWS ( ${FT} ), ISBLANK ( ${F} ) ) + 0,\n` +
           `  "dimRows", COUNTROWS ( ${DT} ) + 0,\n` +
           `  "dimKeys", COUNTROWS ( DISTINCT ( ${D} ) ) + 0` +
-          (numeric ? `,\n  "unknownRow", COUNTROWS ( FILTER ( DISTINCT ( ${D} ), ${D} = -1 ) ) + 0` : '') + '\n)',
+          (numeric ? `,\n  "unknownRow", COUNTROWS ( FILTER ( DISTINCT ( ${D} ), ${D} = -1 ) ) + 0,\n  "naRow", COUNTROWS ( FILTER ( DISTINCT ( ${D} ), ${D} = -2 ) ) + 0` : '') + '\n)',
       });
     }
     return out;
   }
 
-  function kimballFindings(model, analysis, config, ri, add, found, col, list) {
+  function kimballFindings(model, analysis, config, ri, add, found, col, list, design) {
     const k = Object.assign({ naming: true, fact: 'Feit_', dim: 'Dim_', key: 'DK_' }, (config && config.kimball) || {});
+    const matched = designFindings(model, analysis, design, add, found, col, k);
     const bm = busMatrix(model, analysis);
     const facts = new Set(bm.facts.map(f => f.name)), dims = new Set(bm.dims.map(d => d.name).filter(d => !facts.has(d)));
     const table = name => analysis.nodes.get('T|' + name);
@@ -1942,17 +2278,54 @@
         else if (!n.name.startsWith(k.key) && n.name.includes('_')) add('k-naming', n, 'underscore in a column name');
       }
     }
-    // referential integrity, from the data check (ri) or a reminder to run it
+    // semi-additive facts: stocks and balances in a periodic snapshot may not be summed over time
+    {
+      const specOf = name => { for (const s of (matched && matched.specs) || []) for (const f of arr(s.feittabellen)) if (f && lc(f.naam) === lc(name)) return f; return null; };
+      const semi = new Map(); // column id → why
+      for (const f of bm.facts) {
+        const sf = specOf(f.name);
+        if (sf && arr(sf.feiten).length) {
+          for (const x of arr(sf.feiten)) if (x && /semi/i.test(x.additiviteit || '')) { const c = col(f.name, x.naam); if (c) semi.set(c.id, 'semi-additive in the design' + (x.aggregatie ? ' (' + x.aggregatie + ')' : '')); }
+        } else if ((sf && /periodie|periodic/i.test(sf.type || '')) || (!sf && /periodieke snapshot|periodic snapshot|\bsnapshot\b|\bstand(en)?\b|\bsaldo/i.test(f.description || '')) || (!sf && /moment|snapshot|standen|\bstand\b|balans|positie|portefeuille|voorraad/i.test(f.name))) {
+          for (const c of colsOf(f.name)) if (!relCols.has(c.id) && /^(int64|double|decimal)$/i.test(c.dataType || '') && !/(sleutel|key|nummer|number|id)$/i.test(c.name)) semi.set(c.id, 'stock in periodic snapshot ' + f.name);
+        }
+      }
+      const handlesTime = /LASTDATE|LASTNONBLANK|FIRSTNONBLANK|CLOSINGBALANCE|OPENINGBALANCE|ENDOF(MONTH|QUARTER|YEAR)|STARTOF(MONTH|QUARTER|YEAR)|\bMAX\s*\(|\bMIN\s*\(|\bMAXX\s*\(|\bTOPN\s*\(|\bAVERAGEX\s*\(/i;
+      if (semi.size) for (const n of list) {
+        if (n.type !== 'measure' || !n.expression || handlesTime.test(n.expression) || !/\bSUMX?\s*\(/i.test(n.expression)) continue;
+        const hit = [...n.deps].filter(id => semi.has(id));
+        if (hit.length) add('k-semi-additive', n, 'sums ' + hit.map(id => objLabel(analysis.nodes.get(id))).join(', ') + ' over time (' + semi.get(hit[0]) + ')');
+      }
+    }
+    // referential integrity and the other data checks, or a reminder to run them
     const rels = (model.relationships || []).filter(relSides);
     if (!ri) {
       if (rels.length) found.get('ri-not-checked').push({ id: null, label: rels.length + ' relationships', detail: rels.filter(r => r.rely).length + ' of them assume referential integrity, so violations silently drop rows' });
       return;
     }
     const unknownDone = new Set();
+    const wantsNa = name => ((matched && matched.specs) || []).some(s => arr(s.dimensies).some(x => x && lc(x.naam) === lc(name) && arr(x.standaardrijen).some(r => /^\s*-2\b/.test(String(r)))));
     for (const x of ri.results || []) {
+      const kind = x.kind || 'ri';
+      if (kind !== 'ri') {
+        const t = table(x.table);
+        if (x.error) { found.get('ri-failed').push({ id: t ? t.id : null, label: x.table + ' (' + kind + ')', detail: x.error }); continue; }
+        const v = x.values || {};
+        if (kind === 'grain' && v.rows > v.combos) add('kd-grain-duplicates', t, `${v.rows - v.combos} of ${v.rows} rows share all their keys with another row (${x.keys.join(', ')})`);
+        if (kind === 'scd2') {
+          if (v.multiCurrent > 0) add('kd-scd2-current', t, `${v.multiCurrent} ${x.natural} value${v.multiCurrent === 1 ? ' has' : 's have'} more than one current row`);
+          if (v.overlaps > 0) add('kd-scd2-overlap', t, `${v.overlaps} version${v.overlaps === 1 ? '' : 's'} overlap the next version of the same ${x.natural}`);
+        }
+        if (kind === 'flags') x.columns.forEach((c, i) => {
+          const n = v['n' + i], vals = String(v['v' + i] || '').split('|').filter(s => s !== '');
+          if (n > 0 && n <= 3 && vals.length && vals.every(s => /^(0|1|-1|y|n|j|t|f|x|true|false|waar|onwaar)$/i.test(s.trim()))) add('kd-flag-codes', col(x.table, c), 'values: ' + vals.join(', '));
+        });
+        continue;
+      }
       const fk = col(x.fact, x.fk), pk = col(x.dim, x.pk), text = x.fact + '[' + x.fk + '] → ' + x.dim + '[' + x.pk + ']';
       if (x.error) { found.get('ri-failed').push({ id: fk ? fk.id : null, label: text, detail: x.error }); continue; }
       const v = x.values || {};
+      if (x.numeric && v.naRow === 0 && wantsNa(x.dim) && !unknownDone.has('na|' + x.dim)) { unknownDone.add('na|' + x.dim); add('ri-na-row', table(x.dim), 'no row with key -2'); }
       if (v.orphanKeys > 0) add('ri-orphans', fk, `${v.orphanKeys} key${v.orphanKeys === 1 ? '' : 's'} in ${v.orphanRows} row${v.orphanRows === 1 ? '' : 's'} have no row in ${x.dim}` + (x.rely ? '; the relationship assumes referential integrity, so these rows are left out of every visual' : '; they show up under (Blank)'));
       if (v.blankRows > 0) add('ri-blank-keys', fk, `${v.blankRows} row${v.blankRows === 1 ? '' : 's'} with a blank key`);
       if (v.dimRows > v.dimKeys) add('ri-dim-not-unique', pk, `${v.dimRows - v.dimKeys} duplicate key${v.dimRows - v.dimKeys === 1 ? '' : 's'} in ${v.dimRows} rows`);
@@ -1963,7 +2336,7 @@
   const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
 
   return {
-    checkRules, RULES, riQueries, parsePerformance, compareAnalyses, busMatrix, busMark, parseSource, securityOverview, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
+    parseYaml, parseBusMatrixMd, matchDesign, dataQueries, checkRules, RULES, riQueries, parsePerformance, compareAnalyses, busMatrix, busMark, parseSource, securityOverview, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,

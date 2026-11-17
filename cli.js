@@ -9,7 +9,7 @@
  *   --compare <path>     list what changed compared with another folder holding the same project
  *   --compare-ref <ref>  the same, compared with a Git branch, tag or commit (for example origin/main)
  *   --server <conn>      load the model over XMLA instead of from files (Windows); with --database <name>
- *   --ri <conn>          check referential integrity on the data, on a model open in Power BI Desktop (localhost:port)
+ *   --ri <conn>          check the data (referential integrity, grain, SCD type 2, flags), on a model open in Power BI Desktop (localhost:port)
  *                        or on a server (with --database); Windows
  *   --kimball            only the Kimball dimensional modelling checks (with --check / --rules)
  *   --workspace <name>   also check every report in this Power BI workspace that uses the model (see README)
@@ -119,7 +119,7 @@ function xmlaFiles(server, database) {
     let ri = null;
     if (riConn) {
       if (process.platform !== 'win32') throw new Error('--ri only works on Windows.');
-      const queries = SMO.riQueries(model.model);
+      const queries = SMO.dataQueries(model.model, a, proj.design);
       const tmp = path.join(require('os').tmpdir(), 'smo-ri-' + process.pid + '.json');
       fs.writeFileSync(tmp, JSON.stringify(queries.map(q => ({ key: q.key, dax: q.dax }))));
       let out;
@@ -129,9 +129,9 @@ function xmlaFiles(server, database) {
       if (j.error) throw new Error(j.error);
       const byKey = new Map(j.results.map(x => [x.key, x]));
       ri = { results: queries.map(q => Object.assign({}, q, byKey.get(q.key) || { error: 'no answer' })) };
-      console.log(`Referential integrity checked on ${queries.length} relationships.`);
+      console.log(`Data checked with ${queries.length} queries (referential integrity, grain, SCD type 2, flags).`);
     }
-    const all = SMO.checkRules(model.model, a, proj.config, ri);
+    const all = SMO.checkRules(model.model, a, proj.config, ri, proj.design);
     const r = kimballOnly ? (() => { const rules = all.rules.filter(x => x.group === 'kimball'), counts = { error: 0, warning: 0, info: 0 }; for (const x of rules) counts[x.severity] += x.items.length; return { rules, counts }; })() : all;
     const shown = r.rules.filter(x => showRules || x.severity === 'error' || (strict && x.severity === 'warning'));
     const one = s2 => String(s2).replace(/\r?\n/g, ' ');
