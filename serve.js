@@ -152,6 +152,11 @@ http.createServer(async (req, res) => {
       try { return send(200, JSON.stringify(await workspaceReports({ workspace: j.workspace, dataset: j.dataset })), 'application/json'); }
       catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
+    if (url.pathname === '/api/query') {
+      const j = await post();
+      if (!j || !j.server) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
+      return send(200, JSON.stringify(await psWithInput('xmla-query.ps1', String(j.server), String(j.database || ''), j.queries || [], 3600000)), 'application/json');
+    }
     if (url.pathname === '/api/values' || url.pathname === '/api/live') {
       const j = await post();
       if (!j || !j.server) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');

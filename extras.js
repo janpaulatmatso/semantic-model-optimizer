@@ -577,6 +577,57 @@
   // opened from Power BI Desktop
   { const q = new URLSearchParams(location.search), srv = q.get('server'); if (srv) setTimeout(() => openFromDesktop(srv, q.get('database') || ''), 400); }
 
+  // ------------------------------------------------------------ Kimball: rule filter and the referential integrity check
+
+  $('chkGroup').value = App.store.get('smo.checkGroup', '');
+  state.checkGroup = $('chkGroup').value;
+  $('chkGroup').onchange = e => { state.checkGroup = e.target.value; App.store.set('smo.checkGroup', state.checkGroup); App.run(); };
+  App.onRun.push(() => { $('btnRI').hidden = $('pathForm').hidden || !!state.analysis.stats.noModel; });
+
+  $('btnRI').onclick = () => busy(async () => {
+    const dlg = $('dlg');
+    const queries = SMO.riQueries(model().model);
+    let list = [];
+    try { list = (await fetch('api/desktop').then(x => x.json())).instances || []; } catch (e) { /* none */ }
+    const opts = (state.xmla && !/^(localhost|127\.0\.0\.1):/.test(state.xmla.server) ? [`<option value="server">${esc(state.xmla.database || state.xmla.server)} on ${esc(state.xmla.server)}</option>`] : [])
+      .concat(list.map(i => `<option value="${i.port}"${i.name === model().name ? ' selected' : ''}>${esc(i.name)} in Power BI Desktop (port ${i.port})</option>`));
+    dlg.innerHTML = `<h2>Check referential integrity</h2>
+      <p class="small">Runs one query per relationship (${queries.length}) on the model and checks, for each fact table, that every key exists in the dimension, that no key is blank, that the dimension key is unique, and that the dimension has the row -1 Unknown. Read-only. On a DirectQuery model the queries go to the source and can take a while.</p>
+      ${opts.length ? `<label class="inline">Model <select id="riWhere">${opts.join('')}</select></label>` : '<p class="warn small">Open the model in Power BI Desktop, or load it with Server, to check the data.</p>'}
+      <div id="riOut" class="cmpout"></div>
+      <div class="dlgbtn"><button data-act="cancel">Close</button><button class="primary" data-act="go"${opts.length && queries.length ? '' : ' disabled'}>Check ${queries.length} relationships</button></div>`;
+    dlg.onclick = e => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (act === 'cancel') return dlg.close();
+      if (act !== 'go') return;
+      busy(async () => {
+        const out = dlg.querySelector('#riOut'), where = dlg.querySelector('#riWhere').value;
+        e.target.disabled = true;
+        out.innerHTML = `<p class="muted">Checking ${queries.length} relationships…</p>`;
+        let server, database;
+        if (where === 'server') ({ server, database } = state.xmla);
+        else {
+          server = 'localhost:' + where;
+          const cats = await App.apiPost('api/xmla', { server });
+          if (cats.error) { out.innerHTML = `<p class="warn">${esc(cats.error)}</p>`; e.target.disabled = false; return; }
+          database = (cats.catalogs || [])[0] || '';
+        }
+        const r = await App.apiPost('api/query', { server, database, queries: queries.map(q => ({ key: q.key, dax: q.dax })) });
+        if (r.error) { out.innerHTML = `<p class="warn">${esc(r.error)}</p>`; e.target.disabled = false; return; }
+        const byKey = new Map((r.results || []).map(x => [x.key, x]));
+        state.ri = { model: model().name, at: new Date().toISOString().slice(0, 16).replace('T', ' '), results: queries.map(q => Object.assign({}, q, byKey.get(q.key) || { error: 'no answer' })) };
+        dlg.close();
+        App.setView('checks');
+        $('chkGroup').value = state.checkGroup = 'kimball';
+        App.run();
+        const bad = state.ri.results.filter(x => x.values && (x.values.orphanKeys > 0 || x.values.blankRows > 0 || x.values.dimRows > x.values.dimKeys)).length, failed = state.ri.results.filter(x => x.error).length;
+        $('msgs').innerHTML = '';
+        msg(`Referential integrity checked on ${queries.length} relationships: ${bad ? bad + ' with problems' : 'no problems found'}` + (failed ? `, ${failed} could not be checked` : '') + '.', !!bad);
+      });
+    };
+    dlg.showModal();
+  });
+
   App.el = el; App.busy = busy; App.model = model;
   window.dispatchEvent(new Event('smo-extras'));
 })();

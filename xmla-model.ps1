@@ -62,7 +62,7 @@ try {
       $type = switch ([int]$col.Type) { 2 { 'calculated' } 3 { 'rowNumber' } 4 { 'calculatedTableColumn' } default { 'data' } }
       $dt = $dataTypes[[int]$col.ExplicitDataType]; if (-not $dt) { $dt = $dataTypes[[int]$col.InferredDataType] }
       $t.columns += [ordered]@{ name = $name; type = $type; dataType = $dt; isHidden = [bool]$col.IsHidden; description = [string]$col.Description
-        expression = [string]$col.Expression; sourceColumn = [string]$col.SourceColumn; displayFolder = [string]$col.DisplayFolder; sortById = [string]$col.SortByColumnID }
+        expression = [string]$col.Expression; sourceColumn = [string]$col.SourceColumn; isNullable = [bool]$col.IsNullable; displayFolder = [string]$col.DisplayFolder; sortById = [string]$col.SortByColumnID }
     }
     foreach ($t in $tables.Values) { foreach ($col in $t.columns) { if ($col.sortById -and $colName[$col.sortById]) { $col.sortByColumn = $colName[$col.sortById] }; $col.Remove('sortById') } }
     foreach ($m in (TryQuery 'SELECT * FROM $SYSTEM.TMSCHEMA_MEASURES')) {
@@ -94,7 +94,7 @@ try {
     foreach ($r in (TryQuery 'SELECT * FROM $SYSTEM.TMSCHEMA_RELATIONSHIPS')) {
       $ft = $tables[[string]$r.FromTableID]; $tt = $tables[[string]$r.ToTableID]; if (-not $ft -or -not $tt) { continue }
       $rels += [ordered]@{ name = [string]$r.Name; fromTable = $ft.name; fromColumn = $colName[[string]$r.FromColumnID]; toTable = $tt.name; toColumn = $colName[[string]$r.ToColumnID]
-        isActive = [bool]$r.IsActive; fromCardinality = $(if ([int]$r.FromCardinality -eq 1) { 'one' } else { 'many' }); toCardinality = $(if ([int]$r.ToCardinality -eq 2) { 'many' } else { 'one' })
+        isActive = [bool]$r.IsActive; relyOnReferentialIntegrity = [bool]$r.RelyOnReferentialIntegrity; fromCardinality = $(if ([int]$r.FromCardinality -eq 1) { 'one' } else { 'many' }); toCardinality = $(if ([int]$r.ToCardinality -eq 2) { 'many' } else { 'one' })
         crossFilteringBehavior = $(if ([int]$r.CrossFilteringBehavior -eq 2) { 'bothDirections' } else { 'oneDirection' }) }
     }
     $roles = [ordered]@{}

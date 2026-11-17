@@ -109,6 +109,26 @@ When the model was loaded from an open Power BI Desktop file (and not from files
 - **Pages** turns the usage around: per report page you see every visual and filter with the fields it uses.
 - **Performance** reads an export of the Performance Analyzer (in Power BI Desktop: *Optimize › Performance analyzer*, record, refresh the visuals, *Export*). Put the file in the project folder or open it with *Open file*. Per visual you see the measures and columns it uses, the total time, the DAX query, how much of that is waiting for the source (DirectQuery) and the drawing. Click a visual for the full list, the columns its measures read underneath, and the query.
 
+### Kimball dimensional modelling
+
+The *Checks* tab can show only the **Kimball** rules (choose *Kimball dimensional modelling* at the top) and says how many of the guidelines the model meets. The rules follow *The Data Warehouse Toolkit* (Kimball and Ross) and the team conventions:
+
+| Severity | Rule |
+|---|---|
+| Error | Fact tables related to each other · Keys without a dimension row · Dimension key not unique · BSN in the model |
+| Warning | Blank keys in fact tables · Dimension without the row -1 Unknown · Snowflaked dimensions · Relationships on a text key · Fact key columns that allow blanks · Calculated columns and tables · Fact tables without a date · Ratios stored as a fact · Names that do not follow `Feit_` / `Dim_` / `DK_` |
+| Note | Fact tables without a grain sentence ("One row per …" in the description) · Text columns in fact tables · True/false flags in dimensions · Codes without a description · Incomplete SCD type 2 columns · Role relationships no measure uses · Personal data |
+
+Which tables are facts and which are dimensions follows from the relationships, as in the bus matrix.
+
+**Referential integrity** needs the data. *Check data (referential integrity)* runs one query per relationship on the model open in Power BI Desktop (or loaded with *Server*) and checks that every key in a fact table exists in the dimension, that no fact key is blank, that the dimension key is unique and that the dimension has the row -1. Read-only; on a DirectQuery model the queries go to the source. On the command line: `--ri localhost:<port>` (or a server connection with `--database`), and `--kimball` to limit `--check` and `--rules` to these rules.
+
+The naming convention can be changed or switched off in `smo.config.json`:
+
+```json
+{ "kimball": { "naming": true, "fact": "Feit_", "dim": "Dim_", "key": "DK_" } }
+```
+
 ## Use in a pipeline
 
 `node cli.js <paths> --check` exits with code 1 when there are broken formulas or broken references, so a build or pull request can be blocked. Add `--strict` to fail on warnings too, and `--rules` to print every finding. Exit code 2 means the tool itself could not run (for example a wrong path).

@@ -172,7 +172,7 @@
         const [tt, tc] = readQualified(n.props.toColumn || '');
         model.relationships.push({
           name: n.name, fromTable: ft, fromColumn: fc, toTable: tt, toColumn: tc,
-          isActive: String(n.props.isActive) !== 'false',
+          isActive: String(n.props.isActive) !== 'false', rely: !!n.props.relyOnReferentialIntegrity,
           crossFilter: n.props.crossFilteringBehavior || '', fromCardinality: n.props.fromCardinality || 'many', toCardinality: n.props.toCardinality || 'one',
         });
       } else if (n.kw === 'role') {
@@ -209,7 +209,7 @@
           description: c.description, isHidden: !!c.props.isHidden,
           dataType: c.props.dataType || '', displayFolder: unquoteValue(c.props.displayFolder),
           sortByColumn: c.props.sortByColumn ? readName(c.props.sortByColumn).name : '',
-          sourceColumn: c.props.sourceColumn || '',
+          sourceColumn: c.props.sourceColumn || '', isNullable: String(c.props.isNullable) !== 'false',
           isSystem: c.props.type === 'rowNumber',
         });
       } else if (c.kw === 'hierarchy') {
@@ -274,7 +274,7 @@
           name: c.name, expression: joinExpr(c.expression), isCalculated: c.type === 'calculated',
           description: joinExpr(c.description), isHidden: !!c.isHidden, dataType: c.dataType || '',
           displayFolder: c.displayFolder || '', sortByColumn: c.sortByColumn || '',
-          sourceColumn: c.sourceColumn || '', isSystem: c.type === 'rowNumber',
+          sourceColumn: c.sourceColumn || '', isSystem: c.type === 'rowNumber', isNullable: c.isNullable !== false,
         });
       }
       for (const m of t.measures || []) {
@@ -297,7 +297,7 @@
     for (const r of src.relationships || []) {
       model.relationships.push({
         name: r.name, fromTable: r.fromTable, fromColumn: r.fromColumn, toTable: r.toTable, toColumn: r.toColumn,
-        isActive: r.isActive !== false, crossFilter: r.crossFilteringBehavior || '', fromCardinality: r.fromCardinality || 'many', toCardinality: r.toCardinality || 'one',
+        isActive: r.isActive !== false, rely: !!r.relyOnReferentialIntegrity, crossFilter: r.crossFilteringBehavior || '', fromCardinality: r.fromCardinality || 'many', toCardinality: r.toCardinality || 'one',
       });
     }
     for (const r of src.roles || []) {
@@ -645,7 +645,7 @@
         const cn = mk('C|' + t.name + '|' + c.name, {
           type: 'column', kind: c.isCalculated ? 'calculated column' : 'column', name: c.name, table: t.name,
           expression: c.isCalculated ? c.expression : '', description: c.description, hidden: c.isHidden,
-          dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder, tableKind: t.kind,
+          dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder, tableKind: t.kind, nullable: c.isNullable !== false,
           system: tn.system, sortByColumn: c.sortByColumn, sourceRef: sourceRefOf(tn.sourceInfo, c),
         });
         colIdx.set(lc(t.name) + '|' + lc(c.name), cn);
@@ -1714,7 +1714,7 @@
   ];
 
   /** model + analysis → {rules: [{…rule, items: [{id, label, detail}]}], counts: {error, warning, info}} */
-  function checkRules(model, analysis, config) {
+  function checkRules(model, analysis, config, ri) {
     const noModel = !!analysis.stats.noModel;
     const setting = (config && config.rules) || {};
     const found = new Map(RULES.map(r => [r.id, []]));
@@ -1790,6 +1790,7 @@
       }
       const auto = analysis.list.filter(n => n.type === 'table' && n.system);
       if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
+      kimballFindings(model, analysis, config, ri, add, found, col, list);
     }
     // smo.config.json can switch a rule off or change how heavy it counts
     const rules = RULES.filter(r => setting[r.id] !== 'off' && setting[r.id] !== false)
@@ -1799,10 +1800,170 @@
     for (const r of rules) counts[r.severity] += r.items.length;
     return { rules, counts, total: counts.error + counts.warning + counts.info };
   }
+  // ---------------------------------------------------------------- Kimball dimensional modelling
+
+  RULES.push(
+    { id: 'k-fact-to-fact', group: 'kimball', severity: 'error', title: 'Fact tables related to each other', help: 'Kimball: fact tables are never joined directly. Combine them through the conformed dimensions they share (drill-across).' },
+    { id: 'ri-orphans', group: 'kimball', severity: 'error', title: 'Referential integrity: keys without a dimension row', help: 'Fact rows whose key has no row in the dimension. They show up under (Blank), or disappear from every visual when the relationship assumes referential integrity. Add the dimension rows, or point the key to -1 Unknown during the load.' },
+    { id: 'ri-dim-not-unique', group: 'kimball', severity: 'error', title: 'Referential integrity: dimension key is not unique', help: 'The key on the "one" side of a relationship must be unique. Duplicates make refresh fail or double the facts.' },
+    { id: 'k-bsn', group: 'kimball', severity: 'error', title: 'Citizen service number (BSN) in the model', help: 'A BSN does not belong in a dimensional model.' },
+    { id: 'ri-blank-keys', group: 'kimball', severity: 'warning', title: 'Referential integrity: blank keys in fact tables', help: 'Kimball: never NULL in a key column. Point a missing value to the fixed row -1 Unknown, or -2 Not applicable.' },
+    { id: 'ri-unknown-row', group: 'kimball', severity: 'warning', title: 'Dimensions without the row -1 Unknown', help: 'Every dimension holds the fixed rows -1 Unknown and -2 Not applicable, so facts with a missing or late-arriving value still have a row to point to.' },
+    { id: 'k-snowflake', group: 'kimball', severity: 'warning', title: 'Snowflaked dimensions', help: 'A dimension that is related to another dimension. Kimball: denormalise into one dimension unless there is a hard reason, so the model stays readable.' },
+    { id: 'k-natural-key', group: 'kimball', severity: 'warning', title: 'Relationships on a text key', help: 'Relationships run over integer surrogate keys. A text key is usually a natural key: it can change and is not unique across sources.' },
+    { id: 'k-key-nullable', group: 'kimball', severity: 'warning', title: 'Fact key columns that allow blanks', help: 'A key column in a fact table should not allow blanks; a missing value points to -1 Unknown.' },
+    { id: 'k-calculated', group: 'kimball', severity: 'warning', title: 'Calculated columns and tables', help: 'Kimball: derived columns (bands, flags, durations) are materialised in the table during the load, not calculated in the semantic model.' },
+    { id: 'k-fact-no-date', group: 'kimball', severity: 'warning', title: 'Fact tables without a date', help: 'Every business process happens at a moment. Relate each fact table to the date dimension.' },
+    { id: 'k-ratio-fact', group: 'kimball', severity: 'warning', title: 'Ratios stored as a fact', help: 'Store numerator and denominator and calculate the ratio as a measure. A stored percentage gets summed.' },
+    { id: 'k-naming', group: 'kimball', severity: 'warning', title: 'Names that do not follow the conventions', help: 'Fact tables Feit_<process>, dimensions Dim_<subject>, DK_ only for keys that carry a relationship, no underscores in other column names. Change the prefixes or switch this off with "kimball": {"naming": false} in smo.config.json.' },
+    { id: 'k-grain-missing', group: 'kimball', severity: 'info', title: 'Fact tables without a declared grain', help: 'Declare the grain as one sentence in the description of the fact table: "One row per …" / "Eén rij per …".' },
+    { id: 'k-text-in-fact', group: 'kimball', severity: 'info', title: 'Text columns in fact tables', help: 'Text belongs in a dimension. A number without attributes (order number, claim number) is fine in the fact table as a degenerate dimension.' },
+    { id: 'k-flag-values', group: 'kimball', severity: 'info', title: 'True/false flags in dimensions', help: 'Kimball: readable values ("Yes"/"No", "Active"/"Ended") instead of true/false or 1/0.' },
+    { id: 'k-code-without-label', group: 'kimball', severity: 'info', title: 'Codes without a description', help: 'Next to a code a dimension holds a readable description.' },
+    { id: 'k-scd2-incomplete', group: 'kimball', severity: 'info', title: 'Incomplete history columns (SCD type 2)', help: 'A type 2 dimension has Valid from, Valid to and a current-row flag.' },
+    { id: 'k-role-unused', group: 'kimball', severity: 'info', title: 'Role relationships no measure uses', help: 'A role (for example ship date) is an inactive relationship that a measure switches on with USERELATIONSHIP. No measure uses this one.' },
+    { id: 'k-personal-data', group: 'kimball', severity: 'info', title: 'Personal data', help: 'Only include personal data when the business question needs it; otherwise use bands (age group, four-digit postcode area).' },
+    { id: 'ri-not-checked', group: 'kimball', severity: 'info', title: 'Referential integrity not checked against the data', help: 'The model only says how tables relate, not whether the data matches. Run "Check data" with the model open in Power BI Desktop or on a server.' },
+    { id: 'ri-failed', group: 'kimball', severity: 'info', title: 'Referential integrity could not be checked', help: 'The query for these relationships failed; the message says why.' },
+  );
+
+  /** One relationship normalised to fact ("many") side and dimension ("one") side; null for many-to-many. */
+  function relSides(r) {
+    const fc = r.fromCardinality || 'many', tc = r.toCardinality || 'one';
+    if (fc === 'many' && tc === 'many') return null;
+    if (fc === 'one' && tc === 'many') return { fact: r.toTable, fk: r.toColumn, dim: r.fromTable, pk: r.fromColumn, r };
+    return { fact: r.fromTable, fk: r.fromColumn, dim: r.toTable, pk: r.toColumn, r };
+  }
+  const daxCol = (t, c) => "'" + String(t).replace(/'/g, "''") + "'[" + String(c).replace(/\]/g, ']]') + ']';
+
+  /** DAX queries that check referential integrity per relationship, to run on the live model. */
+  function riQueries(model) {
+    const typeOf = new Map();
+    for (const t of model.tables || []) for (const c of t.columns || []) typeOf.set(lc(t.name) + '|' + lc(c.name), c.dataType || '');
+    const out = [], seen = new Set();
+    for (const r of model.relationships || []) {
+      const s = relSides(r);
+      if (!s) continue;
+      const key = lc(s.fact + '|' + s.fk + '|' + s.dim + '|' + s.pk);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const F = daxCol(s.fact, s.fk), D = daxCol(s.dim, s.pk), FT = "'" + s.fact.replace(/'/g, "''") + "'", DT = "'" + s.dim.replace(/'/g, "''") + "'";
+      const missing = `FILTER ( EXCEPT ( DISTINCT ( ${F} ), DISTINCT ( ${D} ) ), NOT ISBLANK ( ${F} ) )`;
+      const numeric = /^(int64|decimal|double)$/i.test(typeOf.get(lc(s.dim + '|' + s.pk)) || '');
+      out.push({
+        key, fact: s.fact, fk: s.fk, dim: s.dim, pk: s.pk, rely: !!r.rely, numeric,
+        dax: 'EVALUATE ROW (\n' +
+          `  "orphanKeys", COUNTROWS ( ${missing} ) + 0,\n` +
+          `  "orphanRows", CALCULATE ( COUNTROWS ( ${FT} ), ${missing} ) + 0,\n` +
+          `  "blankRows", CALCULATE ( COUNTROWS ( ${FT} ), ISBLANK ( ${F} ) ) + 0,\n` +
+          `  "dimRows", COUNTROWS ( ${DT} ) + 0,\n` +
+          `  "dimKeys", COUNTROWS ( DISTINCT ( ${D} ) ) + 0` +
+          (numeric ? `,\n  "unknownRow", COUNTROWS ( FILTER ( DISTINCT ( ${D} ), ${D} = -1 ) ) + 0` : '') + '\n)',
+      });
+    }
+    return out;
+  }
+
+  function kimballFindings(model, analysis, config, ri, add, found, col, list) {
+    const k = Object.assign({ naming: true, fact: 'Feit_', dim: 'Dim_', key: 'DK_' }, (config && config.kimball) || {});
+    const bm = busMatrix(model, analysis);
+    const facts = new Set(bm.facts.map(f => f.name)), dims = new Set(bm.dims.map(d => d.name).filter(d => !facts.has(d)));
+    const table = name => analysis.nodes.get('T|' + name);
+    const colsOf = name => list.filter(n => n.type === 'column' && n.table === name);
+    const isDate = t => { const n = table(t); return !!n && (/^time$/i.test(n.dataCategory || '') || /date|datum|calendar|kalender/i.test(n.name)); };
+    const relCols = new Set();
+    // relationships: fact to fact, snowflakes, text keys, nullable fact keys
+    for (const r of model.relationships || []) {
+      const s = relSides(r), text = r.fromTable + '[' + r.fromColumn + '] → ' + r.toTable + '[' + r.toColumn + ']';
+      const a = col(r.fromTable, r.fromColumn), b = col(r.toTable, r.toColumn);
+      if (a) relCols.add(a.id); if (b) relCols.add(b.id);
+      if (!s) continue;
+      if (facts.has(s.fact) && facts.has(s.dim)) add('k-fact-to-fact', table(s.fact), text);
+      else if (dims.has(s.fact) && !facts.has(s.fact)) add('k-snowflake', table(s.fact), 'related to ' + s.dim + ' (' + text + ')');
+      const fk = col(s.fact, s.fk), pk = col(s.dim, s.pk);
+      if ([fk, pk].some(c => c && /^string$/i.test(c.dataType || ''))) add('k-natural-key', fk || pk, text);
+      if (fk && facts.has(s.fact) && fk.nullable !== false) add('k-key-nullable', fk, 'allows blanks; used in ' + text);
+    }
+    // facts
+    for (const f of bm.facts) {
+      const t = table(f.name);
+      if (!bm.dims.some(d => isDate(d.name) && bm.cell(f.name, d.name) && !bm.cell(f.name, d.name).via)) add('k-fact-no-date', t, 'no relationship to a date table');
+      if (!/(één|een|1|one)\s+(rij|regel|row|record)\s+(per|for)\b/i.test(f.description || '')) add('k-grain-missing', t, f.description ? 'description: "' + f.description.slice(0, 80) + '"' : 'no description');
+      for (const c of colsOf(f.name)) {
+        if (relCols.has(c.id)) continue;
+        if (/^(int64|double|decimal)$/i.test(c.dataType || '') && /%|percent|pct|ratio|quote|quotum|\brate\b/i.test(c.name)) add('k-ratio-fact', c, c.dataType);
+        if (/^string$/i.test(c.dataType || '') && !/(nummer|number|nr|no|id|code)$/i.test(c.name.replace(/\s+/g, ''))) add('k-text-in-fact', c, 'text column in fact table ' + f.name);
+      }
+    }
+    // dimensions
+    for (const d of dims) {
+      const cs = colsOf(d), names = cs.map(c => lc(c.name));
+      for (const c of cs) {
+        if (/^boolean$/i.test(c.dataType || '')) add('k-flag-values', c, 'true/false');
+        const m = /^(.*?)[\s_-]*code$/i.exec(c.name);
+        if (m && m[1] && !names.some(n => n !== lc(c.name) && (n.includes(lc(m[1])) || /omschrijving|description|naam|name/.test(n)))) add('k-code-without-label', c, 'no column with "' + m[1] + '" or a description next to it');
+      }
+      if (names.some(n => /geldig vanaf|valid from|effective from/.test(n))) {
+        const miss = [];
+        if (!names.some(n => /geldig tot|valid to|valid until|effective to/.test(n))) miss.push('valid to');
+        if (!names.some(n => /actueel|huidig|current/.test(n))) miss.push('current-row flag');
+        if (miss.length) add('k-scd2-incomplete', table(d), 'missing ' + miss.join(' and '));
+      }
+    }
+    // calculated columns and tables
+    for (const n of list) {
+      if (n.kind === 'calculated column' || n.kind === 'calculated table') add('k-calculated', n, n.kind);
+      if (n.type === 'column') {
+        if (/\b(bsn|burgerservicenummer|sofinummer|social security|ssn)\b/i.test(n.name)) add('k-bsn', n, '');
+        else if (/e-?mail|telefoon|phone|mobiel|\badres\b|address|geboortedatum|birth\s?date|date of birth|\biban\b|voornaam|achternaam|first name|last name/i.test(n.name)) add('k-personal-data', n, n.hidden ? 'hidden' : 'visible');
+      }
+    }
+    // role relationships nobody activates
+    const used = new Set();
+    for (const n of list) {
+      if (n.type !== 'measure' || !/USERELATIONSHIP/i.test(n.expression || '')) continue;
+      const re = /USERELATIONSHIP\s*\(([^)]*)\)/gi; let m;
+      while ((m = re.exec(n.expression))) for (const ref of daxRefs(m[1])) { const hit = analysis.resolve(ref, n.table); if (hit) used.add(hit.id); }
+    }
+    for (const r of model.relationships || []) {
+      if (r.isActive) continue;
+      const a = col(r.fromTable, r.fromColumn), b = col(r.toTable, r.toColumn);
+      if (!(a && used.has(a.id)) && !(b && used.has(b.id))) add('k-role-unused', a || b, r.fromTable + '[' + r.fromColumn + '] → ' + r.toTable + '[' + r.toColumn + ']');
+    }
+    // naming conventions
+    if (k.naming !== false) {
+      for (const f of facts) if (!f.startsWith(k.fact)) add('k-naming', table(f), 'fact table: expected ' + k.fact + '…');
+      for (const d of dims) if (!d.startsWith(k.dim)) add('k-naming', table(d), 'dimension: expected ' + k.dim + '…');
+      for (const n of list) {
+        if (n.type !== 'column' || !(facts.has(n.table) || dims.has(n.table))) continue;
+        const isKey = relCols.has(n.id);
+        if (isKey && !n.name.startsWith(k.key)) add('k-naming', n, 'key in a relationship: expected ' + k.key + '…');
+        else if (!isKey && n.name.startsWith(k.key)) add('k-naming', n, k.key + ' is only for keys that carry a relationship');
+        else if (!n.name.startsWith(k.key) && n.name.includes('_')) add('k-naming', n, 'underscore in a column name');
+      }
+    }
+    // referential integrity, from the data check (ri) or a reminder to run it
+    const rels = (model.relationships || []).filter(relSides);
+    if (!ri) {
+      if (rels.length) found.get('ri-not-checked').push({ id: null, label: rels.length + ' relationships', detail: rels.filter(r => r.rely).length + ' of them assume referential integrity, so violations silently drop rows' });
+      return;
+    }
+    const unknownDone = new Set();
+    for (const x of ri.results || []) {
+      const fk = col(x.fact, x.fk), pk = col(x.dim, x.pk), text = x.fact + '[' + x.fk + '] → ' + x.dim + '[' + x.pk + ']';
+      if (x.error) { found.get('ri-failed').push({ id: fk ? fk.id : null, label: text, detail: x.error }); continue; }
+      const v = x.values || {};
+      if (v.orphanKeys > 0) add('ri-orphans', fk, `${v.orphanKeys} key${v.orphanKeys === 1 ? '' : 's'} in ${v.orphanRows} row${v.orphanRows === 1 ? '' : 's'} have no row in ${x.dim}` + (x.rely ? '; the relationship assumes referential integrity, so these rows are left out of every visual' : '; they show up under (Blank)'));
+      if (v.blankRows > 0) add('ri-blank-keys', fk, `${v.blankRows} row${v.blankRows === 1 ? '' : 's'} with a blank key`);
+      if (v.dimRows > v.dimKeys) add('ri-dim-not-unique', pk, `${v.dimRows - v.dimKeys} duplicate key${v.dimRows - v.dimKeys === 1 ? '' : 's'} in ${v.dimRows} rows`);
+      if (x.numeric && v.unknownRow === 0 && !unknownDone.has(x.dim)) { unknownDone.add(x.dim); add('ri-unknown-row', table(x.dim), 'no row with key -1'); }
+    }
+  }
+
   const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
 
   return {
-    checkRules, RULES, parsePerformance, compareAnalyses, busMatrix, busMark, parseSource, securityOverview, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
+    checkRules, RULES, riQueries, parsePerformance, compareAnalyses, busMatrix, busMark, parseSource, securityOverview, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,

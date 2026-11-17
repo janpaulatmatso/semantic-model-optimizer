@@ -9,6 +9,9 @@
  *   --compare <path>     list what changed compared with another folder holding the same project
  *   --compare-ref <ref>  the same, compared with a Git branch, tag or commit (for example origin/main)
  *   --server <conn>      load the model over XMLA instead of from files (Windows); with --database <name>
+ *   --ri <conn>          check referential integrity on the data, on a model open in Power BI Desktop (localhost:port)
+ *                        or on a server (with --database); Windows
+ *   --kimball            only the Kimball dimensional modelling checks (with --check / --rules)
  *   --workspace <name>   also check every report in this Power BI workspace that uses the model (see README)
  *   --csv / --json <file>, --lineage "Name"
  *
@@ -39,7 +42,7 @@ function xmlaFiles(server, database) {
   const csv = opt('--csv'), json = opt('--json'), lin = opt('--lineage'), format = (opt('--format') || 'text').toLowerCase(), summary = opt('--summary');
   const cmpPath = opt('--compare'), cmpRef = opt('--compare-ref'), server = opt('--server'), database = opt('--database');
   const workspace = opt('--workspace'), dataset = opt('--dataset');
-  const check = flag('--check'), strict = flag('--strict'), showRules = flag('--rules');
+  const check = flag('--check'), strict = flag('--strict'), showRules = flag('--rules'), kimballOnly = flag('--kimball'), riConn = opt('--ri');
   if (!args.length && !server) { console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^#!.*\n\/\* ?/, '').replace(/^ \* ?/gm, '')); process.exit(2); }
 
   const files = [], warnings = [];
@@ -112,8 +115,24 @@ function xmlaFiles(server, database) {
     part('Fixed', d.fixed, x => x.label);
   }
 
-  if (check || showRules || summary) {
-    const r = SMO.checkRules(model.model, a, proj.config);
+  if (check || showRules || summary || riConn) {
+    let ri = null;
+    if (riConn) {
+      if (process.platform !== 'win32') throw new Error('--ri only works on Windows.');
+      const queries = SMO.riQueries(model.model);
+      const tmp = path.join(require('os').tmpdir(), 'smo-ri-' + process.pid + '.json');
+      fs.writeFileSync(tmp, JSON.stringify(queries.map(q => ({ key: q.key, dax: q.dax }))));
+      let out;
+      try { out = execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'xmla-query.ps1'), '-InputFile', tmp].concat(database ? ['-Database', database] : []), { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: Object.assign({}, process.env, { SMO_XMLA_CONN: riConn }) }); }
+      finally { fs.unlinkSync(tmp); }
+      const j = JSON.parse(out.slice(out.indexOf('{')));
+      if (j.error) throw new Error(j.error);
+      const byKey = new Map(j.results.map(x => [x.key, x]));
+      ri = { results: queries.map(q => Object.assign({}, q, byKey.get(q.key) || { error: 'no answer' })) };
+      console.log(`Referential integrity checked on ${queries.length} relationships.`);
+    }
+    const all = SMO.checkRules(model.model, a, proj.config, ri);
+    const r = kimballOnly ? (() => { const rules = all.rules.filter(x => x.group === 'kimball'), counts = { error: 0, warning: 0, info: 0 }; for (const x of rules) counts[x.severity] += x.items.length; return { rules, counts }; })() : all;
     const shown = r.rules.filter(x => showRules || x.severity === 'error' || (strict && x.severity === 'warning'));
     const one = s2 => String(s2).replace(/\r?\n/g, ' ');
     for (const rule of shown) {

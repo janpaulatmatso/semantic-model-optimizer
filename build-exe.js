@@ -20,7 +20,7 @@ fs.mkdirSync(work, { recursive: true });
 // modules that run inside the executable (server side), and files that are unpacked next to them at run time
 const MODULES = ['core.js', 'loader.js', 'remove.js', 'edit.js', 'fix.js', 'scan.js', 'compare.js', 'describe.js', 'workspace.js', 'serve.js', 'cli.js', 'install-external-tool.js', 'exe-main.js'];
 const ASSETS = ['index.html', 'style.css', 'app.js', 'core.js', 'diagram.js', 'export.js', 'extras.js', 'i18n.js', 'cli.js', 'serve.js',
-  'desktop-stats.ps1', 'xmla-model.ps1', 'xmla-values.ps1', 'xmla-write.ps1', 'README.md', 'LICENSE'];
+  'desktop-stats.ps1', 'xmla-model.ps1', 'xmla-query.ps1', 'xmla-values.ps1', 'xmla-write.ps1', 'README.md', 'LICENSE'];
 
 // the version comes from SMO_VERSION (set by the release workflow) or from package.json
 const version = String(process.env.SMO_VERSION || require('./package.json').version).replace(/^v/, '');

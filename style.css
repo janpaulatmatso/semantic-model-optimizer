@@ -258,3 +258,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .pffields { max-width: 420px; }
 .pffields .link { display: inline-block; margin: 0 4px 3px 0; font-size: 12px; padding: 1px 6px; }
 .pfdetail .links { margin-bottom: 4px; }
+.filters select#chkGroup { max-width: none; }
+#chkScore { color: var(--muted); }
+#btnRI[hidden] { display: none; }

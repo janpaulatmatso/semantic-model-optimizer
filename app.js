@@ -577,7 +577,7 @@
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
     if (state.view === 'model') renderDiagram();
-    state.checks = SMO.checkRules(cur.model, state.analysis, p.config);
+    state.checks = SMO.checkRules(cur.model, state.analysis, p.config, state.ri && state.ri.model === cur.name ? state.ri : null);
     const c = state.checks.counts;
     $('tabChecks').innerHTML = 'Checks' + (c.error ? ` <span class="cnt s-unused">${c.error}</span>` : '') + (c.warning ? ` <span class="cnt s-model">${c.warning}</span>` : '') + (!c.error && !c.warning && c.info ? ` <span class="cnt">${c.info}</span>` : '');
     if (state.view === 'checks') renderChecks();
@@ -590,7 +590,15 @@
   const SEV = { error: 'Error', warning: 'Warning', info: 'Note' };
   const FIXABLE = { 'key-visible': 'Hide these columns', 'measure-no-format': 'Set a number format', 'duplicate-measure': 'Point duplicates to one measure' };
   function renderChecks() {
-    const r = state.checks, c = r.counts;
+    const all = state.checks, g = state.checkGroup || '';
+    const rules = all.rules.filter(x => !g || (g === 'kimball') === (x.group === 'kimball'));
+    const c = { error: 0, warning: 0, info: 0 };
+    for (const x of rules) c[x.severity] += x.items.length;
+    const r = { rules, counts: c, total: c.error + c.warning + c.info };
+    // how many of the Kimball guidelines the model meets
+    const kAll = SMO.RULES.filter(x => x.group === 'kimball' && !/^ri-(not-checked|failed)$/.test(x.id) && (!/^ri-/.test(x.id) || (state.ri && state.ri.model === state.project.models[state.modelIdx].name)) && !(x.id === 'k-naming' && (state.project.config || {}).kimball && state.project.config.kimball.naming === false));
+    const kFail = new Set(all.rules.filter(x => x.group === 'kimball').map(x => x.id));
+    $('chkScore').textContent = g === 'kimball' && !state.analysis.stats.noModel ? `Meets ${kAll.filter(x => !kFail.has(x.id)).length} of ${kAll.length} Kimball guidelines` + (state.ri && state.ri.model === state.project.models[state.modelIdx].name ? ` · data checked ${state.ri.at}` : ' · referential integrity not checked against the data yet') : '';
     $('checksInfo').textContent = r.total ? `${c.error} error${c.error === 1 ? '' : 's'} · ${c.warning} warning${c.warning === 1 ? '' : 's'} · ${c.info} note${c.info === 1 ? '' : 's'}` +
       (state.analysis.stats.noModel ? ' · the model is not loaded, so only the report could be checked' : '') : 'Nothing found. The model passes every check.';
     const open = state.checksOpen || (state.checksOpen = new Set(r.rules.filter(x => x.severity === 'error').map(x => x.id)));

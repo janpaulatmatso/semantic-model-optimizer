@@ -99,6 +99,11 @@
         <span>Click a table to select it, double-click to centre the star on it.</span></div>
     </div>
     <div class="left" id="checksView" data-view="checks" hidden>
+      <div class="filters">
+        <select id="chkGroup"><option value="">All rules</option><option value="kimball">Kimball dimensional modelling</option><option value="general">General best practice</option></select>
+        <span id="chkScore" class="small"></span><span class="grow"></span>
+        <button type="button" id="btnRI" title="Run a query per relationship on the model open in Power BI Desktop or on the server, and check that every key in the fact tables exists in the dimension">Check data (referential integrity)</button>
+      </div>
       <div class="count" id="checksInfo"></div>
       <div class="tablewrap checks" id="checksList"></div>
     </div>

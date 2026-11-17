@@ -88,6 +88,50 @@ test('checks: findings, severity from the config, date table and keys', async ()
   assert.equal(ids(cfg)['naming-convention'], undefined);     // every measure starts with a capital
 });
 
+test('kimball: rules on the model and referential integrity from the data', async () => {
+  const dir = makeProject();
+  const { m, a } = await load(dir);
+  const ids = r => Object.fromEntries(r.rules.filter(x => x.group === 'kimball').map(x => [x.id, x.items.map(i => i.label)]));
+  const r = ids(SMO.checkRules(m.model, a, null));
+  assert.ok(r['k-naming'].includes("'Sales'"));                         // fact table without Feit_
+  assert.ok(r['k-naming'].includes('Sales[DateKey]'));                  // relationship key without DK_
+  assert.deepEqual(r['k-key-nullable'].sort(), ['Sales[CustKey]', 'Sales[DateKey]']);
+  assert.deepEqual(r['k-calculated'], ['Sales[Amount x2]']);
+  assert.equal(r['k-grain-missing'], undefined);                        // "One row per order line."
+  assert.equal(r['k-fact-no-date'], undefined);
+  assert.deepEqual(r['ri-not-checked'], ['2 relationships']);
+  // with the naming convention switched off and the data checked
+  const q = SMO.riQueries(m.model);
+  assert.equal(q.length, 2);
+  assert.match(q[0].dax, /EXCEPT \( DISTINCT \( 'Sales'\[DateKey\] \), DISTINCT \( 'Date'\[Date\] \) \)/);
+  const ri = { results: [
+    Object.assign({}, q.find(x => x.dim === 'Customer'), { values: { orphanKeys: 2, orphanRows: 5, blankRows: 1, dimRows: 10, dimKeys: 9, unknownRow: 0 } }),
+    Object.assign({}, q.find(x => x.dim === 'Date'), { error: 'source not reachable' }),
+  ] };
+  const r2 = ids(SMO.checkRules(m.model, a, { kimball: { naming: false } }, ri));
+  assert.equal(r2['k-naming'], undefined);
+  assert.deepEqual(r2['ri-orphans'], ['Sales[CustKey]']);
+  assert.deepEqual(r2['ri-blank-keys'], ['Sales[CustKey]']);
+  assert.deepEqual(r2['ri-dim-not-unique'], ['Customer[CustKey]']);
+  assert.deepEqual(r2['ri-unknown-row'], ["'Customer'"]);
+  assert.deepEqual(r2['ri-failed'], ['Sales[DateKey] → Date[Date]']);
+  assert.equal(r2['ri-not-checked'], undefined);
+});
+
+test('kimball: fact tables related to each other and snowflakes', async () => {
+  const dir = makeProject();
+  const rel = path.join(dir, 'Demo.SemanticModel/definition/relationships.tmdl');
+  // a second fact table related to Sales, and Customer snowflaked to a Region table
+  fs.writeFileSync(path.join(dir, 'Demo.SemanticModel/definition/tables/Returns.tmdl'), "table Returns\n\tmeasure 'Return count' = COUNTROWS ( Returns )\n\n\tcolumn OrderKey\n\t\tdataType: int64\n\t\tsourceColumn: order_key\n\n\tcolumn DateKey\n\t\tdataType: dateTime\n\t\tsourceColumn: d\n");
+  fs.writeFileSync(path.join(dir, 'Demo.SemanticModel/definition/tables/Region.tmdl'), "table Region\n\tcolumn Region\n\t\tdataType: string\n\t\tsourceColumn: region\n");
+  fs.appendFileSync(rel, "\nrelationship r3\n\tfromColumn: Returns.OrderKey\n\ttoColumn: Sales.Qty\n\nrelationship r4\n\tfromColumn: Customer.Region\n\ttoColumn: Region.Region\n\nrelationship r5\n\tfromColumn: Returns.DateKey\n\ttoColumn: Date.Date\n");
+  const { m, a } = await load(dir);
+  const r = Object.fromEntries(SMO.checkRules(m.model, a, null).rules.map(x => [x.id, x.items.map(i => i.detail)]));
+  assert.ok(r['k-fact-to-fact'].some(d => /Returns\[OrderKey\] → Sales\[Qty\]/.test(d)));
+  assert.ok(r['k-snowflake'].some(d => /related to Region/.test(d)));
+  assert.ok(r['k-natural-key'].some(d => /Customer\[Region\] → Region\[Region\]/.test(d)));
+});
+
 test('bus matrix: one business process, its dimensions and its grain', async () => {
   const { m, a } = await load(makeProject());
   const b = SMO.busMatrix(m.model, a);
