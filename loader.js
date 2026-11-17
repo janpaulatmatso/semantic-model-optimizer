@@ -16,7 +16,7 @@ async function readZip(file) {
       size,
       read: async (off, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, off); return new Uint8Array(b.buffer, b.byteOffset, len); },
     };
-    const want = n => n === 'Report/Layout' || n === 'DataModelSchema' || (/^Report\/definition\//.test(n) && /\.json$/i.test(n));
+    const want = SMO.zipWants;
     return await SMO.readZipTexts(reader, async d => new Uint8Array(zlib.inflateRawSync(d)), want);
   } finally { fs.closeSync(fd); }
 }
@@ -39,7 +39,7 @@ async function loadPath(target) {
   };
 
   if (st.isFile()) {
-    if (/\.(pbix|pbit)$/i.test(target)) await addZip(target, path.basename(target));
+    if (/\.(pbix|pbit|vpax)$/i.test(target)) await addZip(target, path.basename(target));
     else files.push({ path: path.basename(target), text: SMO.decodeText(new Uint8Array(fs.readFileSync(target))) });
     return { files, warnings };
   }
@@ -48,7 +48,7 @@ async function loadPath(target) {
       if (files.length > MAX_FILES) return;
       const full = path.join(dir, e.name), r = rel ? rel + '/' + e.name : e.name;
       if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) await walk(full, r); }
-      else if (/\.(pbix|pbit)$/i.test(e.name)) await addZip(full, r);
+      else if (/\.(pbix|pbit|vpax)$/i.test(e.name)) await addZip(full, r);
       else if (SMO.wantsFile(r)) files.push({ path: r, text: SMO.decodeText(new Uint8Array(fs.readFileSync(full))) });
     }
   };

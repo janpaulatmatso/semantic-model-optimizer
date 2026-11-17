@@ -12,12 +12,13 @@
   <div class="load">
     <button id="btnDir" class="primary">Map openen</button>
     <button id="btnFile">Bestand openen</button>
+    <button id="btnDesktop" hidden title="Leest aantal regels en MB per tabel en kolom uit het bestand dat nu open staat in Power BI Desktop">Groottes uit Power BI Desktop</button>
     <form id="pathForm" hidden>
       <input id="pathInput" type="text" placeholder="Of plak een pad: C:\…\MijnRapport" spellcheck="false">
       <button>Laden</button>
     </form>
     <input id="inDir" type="file" webkitdirectory multiple hidden>
-    <input id="inFile" type="file" accept=".pbix,.pbit,.bim,.json,.tmdl" multiple hidden>
+    <input id="inFile" type="file" accept=".pbix,.pbit,.vpax,.bim,.json,.tmdl" multiple hidden>
   </div>
 </header>
 
@@ -32,6 +33,7 @@
       <li><b>.pbit</b> (sjabloon) — model én rapport.</li>
       <li><b>.pbix</b> — alleen het rapport; het model in een .pbix is niet leesbaar. Combineer met het model als .pbip of .pbit.</li>
     </ul>
+    <p><b>Aantal regels en MB per tabel?</b> Laad daarna een <b>.vpax</b> (DAX Studio › Advanced › Export Metrics), of start de tool met <code>node serve.js</code> en lees de groottes rechtstreeks uit Power BI Desktop.</p>
     <p class="hint">Meerdere rapporten op één model? Open de map waar ze samen in staan. Alles blijft op deze computer.</p>
   </div>
 </main>

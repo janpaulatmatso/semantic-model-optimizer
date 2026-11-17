@@ -6,6 +6,19 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { loadPath } = require('./loader.js');
+const { execFile } = require('child_process');
+
+/** Regels en MB uit een geopend Power BI Desktop-bestand (alleen Windows, alleen lezen). */
+function desktopStats(port) {
+  return new Promise(resolve => {
+    if (process.platform !== 'win32') return resolve({ error: 'Uitlezen uit Power BI Desktop werkt alleen op Windows.' });
+    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'desktop-stats.ps1')].concat(port ? ['-Port', String(port)] : ['-List']);
+    execFile('powershell.exe', args, { maxBuffer: 256 * 1024 * 1024, timeout: 120000, windowsHide: true }, (err, stdout, stderr) => {
+      try { resolve(JSON.parse(stdout.slice(stdout.indexOf('{')))); }
+      catch (e) { resolve({ error: 'Uitlezen mislukt: ' + String((stderr || (err && err.message) || 'geen antwoord')).trim().split(String.fromCharCode(10))[0].trim() }); }
+    });
+  });
+}
 
 const PORT = Number(process.env.PORT || process.argv[2] || 5273);
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css' };
@@ -23,6 +36,10 @@ http.createServer(async (req, res) => {
       if (!target) return send(400, JSON.stringify({ error: 'Geen pad opgegeven' }), 'application/json');
       const r = await loadPath(target);
       return send(200, JSON.stringify(r), 'application/json');
+    }
+    if (url.pathname === '/api/desktop') {
+      const port = parseInt(url.searchParams.get('port') || '0', 10) || 0;
+      return send(200, JSON.stringify(await desktopStats(port)), 'application/json');
     }
     const file = STATIC[url.pathname];
     if (!file) return send(404, 'Niet gevonden', 'text/plain');

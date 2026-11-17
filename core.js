@@ -526,7 +526,7 @@
     const segs = root.split('/').filter(Boolean);
     let last = segs[segs.length - 1] || 'model';
     if (/^(Report|Model)$/i.test(last) && segs.length > 1) last = segs[segs.length - 2];
-    return last.replace(/\.(SemanticModel|Dataset|Report|pbix|pbit|pbip)$/i, '');
+    return last.replace(/\.(SemanticModel|Dataset|Report|pbix|pbit|pbip|vpax)$/i, '');
   }
 
   /** Welke bestanden zijn de moeite van het inlezen waard? */
@@ -541,6 +541,7 @@
     const warnings = [];
     const modelGroups = new Map(), pbirGroups = new Map();
     const models = [], reports = [];
+    let stats = null;
     for (const f0 of files) {
       const f = { path: norm(f0.path), text: f0.text };
       const p = f.path, b = baseName(p);
@@ -549,6 +550,9 @@
         const rootDir = i >= 0 ? p.slice(0, i) : dirName(p);
         if (!modelGroups.has(rootDir)) modelGroups.set(rootDir, []);
         modelGroups.get(rootDir).push(f);
+      } else if (b === 'DaxVpaView.json') {
+        const j = tryJson(f.text);
+        if (j) stats = statsFromVpax(j, 'VertiPaq-export ' + niceName(dirName(p)).replace(/\.vpax$/i, ''));
       } else if (/\.bim$/i.test(p) || b === 'DataModelSchema') {
         const j = tryJson(f.text);
         if (j && (j.model || j.tables)) models.push({ name: niceName(dirName(p)), root: dirName(p), model: modelFromBim(j) });
@@ -573,7 +577,9 @@
     for (const [rootDir, fs] of pbirGroups) reports.push(parsePbirReport(niceName(rootDir), rootDir, fs));
     models.sort((a, b) => a.name.localeCompare(b.name));
     reports.sort((a, b) => a.name.localeCompare(b.name));
-    return { models, reports, warnings };
+    // een model uit een .vpax is alleen een noodoplossing als er geen echt model geladen is
+    const real = models.filter(m => !/\.vpax$/i.test(m.root));
+    return { models: real.length ? real : models, reports, warnings, stats };
   }
 
   // ---------------------------------------------------------------- Analyse
@@ -848,7 +854,87 @@
     return { files: out, names };
   }
 
+  // ---------------------------------------------------------------- Groottes (regels, MB)
+
+  /** Welke bestanden uit een pbix/pbit/vpax-zip willen we lezen? */
+  function zipWants(n) {
+    return n === 'Report/Layout' || n === 'DataModelSchema' || n === 'DaxVpaView.json' || /^model\.bim$/i.test(n) ||
+      (/^Report\/definition\//.test(n) && /\.json$/i.test(n));
+  }
+
+  function pick(o, keys) {
+    for (const k of keys) if (o[k] != null) return o[k];
+    const low = {};
+    for (const k in o) low[k.toLowerCase()] = o[k];
+    for (const k of keys) if (low[k.toLowerCase()] != null) return low[k.toLowerCase()];
+    return null;
+  }
+  const num = v => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
+
+  /** DaxVpaView.json uit een .vpax (DAX Studio › Advanced › Export Metrics) → statistieken */
+  function statsFromVpax(json, source) {
+    const out = { source: source || 'VertiPaq-export', tables: [], columns: [] };
+    for (const t of pick(json, ['Tables']) || []) {
+      out.tables.push({ name: pick(t, ['TableName', 'Name']), rows: num(pick(t, ['RowsCount', 'RowCount'])), size: num(pick(t, ['TableSize', 'TotalSize'])) });
+    }
+    for (const c of pick(json, ['Columns']) || []) {
+      let name = String(pick(c, ['ColumnName', 'Name']) || '');
+      const m = /\[(.*)\]$/.exec(name);
+      if (m) name = m[1].replace(/\]\]/g, ']');
+      if (/^RowNumber-/.test(name)) continue;
+      out.columns.push({
+        table: pick(c, ['TableName']), name, size: num(pick(c, ['TotalSize'])),
+        dictionary: num(pick(c, ['DictionarySize'])), data: num(pick(c, ['DataSize'])), hierarchy: num(pick(c, ['HierarchiesSize'])),
+        cardinality: num(pick(c, ['ColumnCardinality', 'Cardinality'])), encoding: pick(c, ['Encoding']) || '',
+      });
+    }
+    return out;
+  }
+
+  /** Hangt regels en bytes aan de nodes en telt op hoeveel er ongebruikt is. */
+  function applyStats(analysis, stats) {
+    const s = analysis.stats;
+    for (const n of analysis.list) { n.rows = null; n.size = null; n.cardinality = null; n.sizeParts = null; n.share = null; }
+    s.hasStats = false;
+    if (!stats) return analysis;
+    const tIdx = new Map(), cIdx = new Map();
+    for (const n of analysis.list) {
+      if (n.type === 'table') tIdx.set(lc(n.name), n);
+      else if (n.type === 'column') cIdx.set(lc(n.table) + '|' + lc(n.name), n);
+    }
+    let total = 0, matched = 0;
+    for (const t of stats.tables || []) {
+      const n = tIdx.get(lc(t.name));
+      if (!n) continue;
+      matched++;
+      n.rows = t.rows; n.size = t.size;
+      if (!n.system) total += t.size || 0;
+    }
+    for (const c of stats.columns || []) {
+      const n = cIdx.get(lc(c.table) + '|' + lc(c.name));
+      if (!n) continue;
+      n.size = c.size; n.cardinality = c.cardinality;
+      n.sizeParts = { dictionary: c.dictionary, data: c.data, hierarchy: c.hierarchy, encoding: c.encoding || '' };
+      const tn = tIdx.get(lc(c.table));
+      if (tn) n.rows = tn.rows;
+    }
+    let unused = 0, modelOnly = 0;
+    for (const n of analysis.list) {
+      if (n.size != null && total) n.share = n.size / total;
+      if (n.type === 'column' && !n.system && n.size) {
+        if (n.status === 'unused') unused += n.size;
+        else if (n.status === 'model') modelOnly += n.size;
+      }
+    }
+    s.hasStats = matched > 0;
+    s.statsSource = stats.source || '';
+    s.totalSize = total; s.unusedSize = unused; s.modelOnlySize = modelOnly;
+    s.totalRows = analysis.list.reduce((a, n) => a + (n.type === 'table' && !n.system && n.rows ? n.rows : 0), 0);
+    return analysis;
+  }
+
   return {
+    zipWants, statsFromVpax, applyStats,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
     loadProject, analyze, layers, readZipTexts, wantsFile, decodeText,
   };

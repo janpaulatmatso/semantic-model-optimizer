@@ -29,10 +29,10 @@
   async function readBrowserFiles(list) { // [{file, path}]
     const out = [], warnings = [];
     for (const { file, path } of list) {
-      if (/\.(pbix|pbit)$/i.test(path)) {
+      if (/\.(pbix|pbit|vpax)$/i.test(path)) {
         try {
           const reader = { size: file.size, read: async (o, l) => new Uint8Array(await file.slice(o, o + l).arrayBuffer()) };
-          const want = n => n === 'Report/Layout' || n === 'DataModelSchema' || (/^Report\/definition\//.test(n) && /\.json$/i.test(n));
+          const want = SMO.zipWants;
           const z = await SMO.readZipTexts(reader, inflateRaw, want);
           for (const f of z.files) out.push({ path: path + '/' + f.path, text: f.text });
           if (/\.pbix$/i.test(path) && z.names.includes('DataModel') && !z.names.includes('DataModelSchema')) {
@@ -70,6 +70,8 @@
     $('msgs').innerHTML = '';
     const project = SMO.loadProject(files);
     for (const w of warnings.concat(project.warnings)) msg(w, false);
+    const onlyStats = project.stats && !project.reports.length && files.every(f => /\.vpax\//i.test(f.path));
+    if (onlyStats && state.project) { setStats(project.stats); return; }
     if (!project.models.length) {
       msg(project.reports.length
         ? 'Wel een rapport gevonden, maar geen model. Laad het model erbij als Power BI-project (.pbip-map) of .pbit.'
@@ -78,6 +80,7 @@
       return;
     }
     state.files = files; state.project = project; state.modelIdx = 0; state.off = new Set();
+    state.stats = project.stats || null;
     state.selected = null; state.table = ''; state.q = ''; $('q').value = '';
     $('empty').hidden = true; $('app').hidden = false;
     run();
@@ -106,10 +109,45 @@
     if (acc.length) loadList(acc);
   });
 
-  // via serve.js: pad plakken
+  // via serve.js: pad plakken en groottes uit Power BI Desktop lezen
   if (location.protocol.startsWith('http')) {
-    fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) $('pathForm').hidden = false; }).catch(() => {});
+    fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) { $('pathForm').hidden = false; $('btnDesktop').hidden = false; } }).catch(() => {});
   }
+
+  function setStats(stats) {
+    state.stats = stats;
+    state.type = 'table'; state.status = ''; state.sort = 'size'; state.dir = -1;
+    $('fType').value = 'table'; $('fStatus').value = '';
+    run();
+    if (!state.analysis.stats.hasStats) msg('De groottes horen bij een ander model: geen enkele tabelnaam komt overeen.', true);
+  }
+
+  async function loadDesktop(port) {
+    document.body.style.cursor = 'progress';
+    try {
+      const r = await fetch('api/desktop' + (port ? '?port=' + port : '')).then(x => x.json());
+      $('msgs').innerHTML = '';
+      if (r.error) return msg(r.error, true);
+      if (r.instances) {
+        if (!r.instances.length) return msg('Geen geopend bestand in Power BI Desktop gevonden. Open het rapport in Power BI Desktop en probeer opnieuw.', true);
+        if (r.instances.length === 1) return loadDesktop(r.instances[0].port);
+        const d = document.createElement('div');
+        d.className = 'msg';
+        d.innerHTML = 'Er zijn meerdere bestanden open in Power BI Desktop. Kies er een: ' +
+          r.instances.map(i => `<span class="chip on" data-port="${i.port}">${esc(i.name)} <span class="muted">poort ${i.port}</span></span>`).join(' ');
+        d.onclick = e => { const c = e.target.closest('[data-port]'); if (c) loadDesktop(c.dataset.port); };
+        $('msgs').appendChild(d);
+        return;
+      }
+      if (!r.tables || !r.tables.length) return msg('Dit bestand in Power BI Desktop bevat geen tabellen met gegevens.', true);
+      setStats(r);
+    } catch (e) { msg('Uitlezen mislukt: ' + e.message, true); }
+    finally { document.body.style.cursor = ''; }
+  }
+  $('btnDesktop').onclick = () => {
+    if (!state.project) return msg('Laad eerst het model (Map openen), daarna de groottes.', true);
+    loadDesktop();
+  };
   $('pathForm').onsubmit = async e => {
     e.preventDefault();
     const p = $('pathInput').value.trim();
@@ -128,7 +166,7 @@
   function run() {
     const p = state.project;
     const reports = p.reports.filter(r => !state.off.has(r.root));
-    state.analysis = SMO.analyze(p.models[state.modelIdx].model, reports);
+    state.analysis = SMO.applyStats(SMO.analyze(p.models[state.modelIdx].model, reports), state.stats);
     if (state.selected && !state.analysis.nodes.has(state.selected)) state.selected = null;
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
   }
@@ -159,12 +197,14 @@
       tile('Alleen voor het model', s.columnsModelOnly, 'kolommen in relatie, RLS of hiërarchie', 'column', 'model', true) +
       tile('Berekende kolommen', s.calcColumns, s.calcColumnsUnused + ' niet gebruikt', 'calc', 'unused', !s.calcColumnsUnused) +
       tile('Tabellen', s.tables, s.tablesUnused + ' niet gebruikt', 'table', 'unused', !s.tablesUnused) +
+      (s.hasStats ? tile('Modelgrootte', mb(s.totalSize) + ' MB', mb(s.unusedSize) + ' MB in ongebruikte kolommen', 'column', 'unused', !s.unusedSize) : '') +
       tile('Rapport', s.visuals + ' visuals', s.pages + " pagina's" + (s.broken ? ' · ' + s.broken + ' kapotte verwijzingen' : ''), 'mc', s.broken ? 'broken' : '', !s.broken);
   }
   $('tiles').onclick = e => {
     const t = e.target.closest('.tile');
     if (!t) return;
     state.type = t.dataset.type; state.status = t.dataset.status; state.table = '';
+    if (t.textContent.includes('Modelgrootte')) { state.sort = 'size'; state.dir = -1; }
     $('fType').value = state.type; $('fStatus').value = state.status; $('fTable').value = '';
     renderGrid();
   };
@@ -204,7 +244,18 @@
     { key: 'uses', label: 'Visuals', num: true, title: 'Aantal plekken in rapporten waar dit direct gebruikt wordt' },
     { key: 'depCount', label: 'Hangt af van', num: true }, { key: 'usedByCount', label: 'Gebruikt door', num: true },
   ];
-  const sortVal = (n, k) => k === 'status' ? STATUS_RANK[n.status] : k === 'uses' ? n.reportUses.length : n[k];
+  const STAT_COLS = [
+    { key: 'rows', label: 'Regels', num: true, title: 'Tabel: aantal regels. Kolom: aantal unieke waarden.' },
+    { key: 'size', label: 'MB', num: true, title: 'Geheugengebruik in het model' },
+    { key: 'share', label: '% model', num: true, title: 'Aandeel in de totale modelgrootte' },
+  ];
+  const nf = new Intl.NumberFormat('nl-NL');
+  const int = v => (v == null ? '' : nf.format(v));
+  const mb = v => (v == null ? '' : (v / 1048576).toLocaleString('nl-NL', { minimumFractionDigits: v < 104857600 ? 2 : 1, maximumFractionDigits: v < 104857600 ? 2 : 1 }));
+  const pct = v => (v == null ? '' : (v * 100).toLocaleString('nl-NL', { maximumFractionDigits: 1 }) + '%');
+  const rowsOf = n => (n.type === 'table' ? n.rows : n.type === 'column' ? n.cardinality : null);
+  const sortVal = (n, k) => k === 'status' ? STATUS_RANK[n.status] : k === 'uses' ? n.reportUses.length
+    : k === 'rows' ? (rowsOf(n) == null ? -1 : rowsOf(n)) : (k === 'size' || k === 'share') ? (n[k] == null ? -1 : n[k]) : n[k];
 
   function renderGrid() {
     const thead = $('grid').querySelector('thead'), tbody = $('grid').querySelector('tbody');
@@ -222,15 +273,19 @@
       const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y));
       return c * d || a.table.localeCompare(b.table) || a.name.localeCompare(b.name);
     });
-    thead.innerHTML = '<tr>' + COLS.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
+    const has = state.analysis.stats.hasStats;
+    const cols = has ? COLS.slice(0, 4).concat(STAT_COLS, COLS.slice(4)) : COLS;
+    thead.innerHTML = '<tr>' + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
     const MAX = 3000;
     tbody.innerHTML = rows.slice(0, MAX).map(n => `<tr data-id="${esc(n.id)}" class="${n.id === state.selected ? 'sel' : ''}">
       <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">verborgen</span>' : ''}</td>
       <td>${n.type === 'table' ? '' : esc(n.table)}</td>
       <td class="k k-${kindClass(n)}">${esc(n.kind)}</td>
       <td><span class="badge s-${n.status}">${STATUS[n.status]}</span></td>
+      ${has ? `<td class="num">${int(rowsOf(n))}${n.type === 'column' && n.cardinality != null ? ' <span class="hid">uniek</span>' : ''}</td><td class="num">${n.type === 'table' && n.mode === 'directQuery' && !n.size ? '<span class="hid">DirectQuery</span>' : mb(n.size)}</td><td class="num">${n.share ? `<span class="bar" style="--w:${Math.max(2, Math.round(n.share * 100))}%"></span>` + pct(n.share) : ''}</td>` : ''}
       <td class="num">${n.reportUses.length || ''}</td><td class="num">${n.depCount || ''}</td><td class="num">${n.usedByCount || ''}</td></tr>`).join('');
-    $('count').textContent = rows.length + ' objecten' + (rows.length > MAX ? ' (eerste ' + MAX + ' getoond — verfijn het filter)' : '');
+    const sum = rows.reduce((a, n) => a + (n.size || 0), 0);
+    $('count').textContent = rows.length + ' objecten' + (has && sum ? ' · samen ' + mb(sum) + ' MB' + (state.type === 'table' ? ' · ' + int(rows.reduce((a, n) => a + (n.rows || 0), 0)) + ' regels' : '') + ' · bron: ' + state.analysis.stats.statsSource : '') + (rows.length > MAX ? ' (eerste ' + MAX + ' getoond — verfijn het filter)' : '');
   }
   $('grid').onclick = e => {
     const th = e.target.closest('th');
@@ -248,8 +303,8 @@
 
   $('btnCsv').onclick = () => {
     const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const head = ['Soort', 'Tabel', 'Naam', 'Status', 'Verborgen', 'Visuals', 'Hangt af van', 'Gebruikt door', 'Gebruik in model', 'Expressie'];
-    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.hidden ? 'ja' : '', n.reportUses.length, n.depCount, n.usedByCount,
+    const head = ['Soort', 'Tabel', 'Naam', 'Status', 'Verborgen', 'Regels', 'Unieke waarden', 'Bytes', 'Visuals', 'Hangt af van', 'Gebruikt door', 'Gebruik in model', 'Expressie'];
+    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.hidden ? 'ja' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
       [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.expression].map(q).join(';'));
     const blob = new Blob(['﻿' + [head.map(q).join(';')].concat(lines).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -322,6 +377,7 @@
         ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">gemaakt in rapport ' + esc(n.report) + '</span>' : ''}</div>`;
     if (n.description) h += `<div class="muted">${esc(n.description)}</div>`;
     h += `<p class="why">${esc(why(a, n))}</p>`;
+    if (a.stats.hasStats && (n.type === 'table' || n.type === 'column')) h += sizeBlock(a, n);
     h += '<h3>Lineage</h3>' + graph(a, n);
     if (n.expression) h += `<h3>${n.type === 'table' ? 'Tabelexpressie' : 'DAX'}</h3><pre class="dax">${esc(n.expression)}</pre>`;
     else if (n.type === 'column' && n.sourceColumn) h += `<h3>Bron</h3><div>Bronkolom <code>${esc(n.sourceColumn)}</code> van tabel ${esc(n.table)}</div>`;
@@ -342,6 +398,30 @@
     if (x) return select(x.dataset.id);
     if (e.target.closest('[data-more]')) { state.expand = true; renderDetail(); }
   };
+
+  function sizeBlock(a, n) {
+    const fact = (l, v) => `<div class="fact"><div class="lbl">${l}</div><div class="val">${v || '—'}</div></div>`;
+    if (n.type === 'column') {
+      if (n.size == null) return '<h3>Grootte</h3><p class="muted">Geen groottegegevens voor deze kolom.</p>';
+      const p = n.sizeParts || {};
+      return '<h3>Grootte</h3><div class="facts">' + fact('Geheugen', mb(n.size) + ' MB') + fact('Aandeel model', pct(n.share)) +
+        fact('Unieke waarden', int(n.cardinality)) + fact('Regels in tabel', int(n.rows)) +
+        fact('Woordenboek', p.dictionary == null ? '' : mb(p.dictionary) + ' MB') + fact('Data', p.data == null ? '' : mb(p.data) + ' MB') +
+        fact('Hiërarchie', p.hierarchy == null ? '' : mb(p.hierarchy) + ' MB') + (p.encoding ? fact('Codering', esc(p.encoding)) : '') + '</div>';
+    }
+    if (n.size == null && n.rows == null) return '<h3>Grootte</h3><p class="muted">Geen groottegegevens voor deze tabel.</p>';
+    const cols = a.list.filter(c => c.type === 'column' && c.table === n.name && c.size).sort((x, y) => y.size - x.size);
+    const unused = cols.filter(c => c.status === 'unused').reduce((s, c) => s + c.size, 0);
+    const max = cols.length ? cols[0].size : 1;
+    let h = '<h3>Grootte</h3><div class="facts">' + fact('Regels', int(n.rows)) + fact('Geheugen', n.mode === 'directQuery' && !n.size ? 'DirectQuery' : mb(n.size) + ' MB') +
+      fact('Aandeel model', pct(n.share)) + fact('In ongebruikte kolommen', unused ? mb(unused) + ' MB' : '0 MB') + '</div>';
+    if (cols.length) {
+      h += '<table class="uses sizes"><tr><th>Grootste kolommen</th><th class="num">MB</th><th class="num">Uniek</th><th>Status</th></tr>' +
+        cols.slice(0, 12).map(c => `<tr><td><span class="link" data-id="${esc(c.id)}">${esc(c.name)}</span><span class="bar wide" style="--w:${Math.max(1, Math.round(c.size / max * 100))}%"></span></td>
+          <td class="num">${mb(c.size)}</td><td class="num">${int(c.cardinality)}</td><td><span class="badge s-${c.status}">${STATUS[c.status]}</span></td></tr>`).join('') + '</table>';
+    }
+    return h;
+  }
 
   function graph(a, n) {
     const W = 190, H = 38, GX = 70, GY = 10, PAD = 14, TOP = 26, CAP = state.expand ? 1e9 : 12;

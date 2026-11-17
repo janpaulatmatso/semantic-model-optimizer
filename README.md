@@ -18,6 +18,15 @@ Laat zien welke measures en kolommen van een Power BI-model in rapporten gebruik
 
 Meerdere rapporten op één model: open de map waar ze samen in staan. Per rapport kun je aan- en uitzetten of het meetelt.
 
+## Aantal regels en MB per tabel
+
+Groottes staan niet in een Power BI-project; die komen uit het geladen model. Laad eerst het model en daarna een van deze twee:
+
+- **Een `.vpax`** uit DAX Studio (Advanced › Export Metrics). Openen of op de pagina slepen. Werkt ook zonder server.
+- **Rechtstreeks uit Power BI Desktop:** start `node serve.js`, open het rapport in Power BI Desktop en klik *Groottes uit Power BI Desktop*. Alleen Windows, alleen lezen. Hiervoor is ADOMD.NET nodig; dat wordt meegeleverd met DAX Studio, Tabular Editor en SSMS.
+
+Je ziet dan per tabel het aantal regels, de MB en het aandeel in het model, per kolom de MB en het aantal unieke waarden, en hoeveel MB er in ongebruikte kolommen zit. DirectQuery-tabellen hebben geen grootte.
+
 ## Status
 
 - **In rapport** — staat direct in een visual, filter, opmaakregel, sortering of bladwijzer.
