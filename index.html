@@ -104,7 +104,7 @@
         </select>
         <select id="fTable"></select>
         <select id="fReport" hidden></select>
-        <button id="btnCsv" title="Export the list as CSV">CSV</button>
+        <select id="selExport" title="Export the list as shown, with the current filters"><option value="">Export…</option><option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV</option><option value="pdf">PDF</option></select>
         <button id="btnUnused" title="Ticks all unused measures and columns">Select all unused</button>
       </div>
       <div id="selbar" class="selbar" hidden></div>
@@ -118,6 +118,7 @@
 <dialog id="dlg"></dialog>
 <script src="core.js"></script>
 <script src="diagram.js"></script>
+<script src="export.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

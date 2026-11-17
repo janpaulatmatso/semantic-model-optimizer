@@ -18,6 +18,16 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 Several reports on one model: open the folder that contains them all. You can switch each report on or off to decide whether it counts.
 
+## Export
+
+The **Export…** dropdown above the list exports what you see, with the current filters and sort order:
+
+- **Excel (.xlsx):** a workbook with the sheets *Objects* (including description and DAX), *Report usage* (one row per place a field is used), *Relationships* and, if there are any, *Broken references*. Header row frozen, filter buttons on.
+- **CSV:** the object list, comma-separated, UTF-8.
+- **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
+
+All three are generated in the browser; nothing is uploaded.
+
 ## Model diagram
 
 Switch from *Objects* to **Model diagram** for an overview of the semantic model as a star schema: tables as cards, relationships as lines.

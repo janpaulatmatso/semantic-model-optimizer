@@ -188,3 +188,4 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .rel text.card { font-size: 12px; font-weight: 600; fill: var(--muted); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; }
 .rel.hot text.card { fill: var(--accent); }
 .rel .badgebg { fill: var(--bg); stroke: var(--line); }
+.filters select#selExport { max-width: 120px; }

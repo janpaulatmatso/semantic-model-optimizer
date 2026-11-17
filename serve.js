@@ -24,7 +24,7 @@ function desktopStats(port) {
 }
 
 const PORT = Number(process.env.PORT || process.argv[2] || 5273);
-const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js' };
+const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js' };
 const TYPES = { html: 'text/html', js: 'text/javascript', css: 'text/css' };
 
 http.createServer(async (req, res) => {

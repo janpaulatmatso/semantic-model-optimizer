@@ -694,18 +694,76 @@
   $('fStatus').onchange = e => { state.status = e.target.value; renderGrid(); };
   $('fTable').onchange = e => { state.table = e.target.value; renderGrid(); };
 
-  $('btnCsv').onclick = () => {
-    const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const head = ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Expression'];
-    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.reports.filter(r => r.direct).map(r => r.name).join(', '), n.reports.filter(r => !r.direct).map(r => r.name).join(', '), n.hidden ? 'yes' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
-      [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.expression].map(q).join(','));
-    const blob = new Blob(['﻿' + [head.map(q).join(',')].concat(lines).join('\r\n')], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = state.project.models[state.modelIdx].name + '-usage.csv';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  // ------------------------------------------------------------ export
+
+  /** The current list (with all filters applied) as tables for the three export formats. */
+  function exportData() {
+    const a = state.analysis, rows = filtered(), model = state.project.models[state.modelIdx];
+    const direct = n => n.reports.filter(r => r.direct).map(r => r.name).join(', ');
+    const indirect = n => n.reports.filter(r => !r.direct).map(r => r.name).join(', ');
+    const objects = {
+      name: 'Objects',
+      head: ['Type', 'Table', 'Name', 'Status', 'Reports direct', 'Reports indirect', 'Hidden', 'Rows', 'Distinct values', 'Bytes', 'Visuals', 'Depends on', 'Used by', 'Model usage', 'Description', 'Expression'],
+      rows: rows.map(n => [n.kind, n.type === 'table' ? '' : n.table, n.name, STATUS[n.status], direct(n), indirect(n), n.hidden ? 'yes' : '', n.rows, n.cardinality, n.size,
+        n.reportUses.length, n.depCount, n.usedByCount, [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.description || '', n.expression || '']),
+    };
+    const usage = { name: 'Report usage', head: ['Type', 'Table', 'Name', 'Report', 'Page', 'Visual', 'Visual type', 'Role'], rows: [] };
+    for (const n of rows) for (const u of n.reportUses) usage.rows.push([n.kind, n.table, n.name, u.report, u.page, u.visualTitle || u.visual, u.visualType, u.role]);
+    const rels = {
+      name: 'Relationships', head: ['From table', 'From column', 'From cardinality', 'To table', 'To column', 'To cardinality', 'Active', 'Cross filter'],
+      rows: (model.model.relationships || []).map(r => [r.fromTable, r.fromColumn, r.fromCardinality, r.toTable, r.toColumn, r.toCardinality, r.isActive ? 'yes' : 'no', r.crossFilter || 'single']),
+    };
+    const broken = { name: 'Broken references', head: ['Field', 'Table', 'Report', 'Page', 'Visual', 'Role'],
+      rows: a.broken.map(u => [u.name, u.table, u.report, u.page, u.visualTitle || u.visualType || u.visual, u.role]) };
+    const sel = id => { const o = $(id).selectedOptions[0]; return o && $(id).value ? o.textContent : ''; };
+    const filters = [$('fType').selectedOptions[0].textContent, sel('fStatus'), sel('fTable'), state.report ? sel('fReport') : '', state.q ? 'search "' + state.q + '"' : ''].filter(Boolean).join(' · ');
+    return { a, rows, model, objects, usage, rels, broken, filters };
+  }
+
+  async function runExport(kind) {
+    const d = exportData(), base = d.model.name + '-usage';
+    const blobDown = (name, bytes, type) => {
+      const el = document.createElement('a');
+      el.href = URL.createObjectURL(new Blob([bytes], { type }));
+      el.download = name;
+      el.click();
+      setTimeout(() => URL.revokeObjectURL(el.href), 1000);
+    };
+    if (kind === 'csv') return blobDown(base + '.csv', SMOExport.toCsv(state.status === 'broken' ? d.broken : d.objects), 'text/csv');
+    if (kind === 'xlsx') {
+      const sheets = [d.objects, d.usage, d.rels].concat(d.broken.rows.length ? [d.broken] : []);
+      return blobDown(base + '.xlsx', await SMOExport.toXlsx(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+    const s = d.a.stats, has = s.hasStats, multi = s.reportCount >= 2;
+    const COLOR = { direct: [0.12, 0.56, 0.31], indirect: [0.1, 0.51, 0.65], model: [0.72, 0.47, 0.02], unused: [0.78, 0.22, 0.18] };
+    const columns = [{ label: 'Name', weight: 3 }, { label: 'Table', weight: 2 }, { label: 'Type', weight: 1.5 }, { label: 'Status', weight: 1.4 }]
+      .concat(multi ? [{ label: 'Reports', weight: 2 }] : [], has ? [{ label: 'Rows', weight: 1, align: 'right' }, { label: 'MB', weight: 0.8, align: 'right' }] : [],
+        [{ label: 'Visuals', weight: 0.7, align: 'right' }, { label: 'Depends on', weight: 0.9, align: 'right' }, { label: 'Used by', weight: 0.8, align: 'right' }]);
+    const pdf = await SMOExport.toPdf({
+      title: 'Semantic Model Optimizer — ' + d.model.name,
+      lines: [
+        'Reports: ' + (state.project.reports.filter(r => !state.off.has(r.root)).map(r => r.name).join(', ') || 'none') + '   ·   ' + new Date().toISOString().slice(0, 10),
+        `Model: ${s.measures} measures (${s.measuresUnused} unused), ${s.columns} columns (${s.columnsUnused} unused, ${s.columnsModelOnly} model only), ${s.tables} tables` + (has ? `, ${mb(s.totalSize)} MB (${mb(s.unusedSize)} MB in unused columns)` : ''),
+        `This list: ${d.rows.length} objects · ${d.filters}`,
+      ],
+      columns, colorCol: 3, rowColors: d.rows.map(n => COLOR[n.status]),
+      rows: d.rows.map(n => [n.name, n.type === 'table' ? '' : n.table, n.kind, STATUS[n.status]]
+        .concat(multi ? [n.reports.map(r => r.name + (r.direct ? '' : ' (indirect)')).join(', ')] : [], has ? [int(rowsOf(n)), mb(n.size)] : [],
+          [n.reportUses.length || '', n.depCount || '', n.usedByCount || ''])),
+      footer: d.model.name,
+    });
+    blobDown(base + '.pdf', pdf, 'application/pdf');
+  }
+  $('selExport').onchange = async e => {
+    const kind = e.target.value;
+    e.target.value = '';
+    if (!kind) return;
+    document.body.style.cursor = 'progress';
+    try { await runExport(kind); }
+    catch (err) { msg('Export failed: ' + err.message, true); }
+    finally { document.body.style.cursor = ''; }
   };
+
 
   // ------------------------------------------------------------ detail + lineage
 
