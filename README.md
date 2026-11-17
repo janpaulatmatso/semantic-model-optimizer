@@ -39,6 +39,16 @@ Vink ongebruikte measures en kolommen aan (het vakje in de kop pakt de hele gefi
 
 Tabellen verwijderen kan nog niet.
 
+## Naam, beschrijving en formule wijzigen
+
+Klik op een measure, kolom of tabel en kies *Wijzigen*. Je kunt de naam, de beschrijving en (bij measures en berekende kolommen) de DAX-formule aanpassen.
+
+- Werkt bij een Power BI-project in TMDL dat via het padveld is geladen (`node serve.js`). Van elk gewijzigd bestand komt eerst een kopie in `smo-backup`.
+- **Hernoemen** werkt alle verwijzingen bij: in formules, sorteerkolommen, hiërarchieën, relaties, perspectieven en in de visuals en filters van rapporten in PBIR-formaat. Gebruikt een rapport in het oude formaat of een `.pbix` het veld, dan wordt hernoemen geweigerd.
+- De tool schrijft alleen als het model na de wijziging nog precies hetzelfde in elkaar zit (zelfde objecten, afhankelijkheden en rapportgebruik).
+- De formule wordt niet door Power BI gecontroleerd; een fout in de DAX zie je pas bij het openen. De tool waarschuwt wel voor namen die niet in het model voorkomen.
+- Tabellen hernoemen kan nog niet. Gebruik buiten de geladen map (andere rapporten, Excel) breekt bij hernoemen.
+
 ## Status
 
 - **In rapport** — staat direct in een visual, filter, opmaakregel, sortering of bladwijzer.

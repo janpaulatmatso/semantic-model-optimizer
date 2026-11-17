@@ -456,7 +456,7 @@
   // ------------------------------------------------------------ detail + lineage
 
   function select(id) {
-    state.selected = id; state.expand = false;
+    state.selected = id; state.expand = false; state.editing = null;
     for (const tr of $('grid').querySelectorAll('tr.sel')) tr.classList.remove('sel');
     const tr = $('grid').querySelector(`tr[data-id="${CSS.escape(id)}"]`);
     if (tr) tr.classList.add('sel');
@@ -510,7 +510,12 @@
     }
     const links = ids => ids.length ? '<div class="links">' + ids.map(id => a.nodes.get(id)).sort((x, y) => label(x).localeCompare(label(y)))
       .map(x => `<span class="link" data-id="${esc(x.id)}" title="${esc(x.kind)} · ${STATUS[x.status]}"><span class="k-${kindClass(x)}">●</span> ${esc(label(x))}</span>`).join('') + '</div>' : '<span class="muted">—</span>';
-    let h = `<h2>${esc(n.name)}</h2>
+    if (state.editing === n.id) { el.innerHTML = editForm(a, n); wireEdit(a, n); return; }
+    const editable = n.kind !== 'rapportmeasure' && ['measure', 'column', 'table'].includes(n.type) && !n.system;
+    let h = (editable ? (canWrite()
+      ? '<button class="editbtn" data-edit="1">Wijzigen</button>'
+      : '<button class="editbtn" disabled title="Wijzigen kan bij een Power BI-project (TMDL) dat je via het padveld hebt geladen, met node serve.js">Wijzigen</button>') : '') +
+      `<h2>${esc(n.name)}</h2>
       <div class="meta"><span class="k k-${kindClass(n)}">${esc(n.kind)}</span>${n.type === 'table' ? '' : '<span class="muted">in ' + esc(n.table) + '</span>'}
         <span class="badge s-${n.status}">${STATUS[n.status]}</span>${n.hidden ? '<span class="hid">verborgen</span>' : ''}
         ${n.dataType ? '<span class="muted">' + esc(n.dataType) + '</span>' : ''}${n.report ? '<span class="muted">gemaakt in rapport ' + esc(n.report) + '</span>' : ''}</div>`;
@@ -532,7 +537,86 @@
     }
     el.innerHTML = h;
   }
+  // ------------------------------------------------------------ wijzigen
+
+  /** Kan de naam veilig gewijzigd worden? Alleen als elk rapport dat het veld gebruikt als PBIR op schijf staat. */
+  function renameBlock(n) {
+    if (n.type === 'table') return 'Tabellen hernoemen kan nog niet.';
+    const bad = new Set();
+    for (const u of n.reportUses) {
+      const r = state.project.reports.find(x => x.name === u.report);
+      if (r && (r.format !== 'PBIR' || /\.(pbix|pbit)(\/|$)/i.test(r.root))) bad.add(r.name);
+    }
+    return bad.size ? 'Hernoemen kan niet: rapport ' + [...bad].join(', ') + ' gebruikt dit veld en staat in het oude formaat of in een .pbix. Dat kan de tool niet bijwerken.' : '';
+  }
+
+  function editForm(a, n) {
+    const block = renameBlock(n);
+    const hasExpr = n.type !== 'table' && !!n.expression;
+    const rows = Math.min(24, Math.max(4, (n.expression || '').split('\n').length + 1));
+    return `<form id="editForm" class="edit">
+      <h2>${esc(n.kind)} wijzigen</h2>
+      <label>Naam<input name="name" type="text" value="${esc(n.name)}" ${block ? 'disabled' : ''} spellcheck="false" autocomplete="off"></label>
+      ${block ? `<div class="muted small">${esc(block)}</div>` : n.type === 'table' ? '' : `<div class="muted small" id="renameNote"></div>`}
+      <label>Beschrijving<textarea name="description" rows="3">${esc(n.description || '')}</textarea></label>
+      ${hasExpr ? `<label>Formule (DAX)<textarea name="expression" class="code" rows="${rows}" spellcheck="false">${esc(n.expression)}</textarea></label><div class="warn small" id="exprNote"></div>` : ''}
+      <div class="muted small">De wijziging gaat naar de TMDL-bestanden; van elk gewijzigd bestand komt eerst een kopie in <code>smo-backup</code>. Sluit het project eerst in Power BI Desktop. De formule wordt niet door Power BI gecontroleerd: een fout zie je pas bij het openen.</div>
+      <div class="dlgbtn"><button type="button" data-cancel="1">Annuleren</button><button class="primary">Opslaan</button></div>
+    </form>`;
+  }
+
+  function wireEdit(a, n) {
+    const f = $('editForm');
+    const nameNote = $('renameNote'), exprNote = $('exprNote');
+    const update = () => {
+      if (nameNote) {
+        const v = f.elements.name.value.trim();
+        nameNote.textContent = v && v !== n.name
+          ? `Bij opslaan worden verwijzingen bijgewerkt: ${n.usedBy.size} formule${n.usedBy.size === 1 ? '' : 's'} en ${n.reportUses.length} plek${n.reportUses.length === 1 ? '' : 'ken'} in rapporten. Gebruik buiten deze map (andere rapporten, Excel) breekt.`
+          : '';
+      }
+      if (exprNote) {
+        const unknown = [];
+        for (const r of SMO.daxRefs(f.elements.expression.value)) {
+          if ((r.t === 'q' || r.t === 'b') && !a.resolve(r, n.table)) unknown.push(r.t === 'q' ? r.table + '[' + r.name + ']' : '[' + r.name + ']');
+        }
+        const u = [...new Set(unknown)];
+        exprNote.textContent = u.length ? 'Niet gevonden in het model: ' + u.slice(0, 6).join(', ') + (u.length > 6 ? ' …' : '') + '. Dat kan kloppen bij kolommen die je in de formule zelf maakt.' : '';
+      }
+    };
+    f.oninput = update;
+    update();
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const changes = { description: f.elements.description.value };
+      if (f.elements.name && !f.elements.name.disabled) changes.name = f.elements.name.value;
+      if (f.elements.expression) changes.expression = f.elements.expression.value;
+      document.body.style.cursor = 'progress';
+      try {
+        const r = await fetch('api/edit', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: state.loadedPath, modelRoot: state.project.models[state.modelIdx].root, sel: { type: n.type, table: n.table, name: n.name }, changes }),
+        }).then(x => x.json());
+        $('msgs').innerHTML = '';
+        if (r.error) return msg(r.error, true);
+        state.editing = null;
+        if (!r.changed) return renderDetail();
+        msg(`Opgeslagen in ${r.files} bestand${r.files === 1 ? '' : 'en'}` + (r.renamed ? ` (${r.reportFields} velden in rapporten bijgewerkt)` : '') + `. Kopie van de oude bestanden: ${r.backup}`);
+        const keepIdx = state.modelIdx, off = state.off, sel = state.sel, path = state.loadedPath;
+        const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
+        if (l.error) return msg(l.error, true);
+        setProject(l.files, [], { base: l.base, path, keep: true });
+        state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off; state.sel = sel; state.selected = r.id;
+        run();
+      } catch (err) { msg('Opslaan mislukt: ' + err.message, true); }
+      finally { document.body.style.cursor = ''; }
+    };
+  }
+
   $('detail').onclick = e => {
+    if (e.target.dataset && e.target.dataset.edit) { state.editing = state.selected; return renderDetail(); }
+    if (e.target.dataset && e.target.dataset.cancel) { state.editing = null; return renderDetail(); }
+    if (state.editing) return;
     const x = e.target.closest('[data-id]');
     if (x) return select(x.dataset.id);
     if (e.target.closest('[data-more]')) { state.expand = true; renderDetail(); }

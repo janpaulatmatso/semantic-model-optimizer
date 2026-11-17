@@ -131,3 +131,12 @@ dialog .small { padding-left: 18px; margin: 8px 0; }
 dialog .small li { margin: 4px 0; overflow-wrap: anywhere; }
 .warn { color: var(--model); }
 .dlgbtn { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+
+.editbtn { float: right; margin-left: 10px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.edit label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
+.edit input[type=text], .edit textarea { display: block; width: 100%; margin-top: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit; resize: vertical; }
+.edit textarea.code { font: 12.5px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre; overflow: auto; tab-size: 4; }
+.edit input:focus, .edit textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.small { font-size: 12.5px; }
+.edit .small { margin-top: 6px; }

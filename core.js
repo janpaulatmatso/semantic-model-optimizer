@@ -326,11 +326,13 @@
     const readBracket = j => { // s[j] === '['
       let name = '';
       j++;
+      const ns = j;
+      let ne = n;
       while (j < n) {
-        if (s[j] === ']') { if (s[j + 1] === ']') { name += ']'; j += 2; continue; } j++; break; }
+        if (s[j] === ']') { if (s[j + 1] === ']') { name += ']'; j += 2; continue; } ne = j; j++; break; }
         name += s[j++];
       }
-      return { name, end: j };
+      return { name, end: j, ns, ne };
     };
     while (i < n) {
       const ch = s[i];
@@ -350,18 +352,18 @@
           name += s[i++];
         }
         const j = skipWs(i);
-        if (s[j] === '[') { const b = readBracket(j); refs.push({ t: 'q', table: name, name: b.name }); i = b.end; }
+        if (s[j] === '[') { const b = readBracket(j); refs.push({ t: 'q', table: name, name: b.name, ns: b.ns, ne: b.ne }); i = b.end; }
         else refs.push({ t: 't', table: name });
       } else if (ch === '[') {
         const b = readBracket(i);
-        refs.push({ t: 'b', name: b.name });
+        refs.push({ t: 'b', name: b.name, ns: b.ns, ne: b.ne });
         i = b.end;
       } else if (IDENT_START.test(ch)) {
         let j = i + 1;
         while (j < n && IDENT_PART.test(s[j])) j++;
         const ident = s.slice(i, j);
         const k = skipWs(j);
-        if (s[k] === '[') { const b = readBracket(k); refs.push({ t: 'q', table: ident, name: b.name }); i = b.end; }
+        if (s[k] === '[') { const b = readBracket(k); refs.push({ t: 'q', table: ident, name: b.name, ns: b.ns, ne: b.ne }); i = b.end; }
         else if (s[k] === '(') { refs.push({ t: 'f', name: ident }); i = j; }
         else { refs.push({ t: 't', table: ident }); i = j; }
       } else if (/[0-9]/.test(ch)) {
@@ -789,7 +791,7 @@
       pages: reports.reduce((a, r) => a + r.pages.length, 0),
       broken: broken.length,
     };
-    return { nodes, list: all, broken, stats };
+    return { nodes, list: all, broken, stats, resolve };
   }
 
   /** Alle (in)directe afhankelijkheden (dir='deps') of afnemers (dir='usedBy'), per afstand. */
@@ -944,7 +946,9 @@
    * anders zet Power BI Desktop de kolom bij de volgende vernieuwing weer terug.
    * names: {measures: [], columns: []} → {text, removed: [{type, name}], warnings: []}
    */
-  function removeFromTmdl(text, table, names) {
+  function removeFromTmdl(text0, table, names) {
+    const bomAt = text0.charCodeAt(0) === 0xFEFF ? '﻿' : '';
+    const text = bomAt ? text0.slice(1) : text0;
     const eol = /\r\n/.test(text) ? '\r\n' : '\n';
     let lines = text.split(/\r?\n/);
     const want = { measure: new Set((names.measures || []).map(lc)), column: new Set((names.columns || []).map(lc)) };
@@ -1036,10 +1040,231 @@
       lines = out;
       if (!wrapped && !warnings.length) warnings.push(table + ' heeft geen Power Query-bron; de kolommen zijn alleen uit het model gehaald.');
     }
-    return { text: lines.join(eol), removed, warnings };
+    return { text: bomAt + lines.join(eol), removed, warnings };
+  }
+
+  // ---------------------------------------------------------------- Wijzigen in TMDL
+
+  const tmdlName = s => (/^[A-Za-z0-9_]+$/.test(s) ? s : "'" + String(s).replace(/'/g, "''") + "'");
+  const splitBom = t => (t.charCodeAt(0) === 0xFEFF ? ['﻿', t.slice(1)] : ['', t]);
+
+  /** TMDL-tekst → objecten met regelposities, zodat we gericht kunnen wijzigen. */
+  function scanTmdl(text) {
+    const lines = text.split(/\r?\n/);
+    const n = lines.length;
+    const rootNode = { kw: 'root', indent: -1, children: [], props: [], exprProps: [], parent: null };
+    const all = [];
+    const stack = [rootNode];
+    let desc = null, i = 0;
+    const readExpr = (at, rest, col, minIndent) => {
+      let j = at + 1;
+      if (rest.startsWith('```')) {
+        if (!rest.slice(3).trim().endsWith('```')) { while (j < n && !lines[j].trim().endsWith('```')) j++; j++; }
+        return { line: at, col, endLine: Math.min(j, n), fenced: true };
+      }
+      if (rest === '') {
+        let last = at + 1;
+        while (j < n) {
+          if (!lines[j].trim()) { j++; continue; }
+          if (indentOf(lines[j]) < minIndent) break;
+          j++; last = j;
+        }
+        return { line: at, col, endLine: last };
+      }
+      return { line: at, col, endLine: at + 1 };
+    };
+    while (i < n) {
+      const raw = lines[i], line = raw.trim();
+      if (!line) { i++; continue; }
+      const ind = indentOf(raw);
+      if (line.startsWith('///')) { if (desc == null) desc = i; i++; continue; }
+      const startsAt = desc == null ? i : desc;
+      while (stack[stack.length - 1].indent >= ind) stack.pop().blockEnd = startsAt;
+      const parent = stack[stack.length - 1];
+      const lead = raw.length - raw.trimStart().length;
+      let m;
+      if ((m = /^([A-Za-z_]\w*)\s*:\s?(.*)$/.exec(line))) { parent.props.push({ key: m[1], line: i, value: m[2] }); desc = null; i++; continue; }
+      if ((m = /^([A-Za-z_]\w*)\s*=\s*(.*)$/.exec(line))) {
+        const e = readExpr(i, m[2], lead + line.length - m[2].length, ind + 1);
+        parent.exprProps.push({ key: m[1], expr: e });
+        desc = null; i = e.endLine; continue;
+      }
+      if ((m = /^([A-Za-z_]\w*)\s+(.+)$/.exec(line))) {
+        if (m[1] === 'ref') { desc = null; i++; continue; }
+        const nm = readName(m[2]);
+        const nameStart = lead + line.length - m[2].length;
+        const o = {
+          kw: m[1], name: nm.name, indent: ind, descStart: startsAt, declLine: i,
+          nameCol: [nameStart, nameStart + m[2].length - nm.rest.length],
+          props: [], exprProps: [], children: [], parent, blockEnd: n,
+        };
+        const t = nm.rest.trim();
+        let next = i + 1;
+        if (t.startsWith('=')) {
+          const rest = t.slice(1).trim();
+          o.expr = readExpr(i, rest, lead + line.length - rest.length, ind + 2);
+          next = o.expr.endLine;
+        }
+        parent.children.push(o); all.push(o); stack.push(o);
+        desc = null; i = next; continue;
+      }
+      parent.props.push({ key: line, line: i, flag: true });
+      desc = null; i++;
+    }
+    return { lines, all, root: rootNode };
+  }
+
+  function findDecl(scan, sel) {
+    const table = scan.root.children.find(o => o.kw === 'table' && lc(o.name) === lc(sel.table));
+    if (!table) return null;
+    if (sel.type === 'table') return table;
+    return table.children.find(o => o.kw === sel.type && lc(o.name) === lc(sel.name)) || null;
+  }
+
+  /**
+   * Wijzigt naam, beschrijving en/of expressie van één measure, kolom of tabel.
+   * sel: {type: 'measure'|'column'|'table', table, name}; changes: {name?, description?, expression?}
+   */
+  function editTmdlObject(text0, sel, changes) {
+    const [bom, text] = splitBom(text0);
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    const scan = scanTmdl(text);
+    const o = findDecl(scan, sel);
+    if (!o) return { text: text0, found: false };
+    const lines = scan.lines;
+    const ind = '\t'.repeat(o.indent);
+    const headEnd = o.expr ? o.expr.endLine : o.declLine + 1;
+    let descLines = lines.slice(o.descStart, o.declLine);
+    if (changes.description !== undefined) {
+      const d = String(changes.description).trim();
+      descLines = d ? d.split(/\r?\n/).map(l => ind + '/// ' + l.trim()) : [];
+    }
+    const name = changes.name !== undefined ? String(changes.name) : o.name;
+    let decl = lines.slice(o.declLine, headEnd);
+    if (changes.expression !== undefined && o.expr) {
+      const head = ind + o.kw + ' ' + tmdlName(name) + ' =';
+      const el = dedent(String(changes.expression).replace(/\r\n/g, '\n').replace(/\s+$/, '').replace(/^\n+/, '').split('\n'));
+      if (el.length === 1) decl = [head + ' ' + el[0].trim()];
+      else if (el.some(l => !l.trim())) decl = [head + ' ```'].concat(el.map(l => (l.trim() ? ind + '\t\t' + l : '')), [ind + '\t\t```']);
+      else decl = [head].concat(el.map(l => ind + '\t\t' + l));
+    } else if (changes.name !== undefined) {
+      decl[0] = decl[0].slice(0, o.nameCol[0]) + tmdlName(name) + decl[0].slice(o.nameCol[1]);
+    }
+    lines.splice(o.descStart, headEnd - o.descStart, ...descLines, ...decl);
+    return { text: bom + lines.join(eol), found: true };
+  }
+
+  function daxRename(seg, pred, newName) {
+    const refs = daxRefs(seg).filter(r => (r.t === 'q' || r.t === 'b') && pred(r)).sort((a, b) => b.ns - a.ns);
+    for (const r of refs) seg = seg.slice(0, r.ns) + String(newName).replace(/\]/g, ']]') + seg.slice(r.ne);
+    return seg;
+  }
+
+  /**
+   * Werkt in één TMDL-bestand alle verwijzingen naar een hernoemde measure of kolom bij:
+   * in DAX, sorteerkolommen, hiërarchieën, relaties, perspectieven en vertalingen.
+   * De declaratie zelf blijft staan; die doet editTmdlObject.
+   */
+  function renameRefsTmdl(text0, target, newName, resolve, targetId) {
+    const [bom, text] = splitBom(text0);
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    const scan = scanTmdl(text);
+    const lines = scan.lines;
+    const old = lc(target.name), T = lc(target.table);
+    const up = (o, kws) => { for (let p = o; p; p = p.parent) if (kws.includes(p.kw)) return p; return null; };
+    const rewrite = (e, home) => {
+      const seg = [lines[e.line].slice(e.col)].concat(lines.slice(e.line + 1, e.endLine)).join('\n');
+      const out = daxRename(seg, r => { const x = resolve(r, home); return !!x && x.id === targetId; }, newName);
+      if (out === seg) return;
+      const parts = out.split('\n');
+      lines[e.line] = lines[e.line].slice(0, e.col) + parts[0];
+      for (let k = 1; k < parts.length; k++) lines[e.line + k] = parts[k];
+    };
+    const setProp = (p, value) => { const c = lines[p.line].indexOf(':'); lines[p.line] = lines[p.line].slice(0, c + 1) + ' ' + value; };
+    const DAX = ['measure', 'column', 'calculationItem', 'tablePermission', 'function'];
+    for (const o of scan.all) {
+      const realTable = up(o, ['table']);
+      const inModel = !up(o, ['cultureInfo', 'perspective']) && (!realTable || realTable.parent === scan.root);
+      if (inModel) {
+        const home = o.kw === 'tablePermission' ? o.name : (realTable ? realTable.name : null);
+        if (o.expr && DAX.includes(o.kw)) rewrite(o.expr, home);
+        const calcPart = o.kw === 'partition' && o.expr && lines[o.expr.line].slice(o.expr.col).trim() === 'calculated';
+        if (calcPart || ['measure', 'column', 'calculationItem'].includes(o.kw)) for (const ep of o.exprProps) rewrite(ep.expr, home);
+        if (target.type === 'column') {
+          const same = realTable && lc(realTable.name) === T;
+          if (same && (o.kw === 'column' || o.kw === 'level')) {
+            for (const p of o.props) {
+              if ((p.key === 'sortByColumn' || (o.kw === 'level' && p.key === 'column')) && lc(readName(p.value).name) === old) setProp(p, tmdlName(newName));
+            }
+          }
+          if (o.kw === 'relationship') {
+            for (const p of o.props) {
+              if (p.key !== 'fromColumn' && p.key !== 'toColumn') continue;
+              const [t, c] = readQualified(p.value);
+              if (lc(t) === T && lc(c) === old) setProp(p, tmdlName(t) + '.' + tmdlName(newName));
+            }
+          }
+        }
+      }
+      // dezelfde naam op andere plekken: perspectieven, vertalingen, kolomrechten
+      const cap = target.type === 'measure' ? 'perspectiveMeasure' : 'perspectiveColumn';
+      const isOther = o.kw === cap || (target.type === 'column' && o.kw === 'columnPermission') || (o.kw === target.type && !inModel);
+      if (isOther && lc(o.name) === old) {
+        const owner = up(o.parent, ['table', 'perspectiveTable', 'tablePermission']);
+        if (owner && lc(owner.name) === T) {
+          const l = lines[o.declLine];
+          lines[o.declLine] = l.slice(0, o.nameCol[0]) + tmdlName(newName) + l.slice(o.nameCol[1]);
+        }
+      }
+    }
+    return bom + lines.join(eol);
+  }
+
+  /** Werkt verwijzingen in rapport-JSON (PBIR) bij; geeft het aantal aangepaste velden terug. */
+  function renameInReport(json, target, newName) {
+    const key = target.type === 'measure' ? 'Measure' : 'Column';
+    const old = lc(target.name), T = lc(target.table);
+    let count = 0, entity = target.table;
+    const hit = (c, aliases) => {
+      if (!c || typeof c !== 'object' || typeof c.Property !== 'string' || lc(c.Property) !== old) return false;
+      const ent = entityOf(c.Expression, aliases);
+      if (ent == null || lc(ent) !== T) return false;
+      entity = ent; c.Property = newName; count++;
+      return true;
+    };
+    const walk = (n, aliases) => {
+      if (Array.isArray(n)) { for (const x of n) walk(x, aliases); return; }
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n.From)) {
+        aliases = Object.assign({}, aliases);
+        for (const f of n.From) if (f && f.Name != null && f.Entity != null) aliases[f.Name] = f.Entity;
+      }
+      hit(n[key], aliases);
+      if (target.type === 'column' && n.PropertyVariationSource) hit(n.PropertyVariationSource, aliases);
+      const before = count;
+      for (const k in n) if (n[k] && typeof n[k] === 'object') walk(n[k], aliases);
+      if (n.field && count > before && typeof n.nativeQueryRef === 'string' && lc(n.nativeQueryRef) === old) n.nativeQueryRef = newName;
+    };
+    walk(json, {});
+    if (count) {
+      const from = entity + '.' + target.name, to = entity + '.' + newName;
+      const strings = n => {
+        if (!n || typeof n !== 'object') return;
+        for (const k in n) {
+          const v = n[k];
+          if (typeof v === 'string') {
+            if (v === from) n[k] = to;
+            else if (v.includes('(' + from + ')')) n[k] = v.split('(' + from + ')').join('(' + to + ')');
+          } else strings(v);
+        }
+      };
+      strings(json);
+    }
+    return count;
   }
 
   return {
+    scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
     loadProject, analyze, layers, readZipTexts, wantsFile, decodeText,

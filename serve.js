@@ -8,6 +8,7 @@ const path = require('path');
 const { loadPath } = require('./loader.js');
 const { execFile } = require('child_process');
 const { removeObjects } = require('./remove.js');
+const { editObject } = require('./edit.js');
 
 /** Regels en MB uit een geopend Power BI Desktop-bestand (alleen Windows, alleen lezen). */
 function desktopStats(port) {
@@ -37,6 +38,17 @@ http.createServer(async (req, res) => {
       if (!target) return send(400, JSON.stringify({ error: 'Geen pad opgegeven' }), 'application/json');
       const r = await loadPath(target);
       return send(200, JSON.stringify(r), 'application/json');
+    }
+    if (url.pathname === '/api/edit') {
+      const origin = String(req.headers.origin || '');
+      if (req.method !== 'POST' || !/^application\/json/.test(String(req.headers['content-type'] || '')) ||
+        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Niet toegestaan' }), 'application/json');
+      let body = '';
+      for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Te groot'); }
+      const j = JSON.parse(body);
+      if (!j.path || !j.modelRoot || !j.sel || !j.changes) return send(400, JSON.stringify({ error: 'Onvolledig verzoek' }), 'application/json');
+      try { return send(200, JSON.stringify(await editObject(String(j.path), String(j.modelRoot), j.sel, j.changes)), 'application/json'); }
+      catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
     if (url.pathname === '/api/delete') {
       // alleen vanaf deze pagina zelf: een andere website kan dit niet aanroepen
