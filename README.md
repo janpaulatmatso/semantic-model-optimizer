@@ -122,7 +122,7 @@ The **Export…** dropdown above the list exports what you see, with the current
 
 - **Excel (.xlsx):** a workbook with the sheets *Objects* (including description and DAX), *Report usage* (one row per place a field is used), *Relationships* and, if there are any, *Broken references*. Header row frozen, filter buttons on.
 - **CSV:** the object list, comma-separated, UTF-8.
-- **Documentation (.html):** a readable description of the whole model: every table with its description, measures with their DAX and columns, plus the relationships. Print it to PDF or open it in Word.
+- **Documentation (.html):** a readable description of the whole model. It starts with the **enterprise data warehouse bus matrix**: one row per business process (fact table), one column per dimension, conformed dimensions first. Marks: `X` related, `X×3` three relationships to the same dimension (role-playing), `○` only through an inactive relationship, `·` reached through another dimension. Then the relationships and every table with its description, measures with their DAX and columns. Print it to PDF or open it in Word. The bus matrix is also a sheet in the Excel export.
 - **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
 
 All three are generated in the browser; nothing is uploaded.

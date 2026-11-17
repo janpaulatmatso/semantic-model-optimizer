@@ -1475,6 +1475,64 @@
     return count;
   }
 
+  // ---------------------------------------------------------------- Bus matrix
+
+  /**
+   * Enterprise data warehouse bus matrix (Kimball): one row per business process (fact table),
+   * one column per dimension, and a mark where the fact is related to the dimension.
+   * → {facts: [{name, description, measures, dims}], dims: [{name, description, facts}], cell(fact, dim)}
+   * A cell is null or {direct: number of relationships, active, via: dimension it is reached through, columns: []}.
+   */
+  function busMatrix(model, analysis) {
+    const nodes = analysis.list.filter(n => n.type === 'table' && !n.system);
+    const canon = new Map(nodes.map(n => [lc(n.name), n.name]));
+    const one = new Map(nodes.map(n => [n.name, new Map()])); // table → (table on its "one" side → relationships)
+    const isOne = new Set(), isMany = new Set();
+    for (const r of model.relationships || []) {
+      let a = canon.get(lc(r.fromTable)), b = canon.get(lc(r.toTable));
+      if (!a || !b || a === b) continue;
+      let ca = r.fromCardinality || 'many', cb = r.toCardinality || 'one', ac = r.fromColumn, bc = r.toColumn;
+      if (ca === 'one' && cb === 'many') { [a, b] = [b, a]; [ac, bc] = [bc, ac]; }
+      if (!one.get(a).has(b)) one.get(a).set(b, []);
+      one.get(a).get(b).push({ active: !!r.isActive, text: a + '[' + ac + '] → ' + b + '[' + bc + ']' });
+      isMany.add(a); isOne.add(b);
+    }
+    const measures = new Map(nodes.map(n => [n.name, 0]));
+    for (const n of analysis.list) if (n.kind === 'measure' && measures.has(n.table)) measures.set(n.table, measures.get(n.table) + 1);
+    // business processes: tables that only sit on the "many" side, plus bridge tables that carry measures
+    const factNames = nodes.map(n => n.name).filter(n => isMany.has(n) && (!isOne.has(n) || measures.get(n) > 0)).sort((x, y) => x.localeCompare(y));
+    const cells = new Map(), dimCount = new Map();
+    for (const f of factNames) {
+      const row = new Map();
+      for (const [d, rels] of one.get(f)) row.set(d, { direct: rels.length, active: rels.some(r => r.active), via: null, columns: rels.map(r => r.text + (r.active ? '' : ' (inactive)')) });
+      // dimensions reached through another dimension (snowflake)
+      let frontier = [...row.keys()];
+      const seen = new Set([f, ...frontier]);
+      for (let depth = 0; frontier.length && depth < 6; depth++) {
+        const next = [];
+        for (const d of frontier) for (const [o] of one.get(d) || []) {
+          if (seen.has(o)) continue;
+          seen.add(o); next.push(o);
+          row.set(o, { direct: 0, active: true, via: d, columns: [] });
+        }
+        frontier = next;
+      }
+      cells.set(f, row);
+      for (const d of row.keys()) dimCount.set(d, (dimCount.get(d) || 0) + 1);
+    }
+    const byName = new Map(nodes.map(n => [n.name, n]));
+    const dims = [...dimCount.keys()].sort((x, y) => dimCount.get(y) - dimCount.get(x) || x.localeCompare(y))
+      .map(d => ({ name: d, description: byName.get(d).description || '', facts: dimCount.get(d), conformed: dimCount.get(d) > 1 }));
+    const facts = factNames.map(f => ({ name: f, description: byName.get(f).description || '', measures: measures.get(f), dims: cells.get(f).size, rows: byName.get(f).rows }));
+    return { facts, dims, cell: (f, d) => (cells.get(f) && cells.get(f).get(d)) || null };
+  }
+  /** The mark shown in a cell: X, X×3 for several relationships (role-playing), ○ when only inactive, · when reached through another dimension. */
+  function busMark(c) {
+    if (!c) return '';
+    if (c.via) return '·';
+    return (c.active ? 'X' : '○') + (c.direct > 1 ? '×' + c.direct : '');
+  }
+
   // ---------------------------------------------------------------- Comparing two versions
 
   /** What changed between two analyses of the same model (for example a branch against main). */
@@ -1629,7 +1687,7 @@
   const objLabel = n => (!n ? '?' : n.type === 'measure' ? '[' + n.name + ']' : n.type === 'table' ? "'" + n.name + "'" : n.type === 'function' ? n.name + '()' : n.table + '[' + n.name + ']');
 
   return {
-    checkRules, RULES, parsePerformance, compareAnalyses, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
+    checkRules, RULES, parsePerformance, compareAnalyses, busMatrix, busMark, setTmdlProps, removeTableTmdl, renameTableTmdl, renameTableInReport,
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,

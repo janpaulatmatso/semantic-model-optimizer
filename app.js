@@ -892,7 +892,10 @@
     if (kind === 'xlsx') {
       const checks = { name: 'Checks', head: ['Severity', 'Rule', 'Object', 'Detail', 'Why it matters'], rows: [] };
       for (const rule of state.checks.rules) for (const it of rule.items) checks.rows.push([rule.severity, rule.title, it.label, it.detail, rule.help]);
-      const sheets = [d.objects, d.usage, d.rels].concat(checks.rows.length ? [checks] : [], d.broken.rows.length ? [d.broken] : []);
+      const bm = SMO.busMatrix(d.model.model, d.a);
+      const bus = { name: 'Bus matrix', head: ['Business process', 'Measures'].concat(bm.dims.map(x => x.name), ['Dimensions']),
+        rows: bm.facts.map(f => [f.name, f.measures].concat(bm.dims.map(x => SMO.busMark(bm.cell(f.name, x.name))), [f.dims])).concat([['Business processes', ''].concat(bm.dims.map(x => x.facts), [''])]) };
+      const sheets = [d.objects, d.usage, d.rels].concat(bm.facts.length ? [bus] : []).concat(checks.rows.length ? [checks] : [], d.broken.rows.length ? [d.broken] : []);
       return blobDown(base + '.xlsx', await SMOExport.toXlsx(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
     const s = d.a.stats, has = s.hasStats, multi = s.reportCount >= 2;
