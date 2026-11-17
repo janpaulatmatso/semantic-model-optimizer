@@ -3,6 +3,7 @@
  *   SemanticModelOptimizer.exe open <server> <db>   → the same, on a model open in Power BI Desktop
  *   SemanticModelOptimizer.exe cli <path> --check   → the command line (every option of cli.js)
  *   SemanticModelOptimizer.exe stop                 → stops the tool that runs in the background
+ *   SemanticModelOptimizer.exe version              → prints the version
  *   SemanticModelOptimizer.exe install-tool         → adds the button to Power BI Desktop (run as administrator)
  * The files the tool serves and its PowerShell helpers are packed inside the executable and unpacked to a temp folder. */
 'use strict';
@@ -12,7 +13,7 @@ const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
 
-/* global __SMO_BUILD, __SMO_ASSETS, __smoRequire */
+/* global __SMO_BUILD, __SMO_VERSION, __SMO_ASSETS, __smoRequire */
 const sea = require('node:sea');
 const home = path.join(os.tmpdir(), 'semantic-model-optimizer-' + __SMO_BUILD);
 function unpack() {
@@ -38,10 +39,12 @@ const request = (method, p, headers) => new Promise(resolve => {
 (async () => {
   unpack();
   globalThis.__smoHome = home;
+  process.env.SMO_VERSION = __SMO_VERSION;
   if (cmd === 'serve') { process.argv = [process.execPath, path.join(home, 'serve.js'), String(PORT)]; return __smoRequire('./serve.js'); }
   if (cmd === 'cli') { process.argv = [process.execPath, path.join(home, 'cli.js')].concat(args.slice(1)); return __smoRequire('./cli.js'); }
   if (cmd === 'install-tool') { process.argv = [process.execPath, 'install-external-tool.js'].concat(args.slice(1)); return __smoRequire('./install-external-tool.js'); }
   if (cmd === 'stop') { const s = await request('POST', '/api/quit', { 'x-smo-quit': '1' }); console.log(s === 200 ? 'Stopped.' : 'The tool was not running.'); return; }
+  if (cmd === 'version' || cmd === '--version' || cmd === '-v') { console.log('Semantic Model Optimizer ' + __SMO_VERSION); return; }
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') { console.log(fs.readFileSync(__filename ? path.join(home, 'exe-help.txt') : '', 'utf8')); return; }
 
   // default: make sure the server runs, then open the browser

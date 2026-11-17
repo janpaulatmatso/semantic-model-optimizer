@@ -1,8 +1,24 @@
-name: Tests
+name: Tests and release
+
+# On every push to main: run the tests, and when code changed, build the portable executable
+# and publish it as a new release (the patch number goes up by one).
+# Run it by hand ("Run workflow") to publish a release even when only documentation changed.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version goes up
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -17,3 +33,91 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node --test test/smo.test.js
+
+  release:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Did code change?
+        id: changed
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "release=yes" >> "$GITHUB_OUTPUT"; exit 0; fi
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          range=${last:+$last..}HEAD
+          # everything except documentation, tests and the workflow itself ends up in the executable
+          files=$(git diff --name-only $range -- . ':(exclude)*.md' ':(exclude)test/**' ':(exclude).github/**' ':(exclude).gitignore' ':(exclude)LICENSE' || true)
+          echo "Changed since ${last:-the start}:"; echo "$files"
+          if [ -n "$files" ]; then echo "release=yes" >> "$GITHUB_OUTPUT"; else echo "release=no" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Next version
+        if: steps.changed.outputs.release == 'yes'
+        id: version
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0)
+          IFS=. read -r major minor patch <<< "${last#v}"
+          case "${{ github.event.inputs.bump || 'patch' }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            *) patch=$((patch + 1)) ;;
+          esac
+          echo "tag=v$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "Next version: v$major.$minor.$patch (after $last)"
+
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.release == 'yes'
+        with:
+          node-version: 22
+
+      - name: Build the executable
+        if: steps.changed.outputs.release == 'yes'
+        env:
+          SMO_VERSION: ${{ steps.version.outputs.tag }}
+        run: node build-exe.js
+
+      - name: Check the executable
+        if: steps.changed.outputs.release == 'yes'
+        run: |
+          exe=dist/SemanticModelOptimizer.exe
+          tag="${{ steps.version.outputs.tag }}"
+          "$exe" version | tee version.txt
+          grep -qxF "Semantic Model Optimizer ${tag#v}" version.txt
+          project=$(node -e "console.log(require('./test/fixture.js').makeProject())")
+          "$exe" cli "$project" --check
+
+      - name: Publish the release
+        if: steps.changed.outputs.release == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          LAST: ${{ steps.version.outputs.last }}
+        run: |
+          {
+            echo "Portable build for Windows: one file that contains Node and the tool, so nothing needs to be installed."
+            echo
+            echo "## Changes since $LAST"
+            echo
+            git log --no-merges --pretty='- %s' "$LAST..HEAD" 2>/dev/null || git log --no-merges --pretty='- %s' -20
+            echo
+            echo "## Use"
+            echo
+            echo '- Double-click `SemanticModelOptimizer.exe` to start the tool in your browser. It keeps running in the background; stop it with `SemanticModelOptimizer.exe stop`.'
+            echo '- Command line: `SemanticModelOptimizer.exe cli <folder> --check`'
+            echo '- Button in Power BI Desktop: `SemanticModelOptimizer.exe install-tool` (in a terminal started as administrator)'
+            echo
+            echo 'The executable is not signed, so Windows may ask for confirmation the first time. Built automatically by GitHub Actions from commit ${{ github.sha }}.'
+          } > notes.md
+          gh release create "$TAG" dist/SemanticModelOptimizer.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest

@@ -74,7 +74,7 @@ http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const send = (code, body, type) => { res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(body); };
   try {
-    if (url.pathname === '/api/ping') return send(200, '{"ok":true}', 'application/json');
+    if (url.pathname === '/api/ping') return send(200, JSON.stringify({ ok: true, version: process.env.SMO_VERSION || require('./package.json').version }), 'application/json');
     // lets the portable executable stop the server it started in the background; a web page cannot send this header to us
     if (url.pathname === '/api/quit' && req.method === 'POST' && req.headers['x-smo-quit'] === '1' && !req.headers.origin) { send(200, '{"ok":true}', 'application/json'); return setTimeout(() => process.exit(0), 100); }
     if (url.pathname === '/api/load') {

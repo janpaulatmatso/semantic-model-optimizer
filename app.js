@@ -168,6 +168,7 @@
   // via serve.js: paste a path and read sizes from Power BI Desktop
   if (location.protocol.startsWith('http')) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
+      if (j.version) document.querySelector('.top h1').title = 'Version ' + j.version;
       $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false; $('btnXmla').hidden = false;
       renderRepos();
       Promise.all(repos.paths.map(scanRepoPath)).then(renderRepos);

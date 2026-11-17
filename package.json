@@ -1,6 +1,6 @@
 {
   "name": "semantic-model-optimizer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Find which measures and columns your Power BI reports use, which they don't, and see their lineage.",
   "license": "MIT",
   "private": true,
