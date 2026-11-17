@@ -5,7 +5,7 @@ const path = require('path');
 const zlib = require('zlib');
 const SMO = require('./core.js');
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.pbi', 'StaticResources', 'RegisteredResources']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.pbi', 'StaticResources', 'RegisteredResources', 'smo-backup']);
 const MAX_FILES = 50000;
 
 async function readZip(file) {
@@ -26,7 +26,9 @@ async function loadPath(target) {
   const files = [], warnings = [];
   let st;
   try { st = fs.statSync(target); } catch (e) { throw new Error('Pad niet gevonden: ' + target); }
+  const given = target;
   if (st.isFile() && /\.pbip$/i.test(target)) { target = path.dirname(target); st = fs.statSync(target); }
+  const base = path.dirname(path.resolve(target)); // paden in 'files' zijn relatief aan deze map
 
   const addZip = async (file, rel) => {
     try {
@@ -41,7 +43,7 @@ async function loadPath(target) {
   if (st.isFile()) {
     if (/\.(pbix|pbit|vpax)$/i.test(target)) await addZip(target, path.basename(target));
     else files.push({ path: path.basename(target), text: SMO.decodeText(new Uint8Array(fs.readFileSync(target))) });
-    return { files, warnings };
+    return { files, warnings, base, target: given };
   }
   const walk = async (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -53,7 +55,7 @@ async function loadPath(target) {
     }
   };
   await walk(target, path.basename(path.resolve(target)));
-  return { files, warnings };
+  return { files, warnings, base, target: given };
 }
 
 module.exports = { loadPath };

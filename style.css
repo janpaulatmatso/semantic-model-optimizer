@@ -115,3 +115,19 @@ svg .edge.hot { stroke: var(--accent); stroke-opacity: .9; stroke-width: 1.6; }
 .sizes td.num, .sizes th.num { text-align: right; font-variant-numeric: tabular-nums; padding-left: 8px; }
 code { background: var(--code); border-radius: 4px; padding: 0 4px; }
 #grid td.num { white-space: nowrap; }
+
+.chk { width: 28px; text-align: center; }
+#grid td.chk { cursor: default; }
+.chk input { cursor: pointer; margin: 0; vertical-align: middle; }
+.selbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--line); }
+.selbar[hidden] { display: none; }
+.grow { flex: 1; }
+button.danger { background: var(--unused); border-color: var(--unused); color: #fff; }
+@media (prefers-color-scheme: dark) { button.danger { color: #1a0d0c; } }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; max-width: 580px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(0, 0, 0, .45); }
+dialog h2 { margin: 0 0 8px; font-size: 18px; }
+dialog .small { padding-left: 18px; margin: 8px 0; }
+dialog .small li { margin: 4px 0; overflow-wrap: anywhere; }
+.warn { color: var(--model); }
+.dlgbtn { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }

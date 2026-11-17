@@ -9,6 +9,7 @@
   const state = {
     files: [], project: null, modelIdx: 0, off: new Set(), analysis: null,
     q: '', type: 'mc', status: '', table: '', sort: 'status', dir: 1, selected: null, expand: false,
+    sel: new Set(), base: null, loadedPath: null, stats: null,
   };
 
   // ------------------------------------------------------------ laden
@@ -51,7 +52,7 @@
       if (entry.isFile) {
         entry.file(f => { acc.push({ file: f, path: prefix + entry.name }); resolve(); }, () => resolve());
       } else if (entry.isDirectory) {
-        if (/^(\.git|node_modules|\.pbi|StaticResources|RegisteredResources)$/.test(entry.name)) return resolve();
+        if (/^(\.git|node_modules|\.pbi|StaticResources|RegisteredResources|smo-backup)$/.test(entry.name)) return resolve();
         const rd = entry.createReader();
         const all = [];
         const more = () => rd.readEntries(async batch => {
@@ -66,8 +67,8 @@
     });
   }
 
-  function setProject(files, warnings) {
-    $('msgs').innerHTML = '';
+  function setProject(files, warnings, src) {
+    if (!(src && src.keep)) $('msgs').innerHTML = '';
     const project = SMO.loadProject(files);
     for (const w of warnings.concat(project.warnings)) msg(w, false);
     const onlyStats = project.stats && !project.reports.length && files.every(f => /\.vpax\//i.test(f.path));
@@ -80,7 +81,10 @@
       return;
     }
     state.files = files; state.project = project; state.modelIdx = 0; state.off = new Set();
-    state.stats = project.stats || null;
+    state.stats = project.stats || (src && src.keep ? state.stats : null);
+    state.base = (src && src.base) || null; state.loadedPath = (src && src.path) || null;
+    state.sel = new Set();
+    if (src && src.keep) { state.project = project; $('empty').hidden = true; $('app').hidden = false; return run(); }
     state.selected = null; state.table = ''; state.q = ''; $('q').value = '';
     $('empty').hidden = true; $('app').hidden = false;
     run();
@@ -156,9 +160,123 @@
     try {
       const r = await fetch('api/load?path=' + encodeURIComponent(p)).then(x => x.json());
       if (r.error) { $('msgs').innerHTML = ''; msg(r.error, true); }
-      else setProject(r.files, r.warnings || []);
+      else setProject(r.files, r.warnings || [], { base: r.base, path: p });
     } catch (err) { msg('Laden mislukt: ' + err.message, true); }
     finally { document.body.style.cursor = ''; }
+  };
+
+  // ------------------------------------------------------------ selecteren en verwijderen
+
+  /** Alleen ongebruikte measures en kolommen uit het model zelf zijn te verwijderen. */
+  const canSel = n => (n.type === 'measure' || n.type === 'column') && n.status === 'unused' && n.kind !== 'rapportmeasure' &&
+    !(n.type === 'column' && n.tableKind && n.tableKind !== 'tabel');
+  const canWrite = () => !!(state.base && state.project && state.project.models[state.modelIdx].format === 'tmdl');
+
+  function renderSelBar() {
+    const a = state.analysis, bar = $('selbar');
+    const nodes = [...state.sel].map(id => a.nodes.get(id)).filter(Boolean);
+    bar.hidden = !nodes.length;
+    if (!nodes.length) return;
+    const m = nodes.filter(n => n.type === 'measure').length, c = nodes.length - m;
+    const size = nodes.reduce((s, n) => s + (n.size || 0), 0);
+    bar.innerHTML = `<b>${nodes.length} geselecteerd</b> <span class="muted">${m} measures, ${c} kolommen${size ? ' · ' + mb(size) + ' MB' : ''}</span>
+      <span class="grow"></span><button class="danger" data-act="del">Verwijderen…</button><button data-act="script" title="Script om dezelfde objecten in Tabular Editor te verwijderen">Tabular Editor-script</button><button data-act="clear">Selectie wissen</button>`;
+  }
+
+  /** Splitst de selectie in wat weg kan en wat nog gebruikt wordt door iets buiten de selectie. */
+  function plan() {
+    const a = state.analysis;
+    const ok = new Set([...state.sel].filter(id => a.nodes.has(id) && canSel(a.nodes.get(id))));
+    const blocked = [];
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const id of [...ok]) {
+        const n = a.nodes.get(id);
+        const by = [...n.usedBy].filter(u => !ok.has(u));
+        if (by.length) { ok.delete(id); blocked.push({ n, by: by.map(u => a.nodes.get(u)) }); changed = true; }
+      }
+    }
+    return { ok: [...ok].map(id => a.nodes.get(id)), blocked };
+  }
+
+  function teScript(nodes) {
+    const s = v => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    const order = nodes.slice().sort((x, y) => (x.type === 'measure' ? 0 : 1) - (y.type === 'measure' ? 0 : 1));
+    return '// Semantic Model Optimizer: verwijdert ' + nodes.length + ' ongebruikte objecten.\n// Uitvoeren in Tabular Editor (C# Script). Maak eerst een kopie van het model.\n' +
+      order.map(n => `Model.Tables[${s(n.table)}].${n.type === 'measure' ? 'Measures' : 'Columns'}[${s(n.name)}].Delete();`).join('\n') + '\n';
+  }
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function openDeleteDialog() {
+    const p = plan(), dlg = $('dlg');
+    const m = p.ok.filter(n => n.type === 'measure').length, c = p.ok.length - m;
+    const size = p.ok.reduce((s, n) => s + (n.size || 0), 0);
+    const model = state.project.models[state.modelIdx];
+    let h = `<h2>${p.ok.length} objecten verwijderen</h2><p>${m} measures en ${c} kolommen${size ? ' (' + mb(size) + ' MB)' : ''} uit model <b>${esc(model.name)}</b>.</p>`;
+    if (p.blocked.length) {
+      h += `<p class="warn">${p.blocked.length} geselecteerde objecten blijven staan, omdat iets buiten je selectie ze nog aanroept:</p><ul class="small">` +
+        p.blocked.slice(0, 8).map(b => `<li>${esc(label(b.n))} ← ${esc(b.by.slice(0, 3).map(label).join(', '))}${b.by.length > 3 ? ' …' : ''}</li>`).join('') +
+        (p.blocked.length > 8 ? `<li>… en ${p.blocked.length - 8} meer</li>` : '') + '</ul>';
+    }
+    if (canWrite()) {
+      h += `<ul class="small"><li>De TMDL-bestanden in <code>${esc(model.root)}</code> worden aangepast.</li>
+        <li>Van elk gewijzigd bestand komt eerst een kopie in de map <code>smo-backup</code> naast het model.</li>
+        ${c ? '<li>Voor verwijderde kolommen komt er een stap <code>Table.RemoveColumns</code> in de Power Query van de tabel, zodat ze ook niet meer geladen worden.</li>' : ''}
+        <li><b>Sluit dit project eerst in Power BI Desktop.</b> Staat het nog open en sla je daar op, dan komt alles terug.</li></ul>`;
+    } else {
+      h += `<p class="warn">Rechtstreeks verwijderen kan alleen bij een Power BI-project (TMDL) dat je via het padveld hebt geladen, met <code>node serve.js</code>. Je kunt wel een script voor Tabular Editor downloaden.</p>`;
+    }
+    h += `<div class="dlgbtn"><button data-act="cancel">Annuleren</button><button data-act="script">Tabular Editor-script</button>${canWrite() && p.ok.length ? `<button class="danger" data-act="go">${p.ok.length} verwijderen</button>` : ''}</div>`;
+    dlg.innerHTML = h;
+    dlg.onclick = async e => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (!act) return;
+      if (act === 'script') return download(model.name + '-verwijderen.csx', teScript(p.ok));
+      dlg.close();
+      if (act === 'go') doDelete(p.ok);
+    };
+    dlg.showModal();
+  }
+
+  async function doDelete(nodes) {
+    const model = state.project.models[state.modelIdx];
+    document.body.style.cursor = 'progress';
+    try {
+      const r = await fetch('api/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base: state.base, modelRoot: model.root, items: nodes.map(n => ({ type: n.type, table: n.table, name: n.name })) }),
+      }).then(x => x.json());
+      $('msgs').innerHTML = '';
+      if (r.error) return msg(r.error, true);
+      msg(`${r.removed.length} objecten verwijderd uit ${r.files} bestanden. Kopie van de oude bestanden: ${r.backup}`);
+      if (r.notFound.length) msg(r.notFound.length + ' objecten niet gevonden in de bestanden: ' + r.notFound.slice(0, 5).map(x => x.table + '[' + x.name + ']').join(', '), true);
+      for (const w of r.warnings) msg(w);
+      const keepIdx = state.modelIdx, off = state.off, base = state.base, path = state.loadedPath;
+      const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
+      if (l.error) return msg(l.error, true);
+      setProject(l.files, [], { base: l.base || base, path, keep: true });
+      state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off;
+      run();
+    } catch (e) { msg('Verwijderen mislukt: ' + e.message, true); }
+    finally { document.body.style.cursor = ''; }
+  }
+
+  $('selbar').onclick = e => {
+    const act = e.target.dataset && e.target.dataset.act;
+    if (act === 'clear') { state.sel = new Set(); renderGrid(); }
+    else if (act === 'script') download(state.project.models[state.modelIdx].name + '-verwijderen.csx', teScript(plan().ok));
+    else if (act === 'del') openDeleteDialog();
+  };
+  $('btnUnused').onclick = () => {
+    for (const n of state.analysis.list) if (!n.system && canSel(n)) state.sel.add(n.id);
+    state.type = 'mc'; state.status = 'unused'; $('fType').value = 'mc'; $('fStatus').value = 'unused';
+    renderGrid();
   };
 
   // ------------------------------------------------------------ analyse + weergave
@@ -168,6 +286,7 @@
     const reports = p.reports.filter(r => !state.off.has(r.root));
     state.analysis = SMO.applyStats(SMO.analyze(p.models[state.modelIdx].model, reports), state.stats);
     if (state.selected && !state.analysis.nodes.has(state.selected)) state.selected = null;
+    for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
   }
 
@@ -259,6 +378,7 @@
 
   function renderGrid() {
     const thead = $('grid').querySelector('thead'), tbody = $('grid').querySelector('tbody');
+    renderSelBar();
     if (state.status === 'broken') {
       const b = state.analysis.broken;
       thead.innerHTML = '<tr><th>Veld</th><th>Tabel</th><th>Rapport</th><th>Pagina</th><th>Visual</th><th>Rol</th></tr>';
@@ -275,9 +395,12 @@
     });
     const has = state.analysis.stats.hasStats;
     const cols = has ? COLS.slice(0, 4).concat(STAT_COLS, COLS.slice(4)) : COLS;
-    thead.innerHTML = '<tr>' + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
+    const selectable = rows.filter(canSel);
+    const allOn = selectable.length > 0 && selectable.every(n => state.sel.has(n.id));
+    thead.innerHTML = `<tr><th class="chk"><input type="checkbox" id="chkAll" title="Alle ongebruikte in deze lijst selecteren"${allOn ? ' checked' : ''}${selectable.length ? '' : ' disabled'}></th>` + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
     const MAX = 3000;
     tbody.innerHTML = rows.slice(0, MAX).map(n => `<tr data-id="${esc(n.id)}" class="${n.id === state.selected ? 'sel' : ''}">
+      <td class="chk">${canSel(n) ? `<input type="checkbox" data-sel="${esc(n.id)}"${state.sel.has(n.id) ? ' checked' : ''}>` : ''}</td>
       <td class="nm">${esc(n.name)}${n.hidden ? ' <span class="hid">verborgen</span>' : ''}</td>
       <td>${n.type === 'table' ? '' : esc(n.table)}</td>
       <td class="k k-${kindClass(n)}">${esc(n.kind)}</td>
@@ -287,7 +410,23 @@
     const sum = rows.reduce((a, n) => a + (n.size || 0), 0);
     $('count').textContent = rows.length + ' objecten' + (has && sum ? ' · samen ' + mb(sum) + ' MB' + (state.type === 'table' ? ' · ' + int(rows.reduce((a, n) => a + (n.rows || 0), 0)) + ' regels' : '') + ' · bron: ' + state.analysis.stats.statsSource : '') + (rows.length > MAX ? ' (eerste ' + MAX + ' getoond — verfijn het filter)' : '');
   }
+  let lastChk = null;
   $('grid').onclick = e => {
+    if (e.target.id === 'chkAll') {
+      for (const n of filtered()) if (canSel(n)) { if (e.target.checked) state.sel.add(n.id); else state.sel.delete(n.id); }
+      return renderGrid();
+    }
+    if (e.target.dataset && e.target.dataset.sel) {
+      const boxes = [...$('grid').querySelectorAll('input[data-sel]')];
+      const i = boxes.indexOf(e.target), j = e.shiftKey && lastChk != null ? boxes.findIndex(b => b.dataset.sel === lastChk) : -1;
+      const range = j >= 0 ? boxes.slice(Math.min(i, j), Math.max(i, j) + 1) : [e.target];
+      for (const b of range) { b.checked = e.target.checked; if (b.checked) state.sel.add(b.dataset.sel); else state.sel.delete(b.dataset.sel); }
+      lastChk = e.target.dataset.sel;
+      const all = $('chkAll');
+      if (all) all.checked = boxes.every(b => b.checked);
+      return renderSelBar();
+    }
+    if (e.target.closest('td.chk')) return;
     const th = e.target.closest('th');
     if (th && th.dataset.k) {
       if (state.sort === th.dataset.k) state.dir = -state.dir; else { state.sort = th.dataset.k; state.dir = 1; }

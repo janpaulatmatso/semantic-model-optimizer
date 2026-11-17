@@ -532,7 +532,7 @@
   /** Welke bestanden zijn de moeite van het inlezen waard? */
   function wantsFile(path) {
     const p = norm(path);
-    if (/(^|\/)(\.pbi|StaticResources|RegisteredResources|\.git|node_modules)\//i.test(p)) return false;
+    if (/(^|\/)(\.pbi|StaticResources|RegisteredResources|\.git|node_modules|smo-backup)\//i.test(p)) return false;
     return /\.(tmdl|bim|json|pbir)$/i.test(p) || /(^|\/)(Layout|DataModelSchema)$/.test(p);
   }
 
@@ -572,7 +572,7 @@
       for (const f of fs) {
         try { addTmdlToModel(model, f.text); } catch (e) { warnings.push('Fout in ' + f.path + ': ' + e.message); }
       }
-      if (model.tables.length) models.push({ name: niceName(rootDir), root: rootDir, model });
+      if (model.tables.length) models.push({ name: niceName(rootDir), root: rootDir, model, format: 'tmdl' });
     }
     for (const [rootDir, fs] of pbirGroups) reports.push(parsePbirReport(niceName(rootDir), rootDir, fs));
     models.sort((a, b) => a.name.localeCompare(b.name));
@@ -624,7 +624,7 @@
         const cn = mk('C|' + t.name + '|' + c.name, {
           type: 'column', kind: c.isCalculated ? 'berekende kolom' : 'kolom', name: c.name, table: t.name,
           expression: c.isCalculated ? c.expression : '', description: c.description, hidden: c.isHidden,
-          dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder,
+          dataType: c.dataType, sourceColumn: c.sourceColumn, displayFolder: c.displayFolder, tableKind: t.kind,
           system: tn.system, sortByColumn: c.sortByColumn,
         });
         colIdx.set(lc(t.name) + '|' + lc(c.name), cn);
@@ -933,8 +933,114 @@
     return analysis;
   }
 
+  // ---------------------------------------------------------------- Verwijderen uit TMDL
+
+  const mStr = s => '"' + String(s).replace(/"/g, '""') + '"';
+  const WRAP_RE = /__smo_zonder = Table\.RemoveColumns\(__smo_bron, \{(.*)\}, MissingField\.Ignore\)/;
+
+  /**
+   * Haalt measures en kolommen van één tabel uit TMDL-tekst.
+   * Voor verwijderde bronkolommen komt er een stap Table.RemoveColumns in de Power Query van de tabel,
+   * anders zet Power BI Desktop de kolom bij de volgende vernieuwing weer terug.
+   * names: {measures: [], columns: []} → {text, removed: [{type, name}], warnings: []}
+   */
+  function removeFromTmdl(text, table, names) {
+    const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+    let lines = text.split(/\r?\n/);
+    const want = { measure: new Set((names.measures || []).map(lc)), column: new Set((names.columns || []).map(lc)) };
+    const drop = new Array(lines.length).fill(false);
+    const removed = [], sourceCols = [], warnings = [];
+    let inTable = false, i = 0;
+    while (i < lines.length) {
+      const raw = lines[i], line = raw.trim();
+      if (!line) { i++; continue; }
+      const ind = indentOf(raw);
+      let m;
+      if (ind === 0 && !line.startsWith('///')) {
+        m = /^table\s+(.+)$/.exec(line);
+        inTable = !!m && lc(readName(m[1]).name) === lc(table);
+      }
+      if (inTable && ind === 1 && (m = /^(measure|column)\s+(.+)$/.exec(line))) {
+        const nm = readName(m[2]);
+        const after = nm.rest.trim();
+        let j = i + 1;
+        const fence = /^=\s*```(.*)$/.exec(after);
+        if (fence && !fence[1].trim().endsWith('```')) {
+          while (j < lines.length && !lines[j].trim().endsWith('```')) j++;
+          j++;
+        }
+        while (j < lines.length && (!lines[j].trim() || indentOf(lines[j]) > 1)) j++;
+        if (want[m[1]].has(lc(nm.name))) {
+          let s = i;
+          while (s > 0 && lines[s - 1].trim().startsWith('///') && indentOf(lines[s - 1]) === 1) s--;
+          for (let k = s; k < j; k++) drop[k] = true;
+          removed.push({ type: m[1], name: nm.name });
+          if (m[1] === 'column' && !after.startsWith('=')) {
+            let src = nm.name;
+            for (let k = i + 1; k < j; k++) {
+              const sm = /^sourceColumn:\s*(.*)$/.exec(lines[k].trim());
+              if (sm && indentOf(lines[k]) === 2) src = unquoteValue(sm[1]);
+            }
+            sourceCols.push(src);
+          }
+        }
+        i = j;
+        continue;
+      }
+      i++;
+    }
+    lines = lines.filter((l, k) => !drop[k]);
+
+    if (sourceCols.length) {
+      const out = [];
+      let inT = false, inPart = false, wrapped = 0;
+      for (let k = 0; k < lines.length; k++) {
+        const raw = lines[k], line = raw.trim(), ind = line ? indentOf(raw) : -1;
+        if (ind === 0 && !line.startsWith('///')) {
+          const m = /^table\s+(.+)$/.exec(line);
+          inT = !!m && lc(readName(m[1]).name) === lc(table);
+          inPart = false;
+        } else if (inT && ind === 1) {
+          const m = /^partition\s+(.+)$/.exec(line);
+          inPart = !!m && readName(m[1]).rest.trim().replace(/^=\s*/, '') === 'm';
+        }
+        const sm = inT && inPart && ind === 2 ? /^source\s*=\s*(.*)$/.exec(line) : null;
+        if (!sm) { out.push(raw); continue; }
+        if (sm[1].startsWith('```')) { warnings.push('De Power Query van ' + table + ' kon niet worden aangepast; de kolommen komen terug bij vernieuwen.'); out.push(raw); continue; }
+        let body = [];
+        if (sm[1]) body = [sm[1]];
+        else {
+          let j = k + 1;
+          while (j < lines.length && (!lines[j].trim() || indentOf(lines[j]) >= 3)) j++;
+          body = lines.slice(k + 1, j);
+          k = j - 1;
+        }
+        let tail = 0;
+        while (body.length && !body[body.length - 1].trim()) { body.pop(); tail++; }
+        body = dedent(body);
+        const T4 = '\t\t\t\t';
+        const joined = body.join('\n');
+        const prev = WRAP_RE.exec(joined);
+        out.push('\t\tsource =');
+        if (prev) {
+          const list = prev[1] + ', ' + sourceCols.map(mStr).join(', ');
+          for (const l of joined.replace(WRAP_RE, () => '__smo_zonder = Table.RemoveColumns(__smo_bron, {' + list + '}, MissingField.Ignore)').split('\n')) out.push(l ? T4 + l : '');
+        } else {
+          out.push(T4 + 'let', T4 + '    __smo_bron =');
+          for (const l of body) out.push(l ? T4 + '        ' + l : '');
+          out.push(T4 + '    ,', T4 + '    __smo_zonder = Table.RemoveColumns(__smo_bron, {' + sourceCols.map(mStr).join(', ') + '}, MissingField.Ignore)', T4 + 'in', T4 + '    __smo_zonder');
+        }
+        for (let t = 0; t < tail; t++) out.push('');
+        wrapped++;
+      }
+      lines = out;
+      if (!wrapped && !warnings.length) warnings.push(table + ' heeft geen Power Query-bron; de kolommen zijn alleen uit het model gehaald.');
+    }
+    return { text: lines.join(eol), removed, warnings };
+  }
+
   return {
-    zipWants, statsFromVpax, applyStats,
+    zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
     loadProject, analyze, layers, readZipTexts, wantsFile, decodeText,
   };

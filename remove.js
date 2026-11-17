@@ -1,0 +1,78 @@
+/* Verwijdert measures en kolommen uit de TMDL-bestanden van een Power BI-project (Node).
+ * Maakt eerst een back-up en schrijft alleen als de uitkomst klopt. */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const SMO = require('./core.js');
+
+function listTmdl(dir, out) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) listTmdl(full, out);
+    else if (/\.tmdl$/i.test(e.name)) out.push(full);
+  }
+  return out;
+}
+
+function counts(texts) {
+  const model = SMO.emptyModel();
+  for (const t of texts) SMO.addTmdlToModel(model, t);
+  const keys = new Set();
+  for (const t of model.tables) {
+    for (const m of t.measures) keys.add('measure|' + t.name.toLowerCase() + '|' + m.name.toLowerCase());
+    for (const c of t.columns) keys.add('column|' + t.name.toLowerCase() + '|' + c.name.toLowerCase());
+  }
+  return keys;
+}
+
+/** modelRoot: map van het model (…​.SemanticModel); items: [{type: 'measure'|'column', table, name}] */
+function removeObjects(modelRoot, items) {
+  const defDir = path.join(modelRoot, 'definition');
+  if (!fs.existsSync(defDir)) throw new Error('Geen TMDL-model gevonden in ' + modelRoot);
+  const files = listTmdl(defDir, []);
+  const byTable = new Map();
+  for (const it of items) {
+    if (it.type !== 'measure' && it.type !== 'column') continue;
+    const k = String(it.table);
+    if (!byTable.has(k)) byTable.set(k, { measures: [], columns: [] });
+    byTable.get(k)[it.type === 'measure' ? 'measures' : 'columns'].push(String(it.name));
+  }
+  const before = new Map(files.map(f => [f, fs.readFileSync(f, 'utf8')]));
+  const after = new Map(before);
+  const removed = [], warnings = [];
+  for (const [table, names] of byTable) {
+    for (const f of files) {
+      const r = SMO.removeFromTmdl(after.get(f), table, names);
+      if (!r.removed.length) continue;
+      after.set(f, r.text);
+      for (const x of r.removed) removed.push({ type: x.type, table, name: x.name });
+      warnings.push(...r.warnings);
+    }
+  }
+  const key = x => x.type + '|' + String(x.table).toLowerCase() + '|' + String(x.name).toLowerCase();
+  const gone = new Set(removed.map(key));
+  const notFound = items.filter(it => !gone.has(key(it)));
+
+  // controle: precies de gevraagde objecten zijn weg, de rest staat er nog
+  const a = counts([...before.values()]), b = counts([...after.values()]);
+  for (const k of a) if (!b.has(k) && !gone.has(k)) throw new Error('Controle mislukt: ' + k + ' zou onbedoeld verdwijnen. Er is niets gewijzigd.');
+  for (const k of gone) if (b.has(k)) throw new Error('Controle mislukt: ' + k + ' staat er nog. Er is niets gewijzigd.');
+  if (b.size !== a.size - gone.size) throw new Error('Controle mislukt: aantallen kloppen niet. Er is niets gewijzigd.');
+
+  const changed = files.filter(f => before.get(f) !== after.get(f));
+  let backup = '';
+  if (changed.length) {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    backup = path.join(path.dirname(modelRoot), 'smo-backup', stamp);
+    for (const f of changed) {
+      const dest = path.join(backup, path.basename(modelRoot), path.relative(modelRoot, f));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(f, dest);
+    }
+    for (const f of changed) fs.writeFileSync(f, after.get(f));
+  }
+  return { removed, notFound, warnings: [...new Set(warnings)], backup, files: changed.length };
+}
+
+module.exports = { removeObjects };

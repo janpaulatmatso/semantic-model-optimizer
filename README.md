@@ -27,6 +27,18 @@ Groottes staan niet in een Power BI-project; die komen uit het geladen model. La
 
 Je ziet dan per tabel het aantal regels, de MB en het aandeel in het model, per kolom de MB en het aantal unieke waarden, en hoeveel MB er in ongebruikte kolommen zit. DirectQuery-tabellen hebben geen grootte.
 
+## Selecteren en verwijderen
+
+Vink ongebruikte measures en kolommen aan (het vakje in de kop pakt de hele gefilterde lijst, shift-klik een reeks, of gebruik *Selecteer alle ongebruikte*) en kies *Verwijderen…*.
+
+- Alleen objecten met status **Niet gebruikt** zijn aan te vinken. Roept iets buiten je selectie een object nog aan, dan blijft het staan en zie je waardoor.
+- **Rechtstreeks verwijderen** werkt bij een Power BI-project in TMDL dat via het padveld is geladen (`node serve.js`). De tool past de `.tmdl`-bestanden aan en zet van elk gewijzigd bestand eerst een kopie in `smo-backup` naast het model.
+- Bij kolommen komt er een stap `Table.RemoveColumns` in de Power Query van de tabel, zodat de kolom ook niet meer geladen wordt.
+- **Sluit het project eerst in Power BI Desktop.** Desktop leest de bestanden alleen bij openen; sla je daar daarna op, dan komt alles terug.
+- In alle andere gevallen (pbit, `model.bim`, geladen via *Map openen*) kun je een **Tabular Editor-script** downloaden dat dezelfde objecten verwijdert.
+
+Tabellen verwijderen kan nog niet.
+
 ## Status
 
 - **In rapport** — staat direct in een visual, filter, opmaakregel, sortering of bladwijzer.

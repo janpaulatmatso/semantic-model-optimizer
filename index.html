@@ -66,7 +66,9 @@
         </select>
         <select id="fTable"></select>
         <button id="btnCsv" title="Exporteer de lijst als CSV">CSV</button>
+        <button id="btnUnused" title="Vinkt alle ongebruikte measures en kolommen aan">Selecteer alle ongebruikte</button>
       </div>
+      <div id="selbar" class="selbar" hidden></div>
       <div class="count" id="count"></div>
       <div class="tablewrap"><table id="grid"><thead></thead><tbody></tbody></table></div>
     </div>
@@ -74,6 +76,7 @@
   </section>
 </main>
 
+<dialog id="dlg"></dialog>
 <script src="core.js"></script>
 <script src="app.js"></script>
 </body>
