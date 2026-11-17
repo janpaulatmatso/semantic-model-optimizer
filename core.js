@@ -578,7 +578,14 @@
     }
     for (const [rootDir, fs] of pbirGroups) reports.push(parsePbirReport(niceName(rootDir), rootDir, fs));
     models.sort((a, b) => a.name.localeCompare(b.name));
-    reports.sort((a, b) => a.name.localeCompare(b.name));
+    reports.sort((a, b) => a.name.localeCompare(b.name) || a.root.localeCompare(b.root));
+    // twee rapporten met dezelfde naam uit elkaar houden
+    const names = new Map();
+    for (const r of reports) {
+      const k = lc(r.name), c = (names.get(k) || 0) + 1;
+      names.set(k, c);
+      if (c > 1) r.name = r.name + ' (' + c + ')';
+    }
     // een model uit een .vpax is alleen een noodoplossing als er geen echt model geladen is
     const real = models.filter(m => !/\.vpax$/i.test(m.root));
     return { models: real.length ? real : models, reports, warnings, stats };
@@ -762,11 +769,19 @@
     for (const n of all) {
       n.status = n.reportUses.length ? 'direct' : reachR.has(n.id) ? 'indirect' : reachM.has(n.id) ? 'model' : 'unused';
     }
+    // per rapport: waar staat het direct in, en waar is het (indirect) voor nodig
+    for (const n of all) n.reports = [];
+    for (const rep of reports) {
+      const roots = all.filter(n => n.reportUses.some(u => u.report === rep.name));
+      const direct = new Set(roots.map(n => n.id));
+      for (const id of closure(roots)) nodes.get(id).reports.push({ name: rep.name, direct: direct.has(id) });
+    }
     // tabel telt als gebruikt zodra er iets uit de tabel gebruikt wordt
     const rank = { unused: 0, model: 1, indirect: 2, direct: 3 };
     for (const n of all) {
       if (n.type === 'table') continue;
       const tn = tableIdx.get(lc(n.table));
+      if (tn) for (const r of n.reports) if (!tn.reports.some(x => x.name === r.name)) tn.reports.push({ name: r.name, direct: false });
       if (!tn || n.status === 'unused') continue;
       const s = n.status === 'direct' ? 'indirect' : n.status;
       if (rank[s] > rank[tn.status]) tn.status = s;
@@ -787,6 +802,7 @@
       calcColumnsUnused: count(n => n.kind === 'berekende kolom' && n.status === 'unused'),
       tables: count(n => n.type === 'table'),
       tablesUnused: count(n => n.type === 'table' && n.status === 'unused'),
+      reportCount: reports.length,
       visuals: reports.reduce((a, r) => a + r.visualCount, 0),
       pages: reports.reduce((a, r) => a + r.pages.length, 0),
       broken: broken.length,

@@ -18,6 +18,12 @@ Laat zien welke measures en kolommen van een Power BI-model in rapporten gebruik
 
 Meerdere rapporten op één model: open de map waar ze samen in staan. Per rapport kun je aan- en uitzetten of het meetelt.
 
+## Meerdere rapporten
+
+Staan de rapporten in dezelfde map als het model, dan worden ze samen geladen. Rapporten uit een andere map voeg je toe met *+ Rapport toevoegen* (pad plakken, of een map of bestand kiezen). In het padveld kun je ook meerdere paden zetten met een puntkomma ertussen.
+
+Bij twee of meer rapporten krijgt de lijst een kolom **Rapport**: per measure of kolom zie je in welke rapporten die gebruikt wordt. Gedimd betekent alleen indirect, via een measure of kolom die er wel in staat. Je kunt ook filteren op rapport, of op *In geen rapport*. Per rapport kun je bovenaan aan- en uitzetten of het meetelt.
+
 ## Aantal regels en MB per tabel
 
 Groottes staan niet in een Power BI-project; die komen uit het geladen model. Laad eerst het model en daarna een van deze twee:

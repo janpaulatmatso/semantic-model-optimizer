@@ -5,7 +5,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { loadPath } = require('./loader.js');
+const { loadPath, modelRootAbs } = require('./loader.js');
 const { execFile } = require('child_process');
 const { removeObjects } = require('./remove.js');
 const { editObject } = require('./edit.js');
@@ -34,7 +34,7 @@ http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/api/ping') return send(200, '{"ok":true}', 'application/json');
     if (url.pathname === '/api/load') {
-      const target = (url.searchParams.get('path') || '').trim().replace(/^"|"$/g, '');
+      const target = (url.searchParams.get('path') || '').trim();
       if (!target) return send(400, JSON.stringify({ error: 'Geen pad opgegeven' }), 'application/json');
       const r = await loadPath(target);
       return send(200, JSON.stringify(r), 'application/json');
@@ -58,9 +58,9 @@ http.createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 20e6) throw new Error('Te groot'); }
       const j = JSON.parse(body);
-      const root = path.resolve(String(j.base || ''), String(j.modelRoot || ''));
-      if (!j.base || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Onvolledig verzoek' }), 'application/json');
-      return send(200, JSON.stringify(removeObjects(root, j.items)), 'application/json');
+      if (!j.path || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Onvolledig verzoek' }), 'application/json');
+      try { return send(200, JSON.stringify(removeObjects(modelRootAbs(await loadPath(String(j.path)), j.modelRoot), j.items)), 'application/json'); }
+      catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
     if (url.pathname === '/api/desktop') {
       const port = parseInt(url.searchParams.get('port') || '0', 10) || 0;

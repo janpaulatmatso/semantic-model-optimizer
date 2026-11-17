@@ -73,6 +73,8 @@
     for (const w of warnings.concat(project.warnings)) msg(w, false);
     const onlyStats = project.stats && !project.reports.length && files.every(f => /\.vpax\//i.test(f.path));
     if (onlyStats && state.project) { setStats(project.stats); return; }
+    const adding = state.adding || (!project.models.length && project.reports.length > 0);
+    if (state.project && adding && !(src && src.keep)) { state.adding = false; return addFiles(files); }
     if (!project.models.length) {
       msg(project.reports.length
         ? 'Wel een rapport gevonden, maar geen model. Laad het model erbij als Power BI-project (.pbip-map) of .pbit.'
@@ -88,6 +90,52 @@
     state.selected = null; state.table = ''; state.q = ''; $('q').value = '';
     $('empty').hidden = true; $('app').hidden = false;
     run();
+  }
+
+  /** Laadt een project opnieuw en houdt modelkeuze, uitgezette rapporten en selectie vast. */
+  function reloadKeep(files, warnings, src) {
+    const idx = state.modelIdx, off = state.off, sel = state.sel, selected = state.selected;
+    setProject(files, warnings, Object.assign({ keep: true }, src));
+    state.modelIdx = Math.min(idx, state.project.models.length - 1); state.off = off; state.sel = sel; state.selected = selected;
+    run();
+  }
+
+  /** Voegt bestanden (rapporten) toe aan het geladen project. */
+  function addFiles(files) {
+    const tops = new Set(state.files.map(f => f.path.replace(/\\/g, '/').split('/')[0].toLowerCase()));
+    const renamed = new Map();
+    const add = files.map(f => {
+      const p = f.path.replace(/\\/g, '/'), top = p.split('/')[0];
+      if (!renamed.has(top)) {
+        let t = top;
+        for (let k = 2; tops.has(t.toLowerCase()); k++) t = top + '~' + k;
+        renamed.set(top, t); tops.add(t.toLowerCase());
+      }
+      return { path: renamed.get(top) + p.slice(top.length), text: f.text };
+    });
+    const before = state.project.reports.length, hadBase = !!state.base;
+    reloadKeep(state.files.concat(add), [], { base: null, path: null });
+    const n = state.project.reports.length - before;
+    if (n > 0) msg(n + ' rapport' + (n === 1 ? '' : 'en') + ' toegevoegd.' + (hadBase ? ' Wijzigen en verwijderen staan nu uit, omdat dit rapport niet via een pad is toegevoegd. Voeg het toe via het padveld om dat te behouden.' : ''));
+    else msg('Geen rapport gevonden in deze selectie.', true);
+  }
+
+  async function addPath(p) {
+    document.body.style.cursor = 'progress';
+    try {
+      const joined = state.loadedPath ? state.loadedPath + ';' + p : p;
+      const l = await fetch('api/load?path=' + encodeURIComponent(joined)).then(x => x.json());
+      $('msgs').innerHTML = '';
+      if (l.error) return msg(l.error, true);
+      if (!state.loadedPath) return addFiles(l.files);
+      const before = state.project.reports.length;
+      if (SMO.loadProject(l.files).reports.length <= before) return msg('Geen nieuw rapport gevonden in ' + p, true);
+      reloadKeep(l.files, l.warnings || [], { base: l.base, path: l.target });
+      $('pathInput').value = l.target;
+      const n = state.project.reports.length - before;
+      msg(n + ' rapport' + (n === 1 ? '' : 'en') + ' toegevoegd.');
+    } catch (e) { msg('Toevoegen mislukt: ' + e.message, true); }
+    finally { document.body.style.cursor = ''; }
   }
 
   async function loadList(list) {
@@ -250,7 +298,7 @@
     try {
       const r = await fetch('api/delete', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base: state.base, modelRoot: model.root, items: nodes.map(n => ({ type: n.type, table: n.table, name: n.name })) }),
+        body: JSON.stringify({ path: state.loadedPath, modelRoot: model.root, items: nodes.map(n => ({ type: n.type, table: n.table, name: n.name })) }),
       }).then(x => x.json());
       $('msgs').innerHTML = '';
       if (r.error) return msg(r.error, true);
@@ -295,12 +343,41 @@
     $('modelPick').hidden = p.models.length < 2;
     $('selModel').innerHTML = p.models.map((m, i) => `<option value="${i}"${i === state.modelIdx ? ' selected' : ''}>${esc(m.name)}</option>`).join('');
     $('reports').innerHTML = (p.reports.length ? '<span class="muted">Rapporten:</span>' : '<span class="muted">Geen rapport geladen — alles telt nu als niet gebruikt in een rapport.</span>') +
-      p.reports.map(r => `<span class="chip ${state.off.has(r.root) ? 'off' : 'on'}" data-root="${esc(r.root)}" title="${esc(r.root)} · ${r.pages.length} pagina's, ${r.visualCount} visuals. Klik om mee te tellen of niet.">${esc(r.name)}</span>`).join('');
+      p.reports.map(r => `<span class="chip ${state.off.has(r.root) ? 'off' : 'on'}" data-root="${esc(r.root)}" title="${esc(r.root)} · ${r.pages.length} pagina's, ${r.visualCount} visuals. Klik om mee te tellen of niet.">${esc(r.name)}</span>`).join('') +
+      '<span class="chip add" data-add="1" title="Nog een rapport op dit model laden">+ Rapport toevoegen</span>';
+    const multi = state.analysis.stats.reportCount >= 2;
+    $('fReport').hidden = !multi;
+    if (!multi) state.report = '';
+    $('fReport').innerHTML = '<option value="">Alle rapporten</option>' +
+      p.reports.filter(r => !state.off.has(r.root)).map(r => `<option${r.name === state.report ? ' selected' : ''}>${esc(r.name)}</option>`).join('') +
+      `<option value="__none"${state.report === '__none' ? ' selected' : ''}>In geen rapport</option>`;
   }
+  $('fReport').onchange = e => { state.report = e.target.value; renderGrid(); };
+  $('addRep').onsubmit = e => {
+    e.preventDefault();
+    const p = $('addPath').value.trim();
+    if (!p) return;
+    $('addRep').hidden = true; $('addPath').value = '';
+    addPath(p);
+  };
+  $('addRep').onclick = e => {
+    const act = e.target.dataset && e.target.dataset.pick;
+    if (!act) return;
+    $('addRep').hidden = true;
+    if (act === 'cancel') return;
+    state.adding = true;
+    $(act === 'dir' ? 'inDir' : 'inFile').click();
+  };
   $('selModel').onchange = e => { state.modelIdx = +e.target.value; state.selected = null; state.table = ''; run(); };
   $('reports').onclick = e => {
     const c = e.target.closest('.chip');
     if (!c) return;
+    if (c.dataset.add) {
+      $('addRep').hidden = !$('addRep').hidden;
+      $('addPath').hidden = $('addPathBtn').hidden = $('pathForm').hidden;
+      if (!$('addRep').hidden && !$('addPath').hidden) $('addPath').focus();
+      return;
+    }
     const root = c.dataset.root;
     if (state.off.has(root)) state.off.delete(root); else state.off.add(root);
     run();
@@ -352,6 +429,8 @@
       if (t === 'calc' && !(n.kind === 'berekende kolom' || n.kind === 'berekende tabel' || n.kind === 'calculation group')) return false;
       if (state.status && n.status !== state.status) return false;
       if (state.table && n.table !== state.table) return false;
+      if (state.report === '__none' && n.reports.length) return false;
+      if (state.report && state.report !== '__none' && !n.reports.some(r => r.name === state.report)) return false;
       if (q && !(n.name.toLowerCase().includes(q) || n.table.toLowerCase().includes(q) || (n.expression || '').toLowerCase().includes(q))) return false;
       return true;
     });
@@ -374,6 +453,7 @@
   const pct = v => (v == null ? '' : (v * 100).toLocaleString('nl-NL', { maximumFractionDigits: 1 }) + '%');
   const rowsOf = n => (n.type === 'table' ? n.rows : n.type === 'column' ? n.cardinality : null);
   const sortVal = (n, k) => k === 'status' ? STATUS_RANK[n.status] : k === 'uses' ? n.reportUses.length
+    : k === 'reports' ? n.reports.length + n.reports.filter(r => r.direct).length / 100
     : k === 'rows' ? (rowsOf(n) == null ? -1 : rowsOf(n)) : (k === 'size' || k === 'share') ? (n[k] == null ? -1 : n[k]) : n[k];
 
   function renderGrid() {
@@ -394,7 +474,11 @@
       return c * d || a.table.localeCompare(b.table) || a.name.localeCompare(b.name);
     });
     const has = state.analysis.stats.hasStats;
-    const cols = has ? COLS.slice(0, 4).concat(STAT_COLS, COLS.slice(4)) : COLS;
+    const multi = state.analysis.stats.reportCount >= 2;
+    const cols = COLS.slice(0, 4).concat(
+      multi ? [{ key: 'reports', label: 'Rapport', title: 'In welke rapporten dit gebruikt wordt. Gedimd = alleen indirect, via een measure of kolom die er wel in staat.' }] : [],
+      has ? STAT_COLS : [], COLS.slice(4));
+    const repCell = n => '<td class="reps">' + n.reports.map(r => `<span class="rep${r.direct ? '' : ' ind'}" title="${r.direct ? 'Staat direct in dit rapport' : 'Indirect nodig voor dit rapport'}">${esc(r.name)}</span>`).join('') + '</td>';
     const selectable = rows.filter(canSel);
     const allOn = selectable.length > 0 && selectable.every(n => state.sel.has(n.id));
     thead.innerHTML = `<tr><th class="chk"><input type="checkbox" id="chkAll" title="Alle ongebruikte in deze lijst selecteren"${allOn ? ' checked' : ''}${selectable.length ? '' : ' disabled'}></th>` + cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" title="${esc(c.title || '')}">${c.label}${state.sort === c.key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
@@ -405,7 +489,7 @@
       <td>${n.type === 'table' ? '' : esc(n.table)}</td>
       <td class="k k-${kindClass(n)}">${esc(n.kind)}</td>
       <td><span class="badge s-${n.status}">${STATUS[n.status]}</span></td>
-      ${has ? `<td class="num">${int(rowsOf(n))}${n.type === 'column' && n.cardinality != null ? ' <span class="hid">uniek</span>' : ''}</td><td class="num">${n.type === 'table' && n.mode === 'directQuery' && !n.size ? '<span class="hid">DirectQuery</span>' : mb(n.size)}</td><td class="num">${n.share ? `<span class="bar" style="--w:${Math.max(2, Math.round(n.share * 100))}%"></span>` + pct(n.share) : ''}</td>` : ''}
+      ${multi ? repCell(n) : ''}${has ? `<td class="num">${int(rowsOf(n))}${n.type === 'column' && n.cardinality != null ? ' <span class="hid">uniek</span>' : ''}</td><td class="num">${n.type === 'table' && n.mode === 'directQuery' && !n.size ? '<span class="hid">DirectQuery</span>' : mb(n.size)}</td><td class="num">${n.share ? `<span class="sbar" style="--w:${Math.max(2, Math.round(n.share * 100))}%"></span>` + pct(n.share) : ''}</td>` : ''}
       <td class="num">${n.reportUses.length || ''}</td><td class="num">${n.depCount || ''}</td><td class="num">${n.usedByCount || ''}</td></tr>`).join('');
     const sum = rows.reduce((a, n) => a + (n.size || 0), 0);
     $('count').textContent = rows.length + ' objecten' + (has && sum ? ' · samen ' + mb(sum) + ' MB' + (state.type === 'table' ? ' · ' + int(rows.reduce((a, n) => a + (n.rows || 0), 0)) + ' regels' : '') + ' · bron: ' + state.analysis.stats.statsSource : '') + (rows.length > MAX ? ' (eerste ' + MAX + ' getoond — verfijn het filter)' : '');
@@ -442,8 +526,8 @@
 
   $('btnCsv').onclick = () => {
     const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const head = ['Soort', 'Tabel', 'Naam', 'Status', 'Verborgen', 'Regels', 'Unieke waarden', 'Bytes', 'Visuals', 'Hangt af van', 'Gebruikt door', 'Gebruik in model', 'Expressie'];
-    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.hidden ? 'ja' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
+    const head = ['Soort', 'Tabel', 'Naam', 'Status', 'Rapporten direct', 'Rapporten indirect', 'Verborgen', 'Regels', 'Unieke waarden', 'Bytes', 'Visuals', 'Hangt af van', 'Gebruikt door', 'Gebruik in model', 'Expressie'];
+    const lines = filtered().map(n => [n.kind, n.table, n.name, STATUS[n.status], n.reports.filter(r => r.direct).map(r => r.name).join(', '), n.reports.filter(r => !r.direct).map(r => r.name).join(', '), n.hidden ? 'ja' : '', n.rows, n.cardinality, n.size, n.reportUses.length, n.depCount, n.usedByCount,
       [...new Set(n.modelUses.map(u => u.kind))].join(' + '), n.expression].map(q).join(';'));
     const blob = new Blob(['﻿' + [head.map(q).join(';')].concat(lines).join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -640,7 +724,7 @@
       fact('Aandeel model', pct(n.share)) + fact('In ongebruikte kolommen', unused ? mb(unused) + ' MB' : '0 MB') + '</div>';
     if (cols.length) {
       h += '<table class="uses sizes"><tr><th>Grootste kolommen</th><th class="num">MB</th><th class="num">Uniek</th><th>Status</th></tr>' +
-        cols.slice(0, 12).map(c => `<tr><td><span class="link" data-id="${esc(c.id)}">${esc(c.name)}</span><span class="bar wide" style="--w:${Math.max(1, Math.round(c.size / max * 100))}%"></span></td>
+        cols.slice(0, 12).map(c => `<tr><td><span class="link" data-id="${esc(c.id)}">${esc(c.name)}</span><span class="sbar wide" style="--w:${Math.max(1, Math.round(c.size / max * 100))}%"></span></td>
           <td class="num">${mb(c.size)}</td><td class="num">${int(c.cardinality)}</td><td><span class="badge s-${c.status}">${STATUS[c.status]}</span></td></tr>`).join('') + '</table>';
     }
     return h;

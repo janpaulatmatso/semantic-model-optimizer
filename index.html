@@ -42,6 +42,13 @@
   <section class="bar">
     <label id="modelPick" hidden>Model <select id="selModel"></select></label>
     <div id="reports" class="chips"></div>
+    <form id="addRep" class="addrep" hidden>
+      <input id="addPath" type="text" placeholder="Pad naar rapport of map: C:\…\Verkoop.Report" spellcheck="false">
+      <button id="addPathBtn">Toevoegen</button>
+      <button type="button" data-pick="dir">Map kiezen</button>
+      <button type="button" data-pick="file">Bestand kiezen</button>
+      <button type="button" data-pick="cancel">Annuleren</button>
+    </form>
   </section>
   <section id="tiles" class="tiles"></section>
   <section class="split">
@@ -65,6 +72,7 @@
           <option value="broken">Kapotte verwijzingen</option>
         </select>
         <select id="fTable"></select>
+        <select id="fReport" hidden></select>
         <button id="btnCsv" title="Exporteer de lijst als CSV">CSV</button>
         <button id="btnUnused" title="Vinkt alle ongebruikte measures en kolommen aan">Selecteer alle ongebruikte</button>
       </div>

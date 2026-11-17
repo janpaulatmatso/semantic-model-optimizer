@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const SMO = require('./core.js');
-const { loadPath } = require('./loader.js');
+const { loadPath, modelRootAbs } = require('./loader.js');
 
 function stamp() {
   const d = new Date(), p = n => String(n).padStart(2, '0');
@@ -13,11 +13,11 @@ function stamp() {
 }
 
 /** Zet van elk te wijzigen bestand eerst een kopie in smo-backup en schrijft dan. changed: Map(absPad → tekst) */
-function backupAndWrite(base, modelRootAbs, changed) {
+function backupAndWrite(modelRootAbs, changed, relOf) {
   if (!changed.size) return '';
   const backup = path.join(path.dirname(modelRootAbs), 'smo-backup', stamp());
   for (const f of changed.keys()) {
-    const dest = path.join(backup, path.relative(base, f));
+    const dest = path.join(backup, relOf(f));
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(f, dest);
   }
@@ -45,10 +45,10 @@ function signature(analysis, mapId, skipDepsOf) {
 async function editObject(target, modelRoot, sel, changes) {
   if (!['measure', 'column', 'table'].includes(sel.type)) throw new Error('Dit soort object kan niet gewijzigd worden.');
   const loaded = await loadPath(target);
-  const base = loaded.base;
   const rootRel = String(modelRoot).replace(/\\/g, '/').replace(/\/$/, '');
-  const abs = rel => path.join(base, rel);
-  const onDisk = f => !/\.(pbix|pbit|vpax)\//i.test(f.path);
+  const absOf = new Map(loaded.files.filter(f => f.abs).map(f => [f.path, f.abs]));
+  const abs = rel => absOf.get(rel);
+  const onDisk = f => !!f.abs && !/\.(pbix|pbit|vpax)\//i.test(f.path);
   const isModelFile = f => f.path.replace(/\\/g, '/').startsWith(rootRel + '/definition/') && /\.tmdl$/i.test(f.path);
 
   // werk met de ruwe bestandsinhoud (BOM en regeleinden blijven zoals ze zijn)
@@ -143,7 +143,8 @@ async function editObject(target, modelRoot, sel, changes) {
 
   const changed = new Map();
   for (const [rel, text] of after) if (text !== texts.get(rel)) changed.set(abs(rel), text);
-  const backup = backupAndWrite(base, abs(rootRel), changed);
+  const relOf = new Map([...absOf].map(([rel, a]) => [a, rel]));
+  const backup = backupAndWrite(modelRootAbs(loaded, rootRel), changed, f => relOf.get(f));
   return { changed: true, files: changed.size, backup, reportFields, id: newId, renamed: !!newName };
 }
 
