@@ -109,14 +109,26 @@
     }
     const d = document.createElement('div');
     d.className = 'msg';
-    d.innerHTML = `This report gets its model live from <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>. The formulas are there, not in the report. <button type="button" class="primary">Load that model</button> <span class="muted">A sign-in window may open. Reading the definition needs admin rights on the model.</span>`;
+    const where = `This report gets its model live from <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>.`;
+    const rights = '<span class="muted">A sign-in window may open. Reading the definition needs admin rights on the model.</span>';
+    if (store.get('smo.autoModel', true)) {
+      // load it straight away, so formulas and usage show up without a second connection
+      d.innerHTML = `${where} Loading that model now… ${rights} <span class="link" data-off>Don't load automatically</span>`;
+      d.querySelector('[data-off]').onclick = () => { store.set('smo.autoModel', false); d.querySelector('[data-off]').remove(); msg('From now on you get a button instead; the model is not loaded automatically.'); };
+      $('msgs').appendChild(d);
+      state.serverLoad = loadServerModel(c.server, c.database, true).then(ok => { if (ok) d.remove(); }).finally(() => { state.serverLoad = null; });
+      return;
+    }
+    d.innerHTML = `${where} The formulas are there, not in the report. <button type="button" class="primary">Load that model</button> ${rights} <span class="link" data-on>Always load automatically</span>`;
     d.querySelector('button').onclick = () => loadServerModel(c.server, c.database);
+    d.querySelector('[data-on]').onclick = () => { store.set('smo.autoModel', true); loadServerModel(c.server, c.database); };
     $('msgs').appendChild(d);
   }
-  /** Loads the model of a thin report from its server; without a database name it opens the Server panel to pick one. */
-  async function loadServerModel(server, database) {
+  /** Loads the model of a thin report from its server; without a database name it opens the Server panel to pick one.
+   *  → true when the model is loaded. */
+  async function loadServerModel(server, database, announced) {
     $('xmlaServer').value = server;
-    if (database) return xmlaLoad(server, database, database);
+    if (database) { await xmlaLoad(server, database, database, announced); return !!(state.project && !state.project.models.every(m => m.missing)); }
     $('xmlaPanel').hidden = false;
     $('xmlaForm').requestSubmit();
   }
@@ -254,13 +266,13 @@
   async function xmlaCall(body) {
     return fetch('api/xmla', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(x => x.json());
   }
-  async function xmlaLoad(server, database, name) {
+  async function xmlaLoad(server, database, name, announced) {
     document.body.style.cursor = 'progress';
     $('xmlaInfo').textContent = 'Reading the model…';
     // started from a message (panel closed): show progress and errors there
     const quiet = $('xmlaPanel').hidden;
     const note = text => { $('xmlaInfo').textContent = text; if (quiet) msg(text, true); };
-    if (quiet) msg('Reading ' + (database || 'the model') + ' from ' + server + '… a sign-in window may open.');
+    if (quiet && !announced) msg('Reading ' + (database || 'the model') + ' from ' + server + '… a sign-in window may open.');
     try {
       const r = await xmlaCall({ server, database, name });
       if (r.error) return note(r.error);

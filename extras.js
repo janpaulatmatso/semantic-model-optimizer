@@ -476,6 +476,8 @@
     if (pick.length) {
       $('pathInput').value = pick.map(f => f.target).join(';');
       await App.loadFromPath($('pathInput').value);
+      // loading the report already started loading its model
+      if (state.serverLoad) return state.serverLoad;
       $('msgs').innerHTML = '';
     }
     const c = (pick[0] && pick[0].conn) || {};
