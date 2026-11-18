@@ -106,9 +106,11 @@ function partsToFiles(def, root) {
 }
 
 /**
- * Every semantic model in one or more workspaces, each with the reports in those workspaces that use it.
- * opts: {workspace: name, id or "*" (every workspace you can open), onModel(model) called as each one is ready}
- * → {models: [{workspace, workspaceId, name, id, files, reports: [names], warnings}], warnings}
+ * Every semantic model in one or more workspaces, each with the reports in those workspaces that use it. A report
+ * whose model is in another workspace is followed there: that model is read too, with only the chosen reports.
+ * opts: {workspace: name, id, several separated by commas, or "*" (every workspace you can open), onModel(model)
+ * called as each one is ready}
+ * → {models: [{workspace, workspaceId, name, id, files, reports: [names], warnings, outside}], warnings}
  */
 async function workspaceModels(opts) {
   const pbi = token('https://analysis.windows.net/powerbi/api', 'SMO_POWERBI_TOKEN');
@@ -120,31 +122,54 @@ async function workspaceModels(opts) {
   const chosen = names ? groups.filter(g => names.has(g.id.toLowerCase()) || names.has(String(g.name).toLowerCase())) : groups;
   if (names && !chosen.length) throw new Error('Workspace "' + want + '" not found among the ' + groups.length + ' workspaces you can open.');
   const out = { models: [], warnings: [] };
+  const lower = s => String(s || '').toLowerCase();
+  // the reports of the chosen workspaces, by the model they use: workspace of the model | model
+  const byModel = new Map(), todo = [];
   for (const ws of chosen) {
     let sets, reps;
     try {
       sets = (await (await call(`${PBI}/groups/${ws.id}/datasets`, pbi)).json()).value || [];
       reps = ((await (await call(`${PBI}/groups/${ws.id}/reports`, pbi)).json()).value || []).filter(r => r.reportType !== 'PaginatedReport');
     } catch (e) { out.warnings.push(ws.name + ': ' + e.message); continue; }
-    for (const d of sets) {
-      if (/^(Report Usage Metrics Model|Usage Metrics Report)$/i.test(d.name)) continue;
-      const m = { workspace: ws.name, workspaceId: ws.id, name: d.name, id: d.id, files: [], reports: [], warnings: [] };
-      const root = `fabric/${safe(ws.name)}/${safe(d.name)}`;
-      try {
-        const def = await waitFor(await call(`${FABRIC}/workspaces/${ws.id}/semanticModels/${d.id}/getDefinition?format=TMDL`, fab, { method: 'POST' }), fab);
-        m.files.push(...partsToFiles(def, root + '/' + safe(d.name) + '.SemanticModel'));
-      } catch (e) { out.warnings.push(ws.name + ' / ' + d.name + ': ' + e.message); continue; }
-      for (const r of reps.filter(x => String(x.datasetId || '').toLowerCase() === d.id.toLowerCase())) {
-        try {
-          const def = await waitFor(await call(`${FABRIC}/workspaces/${ws.id}/reports/${r.id}/getDefinition`, fab, { method: 'POST' }), fab);
-          m.files.push(...partsToFiles(def, root + '/' + safe(r.name) + '.Report'));
-          m.reports.push(r.name);
-        } catch (e) { m.warnings.push('report ' + r.name + ': ' + e.message); }
-      }
-      out.models.push(m);
-      // handled one by one, so a whole tenant does not have to fit in memory at once
-      if (opts.onModel) { await opts.onModel(m); m.files = null; }
+    for (const d of sets) todo.push({ ws, d });
+    for (const r of reps) {
+      if (!r.datasetId) continue;
+      const k = lower(r.datasetWorkspaceId || ws.id) + '|' + lower(r.datasetId);
+      if (!byModel.has(k)) byModel.set(k, []);
+      byModel.get(k).push({ ws, r });
     }
+  }
+  // models in other workspaces that chosen reports use
+  const have = new Set(todo.map(x => lower(x.ws.id) + '|' + lower(x.d.id)));
+  for (const [k, list] of byModel) {
+    if (have.has(k)) continue;
+    const [wsId, dsId] = k.split('|');
+    const which = list.map(x => x.ws.name + ' / ' + x.r.name).join(', ');
+    const ws = groups.find(g => lower(g.id) === wsId);
+    if (!ws) { out.warnings.push(which + ': its model is in a workspace you cannot open'); continue; }
+    try { todo.push({ ws, d: await (await call(`${PBI}/groups/${ws.id}/datasets/${dsId}`, pbi)).json(), outside: true }); }
+    catch (e) { out.warnings.push(which + ': ' + e.message); }
+  }
+  for (const { ws, d, outside } of todo) {
+    if (/^(Report Usage Metrics Model|Usage Metrics Report)$/i.test(d.name)) continue;
+    const m = { workspace: ws.name, workspaceId: ws.id, name: d.name, id: d.id, files: [], reports: [], warnings: [], outside: !!outside };
+    const root = `fabric/${safe(ws.name)}/${safe(d.name)}`;
+    try {
+      const def = await waitFor(await call(`${FABRIC}/workspaces/${ws.id}/semanticModels/${d.id}/getDefinition?format=TMDL`, fab, { method: 'POST' }), fab);
+      m.files.push(...partsToFiles(def, root + '/' + safe(d.name) + '.SemanticModel'));
+    } catch (e) { out.warnings.push(ws.name + ' / ' + d.name + ': ' + e.message); continue; }
+    for (const { ws: rws, r } of byModel.get(lower(ws.id) + '|' + lower(d.id)) || []) {
+      // a report from another workspace than its model is named after its own workspace too
+      const name = rws.id === ws.id ? r.name : rws.name + ' - ' + r.name;
+      try {
+        const def = await waitFor(await call(`${FABRIC}/workspaces/${rws.id}/reports/${r.id}/getDefinition`, fab, { method: 'POST' }), fab);
+        m.files.push(...partsToFiles(def, root + '/' + safe(name) + '.Report'));
+        m.reports.push(name);
+      } catch (e) { m.warnings.push('report ' + name + ': ' + e.message); }
+    }
+    out.models.push(m);
+    // handled one by one, so a whole tenant does not have to fit in memory at once
+    if (opts.onModel) { await opts.onModel(m); m.files = null; }
   }
   return out;
 }

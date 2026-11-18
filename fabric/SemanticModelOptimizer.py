@@ -1313,6 +1313,7 @@ _K_SNAP_DESC = re.compile("periodieke snapshot|periodic snapshot|" + B + "snapsh
 _K_SNAP_NAME = re.compile("moment|snapshot|standen|" + B + "stand" + B + "|balans|positie|portefeuille|voorraad", I)
 _K_KEYLIKE = re.compile(r"(sleutel|key|nummer|number|id)\Z", I)
 _K_TIME = re.compile("LASTDATE|LASTNONBLANK|FIRSTNONBLANK|CLOSINGBALANCE|OPENINGBALANCE|ENDOF(MONTH|QUARTER|YEAR)|STARTOF(MONTH|QUARTER|YEAR)|" + B + "MAX" + S + r"*\(|" + B + "MIN" + S + r"*\(|" + B + "MAXX" + S + r"*\(|" + B + "TOPN" + S + r"*\(|" + B + "AVERAGEX" + S + r"*\(", I)
+OUTSIDE = " (the model is in a workspace you did not choose: only the reports you chose count, so more can look unused)"
 _K_SUM = re.compile(B + "SUMX?" + S + r"*\(", I)
 K_FACT, K_DIM, K_KEY = "Feit_", "Dim_", "DK_"
 
@@ -1921,9 +1922,10 @@ def liveSource(m, token):
 
 
 def workspaceModels(workspace, token, onModel):
-    """Every semantic model in one or more workspaces, each with the reports in those workspaces that use it.
+    """Every semantic model in one or more workspaces, each with the reports in those workspaces that use it. A report
+    whose model is in another workspace is followed there: that model is read too, with only the chosen reports.
     workspace: a name, an id, several separated by commas, or "*" for every workspace you can open.
-    onModel(model) is called as each one is ready, with {workspace, name, files, reports, warnings}. → warnings"""
+    onModel(model) is called as each one is ready, with {workspace, name, files, reports, warnings, outside}. → warnings"""
     want = trim(workspace or "")
     if not want:
         raise Exception("Give the name or id of the workspace, or * for every workspace.")
@@ -1936,6 +1938,8 @@ def workspaceModels(workspace, token, onModel):
         if not chosen:
             raise Exception('Workspace "' + want + '" not found among the ' + str(len(groups)) + " workspaces you can open.")
     warnings = []
+    lower = lambda s: jstr(s or "").lower()
+    byModel, todo = {}, []  # the reports of the chosen workspaces, by the model they use: workspace of the model | model
     for ws in chosen:
         try:
             sets = json.loads(call(PBI + "/groups/" + ws["id"] + "/datasets", token)[2]).get("value") or []
@@ -1943,27 +1947,46 @@ def workspaceModels(workspace, token, onModel):
         except Exception as e:
             warnings.append(jstr(ws.get("name")) + ": " + str(e))
             continue
-        for d in sets:
-            if re.fullmatch("Report Usage Metrics Model|Usage Metrics Report", jstr(d.get("name")), I):
-                continue
-            m = {"workspace": ws.get("name"), "workspaceId": ws["id"], "name": d.get("name"), "id": d["id"], "files": [], "reports": [], "warnings": []}
-            root = "fabric/" + safe(ws.get("name")) + "/" + safe(d.get("name"))
+        todo += [(ws, d, False) for d in sets]
+        for r in reps:
+            if r.get("datasetId"):
+                byModel.setdefault(lower(r.get("datasetWorkspaceId") or ws["id"]) + "|" + lower(r["datasetId"]), []).append((ws, r))
+    # models in other workspaces that chosen reports use
+    have = set(lower(ws["id"]) + "|" + lower(d["id"]) for ws, d, _ in todo)
+    for k, lst in byModel.items():
+        if k in have:
+            continue
+        wsId, dsId = k.split("|")
+        which = ", ".join(jstr(w.get("name")) + " / " + jstr(r.get("name")) for w, r in lst)
+        ws = next((g for g in groups if lower(g["id"]) == wsId), None)
+        if ws is None:
+            warnings.append(which + ": its model is in a workspace you cannot open")
+            continue
+        try:
+            todo.append((ws, json.loads(call(PBI + "/groups/" + ws["id"] + "/datasets/" + dsId, token)[2]), True))
+        except Exception as e:
+            warnings.append(which + ": " + str(e))
+    for ws, d, outside in todo:
+        if re.fullmatch("Report Usage Metrics Model|Usage Metrics Report", jstr(d.get("name")), I):
+            continue
+        m = {"workspace": ws.get("name"), "workspaceId": ws["id"], "name": d.get("name"), "id": d["id"], "files": [], "reports": [], "warnings": [], "outside": outside}
+        root = "fabric/" + safe(ws.get("name")) + "/" + safe(d.get("name"))
+        try:
+            definition = waitFor(call(FABRIC + "/workspaces/" + ws["id"] + "/semanticModels/" + d["id"] + "/getDefinition?format=TMDL", token, "POST"), token)
+            m["files"] += partsToFiles(definition, root + "/" + safe(d.get("name")) + ".SemanticModel")
+        except Exception as e:
+            warnings.append(jstr(ws.get("name")) + " / " + jstr(d.get("name")) + ": " + str(e))
+            continue
+        for rws, r in byModel.get(lower(ws["id"]) + "|" + lower(d["id"])) or []:
+            # a report from another workspace than its model is named after its own workspace too
+            name = r.get("name") if rws["id"] == ws["id"] else jstr(rws.get("name")) + " - " + jstr(r.get("name"))
             try:
-                definition = waitFor(call(FABRIC + "/workspaces/" + ws["id"] + "/semanticModels/" + d["id"] + "/getDefinition?format=TMDL", token, "POST"), token)
-                m["files"] += partsToFiles(definition, root + "/" + safe(d.get("name")) + ".SemanticModel")
+                definition = waitFor(call(FABRIC + "/workspaces/" + rws["id"] + "/reports/" + r["id"] + "/getDefinition", token, "POST"), token)
+                m["files"] += partsToFiles(definition, root + "/" + safe(name) + ".Report")
+                m["reports"].append(name)
             except Exception as e:
-                warnings.append(jstr(ws.get("name")) + " / " + jstr(d.get("name")) + ": " + str(e))
-                continue
-            for r in reps:
-                if jstr(r.get("datasetId") or "").lower() != d["id"].lower():
-                    continue
-                try:
-                    definition = waitFor(call(FABRIC + "/workspaces/" + ws["id"] + "/reports/" + r["id"] + "/getDefinition", token, "POST"), token)
-                    m["files"] += partsToFiles(definition, root + "/" + safe(r.get("name")) + ".Report")
-                    m["reports"].append(r.get("name"))
-                except Exception as e:
-                    m["warnings"].append("report " + jstr(r.get("name")) + ": " + str(e))
-            onModel(m)
+                m["warnings"].append("report " + jstr(name) + ": " + str(e))
+        onModel(m)
     return warnings
 
 
@@ -2003,7 +2026,7 @@ def scan(workspaces, folder, token, now=None, log=print, aas_token=None):
             if not proj["models"]:
                 raise Exception("no model in its definition")
             run = export(name, name, proj)
-            log(name + ": run " + str(run) + ", " + reports(len(m["reports"])))
+            log(name + ": run " + str(run) + ", " + reports(len(m["reports"])) + (OUTSIDE if m.get("outside") else ""))
             for w in m["warnings"]:
                 log("  ! " + w)
         except Exception as e:

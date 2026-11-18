@@ -696,6 +696,72 @@ test('Fabric notebook: a report on Azure Analysis Services is checked with the m
   assert.ok(!objects.includes('"Not in model"'));
 });
 
+test('Workspaces: a report whose model is in another workspace is followed to it (JavaScript and Python)', async t => {
+  const os = require('os');
+  const W = require('../workspace.js');
+  const dir = makeProject();
+  const parts = sub => {
+    const out = [], walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else out.push({ path: path.relative(path.join(dir, sub), f).replace(/\\/g, '/'), payload: fs.readFileSync(f).toString('base64'), payloadType: 'InlineBase64' }); } };
+    walk(path.join(dir, sub));
+    return out;
+  };
+  const pbi = 'https://api.powerbi.com/v1.0/myorg', fab = 'https://api.fabric.microsoft.com/v1';
+  const ok = body => ({ status: 200, body });
+  // Sales is chosen; Finance holds the model of one of its reports; the model of another is in a workspace you cannot open
+  const responses = {
+    ['GET ' + pbi + '/groups?$top=5000']: ok({ value: [{ id: 'w1', name: 'Sales' }, { id: 'W2', name: 'Finance' }] }),
+    ['GET ' + pbi + '/groups/w1/datasets']: ok({ value: [{ id: 'd1', name: 'Demo' }] }),
+    ['GET ' + pbi + '/groups/w1/reports']: ok({ value: [
+      { id: 'r1', name: 'Demo', datasetId: 'd1', datasetWorkspaceId: 'w1' },
+      { id: 'r2', name: 'Kosten', datasetId: 'D2', datasetWorkspaceId: 'w2' },
+      { id: 'r3', name: 'Geheim', datasetId: 'd9', datasetWorkspaceId: 'w9' },
+      { id: 'r4', name: 'Zonder model' }] }),
+    ['GET ' + pbi + '/groups/W2/datasets/d2']: ok({ id: 'd2', name: 'Finance model' }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels/d1/getDefinition?format=TMDL']: ok({ definition: { parts: parts('Demo.SemanticModel') } }),
+    ['POST ' + fab + '/workspaces/W2/semanticModels/d2/getDefinition?format=TMDL']: ok({ definition: { parts: parts('Demo.SemanticModel') } }),
+    ['POST ' + fab + '/workspaces/w1/reports/r1/getDefinition']: ok({ definition: { parts: parts('Demo.Report') } }),
+    ['POST ' + fab + '/workspaces/w1/reports/r2/getDefinition']: ok({ definition: { parts: parts('Demo.Report') } }),
+  };
+  const expectModels = [
+    { workspace: 'Sales', name: 'Demo', outside: false, reports: ['Demo'] },
+    { workspace: 'Finance', name: 'Finance model', outside: true, reports: ['Sales - Kosten'] },
+  ];
+  const unreachable = /Sales \/ Geheim: its model is in a workspace you cannot open/;
+
+  // JavaScript (the command line)
+  const calls = [], realFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    const key = ((init && init.method) || 'GET') + ' ' + url;
+    calls.push(key);
+    const r = responses[key];
+    if (!r) throw new Error('unexpected call ' + key);
+    return new Response(JSON.stringify(r.body), { status: r.status, headers: { 'Content-Type': 'application/json' } });
+  };
+  process.env.SMO_POWERBI_TOKEN = process.env.SMO_FABRIC_TOKEN = 'test-token';
+  const seen = [];
+  let js;
+  try {
+    js = await W.workspaceModels({ workspace: 'Sales', onModel: m => {
+      const proj = SMO.loadProject(m.files);
+      seen.push({ workspace: m.workspace, name: m.name, outside: m.outside, reports: proj.reports.map(r => r.name) });
+    } });
+  } finally { global.fetch = realFetch; delete process.env.SMO_POWERBI_TOKEN; delete process.env.SMO_FABRIC_TOKEN; }
+  assert.deepEqual(seen, expectModels);
+  assert.match(js.warnings.join('\n'), unreachable);
+  assert.ok(!calls.some(c => /groups\/W2\/(datasets|reports)$|groups\/w9/.test(c)), 'the other workspace is not scanned, only the one model is read');
+
+  // Python (the notebook)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-follow-'));
+  fs.writeFileSync(path.join(tmp, 'responses.json'), JSON.stringify(responses));
+  const out = py(t, ['scan', path.join(tmp, 'responses.json'), path.join(tmp, 'lake'), 'Sales']);
+  if (!out) return;
+  assert.deepEqual(out.result.models.map(m => m.Model), ['Sales / Demo', 'Finance / Finance model']);
+  assert.match(out.log.join('\n'), /Finance \/ Finance model: run 2, 1 report \(the model is in a workspace you did not choose/);
+  assert.match(out.result.warnings.join('\n'), unreachable);
+  assert.deepEqual(out.calls, calls, 'Python calls the same addresses in the same order');
+  assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000002/visuals.csv'), 'utf8'), /"Sales - Kosten"/);
+});
+
 test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
   const B = require('../build-fabric.js');
   const dir = path.join(__dirname, '..', 'fabric');

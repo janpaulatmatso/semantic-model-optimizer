@@ -73,7 +73,8 @@ function xmlaFiles(server, database) {
         if (!proj.models.length) throw new Error('no model in its definition');
         const x = P.exportProject(exportTo, proj, m.workspace + ' / ' + m.name, version, { modelName: m.workspace + ' / ' + m.name, dataSource: reportSource });
         done++;
-        console.log(`${m.workspace} / ${m.name}: run ${x.run}, ${m.reports.length} report${m.reports.length === 1 ? '' : 's'}`);
+        console.log(`${m.workspace} / ${m.name}: run ${x.run}, ${m.reports.length} report${m.reports.length === 1 ? '' : 's'}` +
+          (m.outside ? ' (the model is in a workspace you did not choose: only the reports you chose count, so more can look unused)' : ''));
         for (const w of m.warnings) console.log('  ! ' + w);
       } catch (e) { failed++; console.log(`${m.workspace} / ${m.name}: ${e.message}`); }
     } });

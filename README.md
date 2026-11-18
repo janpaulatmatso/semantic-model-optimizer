@@ -232,7 +232,7 @@ SemanticModelOptimizer-cli.exe cli --scan "Sales, Finance" --export C:\SMO
 SemanticModelOptimizer-cli.exe cli --scan * --export C:\SMO
 ```
 
-`--scan` reads every semantic model in the workspaces you name (or `*`: every workspace you can open), each with the reports in those workspaces that use it, and adds one run per model. Read-only: it fetches the definitions with the Fabric REST API and changes nothing. Sign in with `az login`, or set `SMO_POWERBI_TOKEN` (and `SMO_FABRIC_TOKEN`) for a service principal in a pipeline. Models Power BI cannot export are listed and skipped, for example Direct Lake models outside a Fabric capacity and the default models of a Lakehouse.
+`--scan` reads every semantic model in the workspaces you name (or `*`: every workspace you can open), each with the reports in those workspaces that use it, and adds one run per model. A report whose model is in another workspace is followed there: that model is read too, with only the reports you chose (so more of it can look unused than across all its reports). You need permission to read that model's definition; a report whose model is in a workspace you cannot open is listed as a warning. Read-only: it fetches the definitions with the Fabric REST API and changes nothing. Sign in with `az login`, or set `SMO_POWERBI_TOKEN` (and `SMO_FABRIC_TOKEN`) for a service principal in a pipeline. Models Power BI cannot export are listed and skipped, for example Direct Lake models outside a Fabric capacity and the default models of a Lakehouse.
 
 ## Semantic Model Optimizer in Fabric
 
@@ -240,7 +240,7 @@ The notebook [`fabric/SemanticModelOptimizer.ipynb`](fabric/SemanticModelOptimiz
 
 1. In a Fabric workspace: **Import › Notebook › From this computer**, choose the file. Or copy it: create a new notebook and paste all of [`fabric/SemanticModelOptimizer.py`](fabric/SemanticModelOptimizer.py) into its one cell (the same code, in one piece).
 2. Add a Lakehouse to the notebook (*Lakehouse* in the explorer › *Add*).
-3. Set `WORKSPACES` in the first cell (`"*"` for every workspace you can open), run all cells, and schedule the notebook (*Run › Schedule*).
+3. Set `WORKSPACES` in the first cell: one workspace (`"Sales"`), several (`"Sales, Finance"`) or `"*"` for every workspace you can open. The reports in those workspaces are followed to their models, also when a model is in another workspace or on Azure Analysis Services. Run all cells, and schedule the notebook (*Run › Schedule*).
 
 **The whole tool is in the notebook, in Python.** It downloads nothing and installs nothing: no Node.js, no package, no request to GitHub. It uses the Python standard library and calls only the Power BI and Fabric REST APIs, with your own Fabric sign-in, read-only (and Azure Analysis Services, when you ask it to: see below). What you import or paste is exactly what runs, so you can review it, and it only changes when you replace it. Each run writes one run per model to *Files/SemanticModelOptimizer* in the Lakehouse and shows a table per model.
 
