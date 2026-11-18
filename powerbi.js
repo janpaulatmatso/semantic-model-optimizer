@@ -252,6 +252,9 @@ function tableTmdl(t) {
   return out.join('\n');
 }
 
+/** The folder with the runs: a path on disk, or the https address of a folder in OneLake (a Fabric Lakehouse) or Azure Data Lake. */
+const isUrl = s => /^https:\/\//i.test(String(s));
+
 function modelFiles(dataFolder) {
   const defs = tableDefs(), sm = NAME + '.SemanticModel/';
   const files = [];
@@ -264,14 +267,18 @@ function modelFiles(dataFolder) {
     '\tdataAccessOptions', '\t\tlegacyRedirects', '\t\treturnErrorValuesAsNull', '', 'annotation __PBI_TimeIntelligenceEnabled = 0', '',
     'annotation PBI_QueryOrder = ' + JSON.stringify(order), '', ...defs.map(t => 'ref table ' + q(t.name)), ''].join('\n'));
   add(sm + 'definition/expressions.tmdl', [
-    '/// The folder with the exports: the data folder next to this report. Change it when you move the files.',
+    isUrl(dataFolder)
+      ? '/// The folder with the exports in OneLake (a Fabric Lakehouse) or Azure Data Lake: https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/<folder>/data'
+      : '/// The folder with the exports: the data folder next to this report. Change it when you move the files.',
     'expression ExportFolder = ' + JSON.stringify(dataFolder) + ' meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]', '',
     '\tannotation PBI_ResultType = Text', '',
     '/// Reads one kind of CSV file from every run folder and puts the rows together.',
     'expression LoadCsv =', block([
       '(name as text) as table =>',
       'let',
-      '    Files = Table.SelectRows(Folder.Files(ExportFolder), each [Name] = name),',
+      isUrl(dataFolder)
+        ? '    Files = Table.SelectRows(AzureStorage.DataLake(ExportFolder, [HierarchicalNavigation = false]), each [Name] = name),'
+        : '    Files = Table.SelectRows(Folder.Files(ExportFolder), each [Name] = name),',
       '    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),',
       '    Combined = Table.Combine(Tables)',
       'in',
@@ -406,9 +413,10 @@ function validTables(t) {
 /**
  * Adds a run to the folder, and writes the Power BI project the first time (Node only).
  * tables: from runTables (any run number; it gets the next free one), version: written into the run when empty
+ * opts.dataSource: where the report reads the runs (default: the data folder on disk; or an https address in OneLake)
  * → {run, runFolder, pbip, created}
  */
-function writeRun(folder, tables, version) {
+function writeRun(folder, tables, version, opts) {
   const fs = require('fs'), path = require('path');
   folder = path.resolve(folder);
   const data = path.join(folder, 'data');
@@ -420,27 +428,35 @@ function writeRun(folder, tables, version) {
   const t = withRun(tables, run);
   if (version && !t.runs.rows[0][5]) t.runs.rows[0][5] = version;
   for (const name of TABLES) fs.writeFileSync(path.join(runFolder, name + '.csv'), toCsv(t[name]));
+  const r = writeReport(folder, (opts && opts.dataSource) || data);
+  return { run, runFolder, pbip: r.pbip, created: r.created };
+}
+
+/** Writes the Power BI project into the folder, unless it is there already (or always, with force). Node only. */
+function writeReport(folder, dataSource, force) {
+  const fs = require('fs'), path = require('path');
+  folder = path.resolve(folder);
   const pbip = path.join(folder, NAME + '.pbip');
-  const created = !fs.existsSync(pbip);
+  const created = force || !fs.existsSync(pbip);
   if (created) {
-    for (const f of projectFiles(data)) {
+    for (const f of projectFiles(dataSource || path.join(folder, 'data'))) {
       const target = path.join(folder, f.path);
-      if (f.path !== NAME + '.pbip' && fs.existsSync(target)) continue;
+      if (!force && f.path !== NAME + '.pbip' && fs.existsSync(target)) continue;
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, f.text);
     }
   }
-  return { run, runFolder, pbip, created };
+  return { pbip, created };
 }
 
-/** Analyses a loaded project the way the command line does, and exports it (Node only). */
-function exportProject(folder, proj, source, version) {
+/** Analyses a loaded project the way the command line does, and exports it (Node only). opts: {modelName, dataSource} */
+function exportProject(folder, proj, source, version, opts) {
   const model = proj.models[0];
   const analysis = SMO.applyStats(SMO.analyze(model.model, proj.reports, { noModel: !!model.missing }), proj.stats || null);
   const checks = SMO.checkRules(model.model, analysis, proj.config, null, proj.design);
-  const tables = runTables(analysis, checks, { run: 1, model: model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals });
-  return writeRun(folder, tables, version);
+  const tables = runTables(analysis, checks, { run: 1, model: (opts && opts.modelName) || model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals });
+  return writeRun(folder, tables, version, opts);
 }
 
-return { runTables, withRun, validTables, projectFiles, writeRun, exportProject, ruleKey, NAME };
+return { runTables, withRun, validTables, projectFiles, writeRun, writeReport, exportProject, ruleKey, NAME };
 });

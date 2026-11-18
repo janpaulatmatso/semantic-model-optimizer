@@ -472,6 +472,66 @@ test('Power BI export from the app: the page makes the tables, the server writes
   } finally { srv.kill(); }
 });
 
+test('Fabric: every model of a workspace with its reports, one run each, read from OneLake', async () => {
+  const os = require('os');
+  const W = require('../workspace.js'), P = require('../powerbi.js');
+  const dir = makeProject();
+  const parts = sub => {
+    const out = [], walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else out.push({ path: path.relative(path.join(dir, sub), f).replace(/\\/g, '/'), payload: fs.readFileSync(f).toString('base64'), payloadType: 'InlineBase64' }); } };
+    walk(path.join(dir, sub));
+    return out;
+  };
+  const json = (o, status, headers) => new Response(JSON.stringify(o), { status: status || 200, headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}) });
+  const calls = [];
+  const realFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    calls.push((init && init.method || 'GET') + ' ' + url);
+    assert.equal(init.headers.Authorization, 'Bearer test-token');
+    if (url.endsWith('/groups?$top=5000')) return json({ value: [{ id: 'w1', name: 'Sales' }, { id: 'w2', name: 'Other' }] });
+    if (url.endsWith('/groups/w1/datasets')) return json({ value: [{ id: 'd1', name: 'Demo' }, { id: 'd2', name: 'Broken' }] });
+    if (url.endsWith('/groups/w1/reports')) return json({ value: [{ id: 'r1', name: 'Demo', datasetId: 'd1', reportType: 'PowerBIReport' }, { id: 'r2', name: 'Paper', datasetId: 'd1', reportType: 'PaginatedReport' }] });
+    if (url.includes('/semanticModels/d1/getDefinition?format=TMDL')) return json({ definition: { parts: parts('Demo.SemanticModel') } });
+    if (url.includes('/semanticModels/d2/getDefinition')) return json({ error: { message: 'Not supported' } }, 400);
+    if (url.includes('/reports/r1/getDefinition')) return json({}, 202, { location: 'https://api.fabric.microsoft.com/v1/operations/op1', 'retry-after': '0' });
+    if (url.endsWith('/operations/op1')) return json({ status: 'Succeeded' });
+    if (url.endsWith('/operations/op1/result')) return json({ definition: { parts: parts('Demo.Report') } });
+    throw new Error('unexpected call ' + url);
+  };
+  process.env.SMO_POWERBI_TOKEN = process.env.SMO_FABRIC_TOKEN = 'test-token';
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-fabric-'));
+  const source = 'https://onelake.dfs.fabric.microsoft.com/ws/lh/Files/SemanticModelOptimizer/data';
+  try {
+    const seen = [];
+    const r = await W.workspaceModels({ workspace: 'sales', onModel: m => {
+      const proj = SMO.loadProject(m.files);
+      seen.push(P.exportProject(out, proj, m.workspace + ' / ' + m.name, '9.9.9', { modelName: m.workspace + ' / ' + m.name, dataSource: source }));
+      assert.deepEqual(m.reports, ['Demo']);
+    } });
+    assert.equal(seen.length, 1);
+    assert.equal(r.models[0].files, null); // let go once handled
+    assert.match(r.warnings.join('\n'), /Sales \/ Broken: Power BI answered 400.*Not supported/);
+    assert.ok(!calls.some(c => c.includes('/groups/w2/')), 'only the chosen workspace');
+    assert.ok(!calls.some(c => c.includes('/reports/r2/')), 'paginated reports are skipped');
+  } finally { global.fetch = realFetch; delete process.env.SMO_POWERBI_TOKEN; delete process.env.SMO_FABRIC_TOKEN; }
+
+  const objects = fs.readFileSync(path.join(out, 'data/run-000001/objects.csv'), 'utf8');
+  assert.match(objects, /"\[Twice\]","Unused"/);
+  assert.match(fs.readFileSync(path.join(out, 'data/run-000001/runs.csv'), 'utf8'), /"Sales \/ Demo","Sales \/ Demo","9\.9\.9"/);
+  assert.match(fs.readFileSync(path.join(out, 'data/run-000001/usage.csv'), 'utf8'), /Values/); // the report was read with the model
+  const expr = fs.readFileSync(path.join(out, 'Semantic Model Optimizer.SemanticModel/definition/expressions.tmdl'), 'utf8');
+  assert.ok(expr.includes(JSON.stringify(source)) && expr.includes('AzureStorage.DataLake(ExportFolder'));
+  assert.ok(!expr.includes('Folder.Files'));
+
+  // the notebook: valid, and it uses options the command line has
+  const nb = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fabric', 'SemanticModelOptimizer.ipynb'), 'utf8'));
+  const src = nb.cells.filter(c => c.cell_type === 'code').map(c => c.source.join('')).join('\n');
+  const cli = fs.readFileSync(path.join(__dirname, '..', 'cli.js'), 'utf8');
+  const opts = [...src.matchAll(/"(--[a-z-]+)"/g)].map(m => m[1]).filter(o => o !== '--version'); // --version is asked of Node
+  assert.ok(opts.includes('--scan') && opts.includes('--report-source'));
+  for (const o of opts) assert.ok(cli.includes("'" + o + "'"), o + ' is an option of cli.js');
+  assert.match(src, /SHASUMS256/);
+});
+
 test('thin report: the live connection tells where the model lives', () => {
   const pbir = conn => JSON.stringify({ version: '4.0', datasetReference: { byConnection: { connectionString: conn } } });
   const page = { path: 'Sales.Report/definition/pages/p1/page.json', text: JSON.stringify({ name: 'p1', displayName: 'Page 1' }) };

@@ -251,7 +251,8 @@ jobs:
             echo
             echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`.'
             echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
-            echo '- Power BI report of the results: `SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO`, then open `C:\SMO\Semantic Model Optimizer.pbip` and choose *Refresh*. Every export adds a run, so the report shows the trend.'
+            echo '- Power BI report of the results: `SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO`, then open `C:\SMO\Semantic Model Optimizer.pbip` and choose *Refresh*. Every export adds a run, so the report shows the trend. Every model in your workspaces: `--scan "<workspace>" --export C:\SMO`.'
+            echo '- In Microsoft Fabric: import `SemanticModelOptimizer.ipynb` as a notebook, add a Lakehouse and schedule it; see the README.'
             echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
             echo '## Check the files'
@@ -266,4 +267,4 @@ jobs:
             echo 'The files have no code-signing certificate, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*).'
             echo 'Rather not run a program at all? Use the web version: https://janpaulatmatso.github.io/semantic-model-optimizer/'
           } > notes.md
-          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt fabric/SemanticModelOptimizer.ipynb --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest

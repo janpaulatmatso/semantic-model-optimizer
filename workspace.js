@@ -4,7 +4,7 @@
  * Sign-in: tokens come from the environment (SMO_POWERBI_TOKEN and SMO_FABRIC_TOKEN, for a pipeline with a
  * service principal) or from the Azure CLI when you are signed in there (az login). No secrets are stored. */
 'use strict';
-const { execFileSync } = require('child_process');
+const { execSync } = require('child_process');
 
 const PBI = 'https://api.powerbi.com/v1.0/myorg';
 const FABRIC = 'https://api.fabric.microsoft.com/v1';
@@ -12,8 +12,9 @@ const FABRIC = 'https://api.fabric.microsoft.com/v1';
 function token(resource, envName) {
   if (process.env[envName]) return process.env[envName];
   try {
-    return execFileSync(process.platform === 'win32' ? 'az.cmd' : 'az', ['account', 'get-access-token', '--resource', resource, '--query', 'accessToken', '-o', 'tsv'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' }).trim();
+    // resource is one of two fixed addresses in this file, so the command line is safe to build as text
+    return execSync('az account get-access-token --resource ' + resource + ' --query accessToken -o tsv',
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   } catch (e) {
     throw new Error('No sign-in found for Power BI. Run "az login" first (Azure CLI), or set ' + envName + ' to an access token for ' + resource + '.');
   }
@@ -37,9 +38,9 @@ async function waitFor(res, tok) {
     await new Promise(r => setTimeout(r, Math.max(1, Number(res.headers.get('retry-after')) || 2) * 1000));
     const st = await (await call(loc, tok)).json();
     if (st.status === 'Succeeded') return (await call(loc.replace(/\/?$/, '/result'), tok)).json();
-    if (st.status === 'Failed') throw new Error('Power BI could not export the report definition' + (st.error && st.error.message ? ': ' + st.error.message : '.'));
+    if (st.status === 'Failed') throw new Error('Power BI could not export the definition' + (st.error && st.error.message ? ': ' + String(st.error.message).trim() : '.'));
   }
-  throw new Error('Power BI took too long to export a report definition.');
+  throw new Error('Power BI took too long to export a definition.');
 }
 
 const safe = s => String(s).replace(/[\\/:*?"<>|]/g, ' ').trim() || 'report';
@@ -94,6 +95,60 @@ async function workspaceReports(opts) {
   return { workspace: ws.name, reports: names, files, warnings, skipped: all.length - reports.length };
 }
 
+/** The parts of an item definition as files under root; only text parts the tool reads. */
+function partsToFiles(def, root) {
+  const out = [];
+  for (const p of (def.definition && def.definition.parts) || []) {
+    if (!/\.(json|pbir|pbism|tmdl|bim)$/i.test(p.path) || /^StaticResources\//i.test(p.path) || /^\.pbi\//i.test(p.path)) continue;
+    out.push({ path: root + '/' + p.path, text: Buffer.from(p.payload, 'base64').toString('utf8') });
+  }
+  return out;
+}
+
+/**
+ * Every semantic model in one or more workspaces, each with the reports in those workspaces that use it.
+ * opts: {workspace: name, id or "*" (every workspace you can open), onModel(model) called as each one is ready}
+ * → {models: [{workspace, workspaceId, name, id, files, reports: [names], warnings}], warnings}
+ */
+async function workspaceModels(opts) {
+  const pbi = token('https://analysis.windows.net/powerbi/api', 'SMO_POWERBI_TOKEN');
+  const fab = token('https://api.fabric.microsoft.com', 'SMO_FABRIC_TOKEN');
+  const want = String(opts.workspace || '').trim();
+  if (!want) throw new Error('Give the name or id of the workspace, or * for every workspace.');
+  const groups = (await (await call(PBI + '/groups?$top=5000', pbi)).json()).value || [];
+  const names = want === '*' ? null : new Set(want.split(/\s*[;,]\s*/).map(s => s.toLowerCase()));
+  const chosen = names ? groups.filter(g => names.has(g.id.toLowerCase()) || names.has(String(g.name).toLowerCase())) : groups;
+  if (names && !chosen.length) throw new Error('Workspace "' + want + '" not found among the ' + groups.length + ' workspaces you can open.');
+  const out = { models: [], warnings: [] };
+  for (const ws of chosen) {
+    let sets, reps;
+    try {
+      sets = (await (await call(`${PBI}/groups/${ws.id}/datasets`, pbi)).json()).value || [];
+      reps = ((await (await call(`${PBI}/groups/${ws.id}/reports`, pbi)).json()).value || []).filter(r => r.reportType !== 'PaginatedReport');
+    } catch (e) { out.warnings.push(ws.name + ': ' + e.message); continue; }
+    for (const d of sets) {
+      if (/^(Report Usage Metrics Model|Usage Metrics Report)$/i.test(d.name)) continue;
+      const m = { workspace: ws.name, workspaceId: ws.id, name: d.name, id: d.id, files: [], reports: [], warnings: [] };
+      const root = `fabric/${safe(ws.name)}/${safe(d.name)}`;
+      try {
+        const def = await waitFor(await call(`${FABRIC}/workspaces/${ws.id}/semanticModels/${d.id}/getDefinition?format=TMDL`, fab, { method: 'POST' }), fab);
+        m.files.push(...partsToFiles(def, root + '/' + safe(d.name) + '.SemanticModel'));
+      } catch (e) { out.warnings.push(ws.name + ' / ' + d.name + ': ' + e.message); continue; }
+      for (const r of reps.filter(x => String(x.datasetId || '').toLowerCase() === d.id.toLowerCase())) {
+        try {
+          const def = await waitFor(await call(`${FABRIC}/workspaces/${ws.id}/reports/${r.id}/getDefinition`, fab, { method: 'POST' }), fab);
+          m.files.push(...partsToFiles(def, root + '/' + safe(r.name) + '.Report'));
+          m.reports.push(r.name);
+        } catch (e) { m.warnings.push('report ' + r.name + ': ' + e.message); }
+      }
+      out.models.push(m);
+      // handled one by one, so a whole tenant does not have to fit in memory at once
+      if (opts.onModel) { await opts.onModel(m); m.files = null; }
+    }
+  }
+  return out;
+}
+
 /**
  * How often each report was opened, from the Power BI activity log. Needs the Fabric administrator role.
  * days: how far back (the log keeps about 30 days). → {days, views: {report name: count}, users: {report name: distinct users}}
@@ -118,4 +173,4 @@ async function reportViews(days) {
   return { days, views, users: Object.fromEntries(Object.entries(users).map(([k, v]) => [k, v.size])) };
 }
 
-module.exports = { workspaceReports, reportViews };
+module.exports = { workspaceReports, workspaceModels, reportViews };

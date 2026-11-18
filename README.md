@@ -223,6 +223,29 @@ The model behind it is a star schema, so you can build your own pages:
 
 The counts (*Measures*, *Unused columns*, *Errors*, …) take the latest run of each model within the filters, so they never add up runs. Sizes are filled when the run had them: give a `.vpax` (DAX Studio › Advanced › Export Metrics) as an extra path. Moved the folder? Change the parameter *ExportFolder* (Transform data › Edit parameters). The report itself passes the checks of this tool, including the Kimball rules.
 
+### Every model in your workspaces
+
+```
+SemanticModelOptimizer-cli.exe cli --scan "Sales, Finance" --export C:\SMO
+SemanticModelOptimizer-cli.exe cli --scan * --export C:\SMO
+```
+
+`--scan` reads every semantic model in the workspaces you name (or `*`: every workspace you can open), each with the reports in those workspaces that use it, and adds one run per model. Read-only: it fetches the definitions with the Fabric REST API and changes nothing. Sign in with `az login`, or set `SMO_POWERBI_TOKEN` (and `SMO_FABRIC_TOKEN`) for a service principal in a pipeline. Models Power BI cannot export are listed and skipped, for example Direct Lake models outside a Fabric capacity and the default models of a Lakehouse.
+
+## Semantic Model Optimizer in Fabric
+
+The notebook [`fabric/SemanticModelOptimizer.ipynb`](fabric/SemanticModelOptimizer.ipynb) (also attached to every release) does the same in Microsoft Fabric, on a schedule, without anything on your computer:
+
+1. In a Fabric workspace: **New item › Import notebook**, choose the file.
+2. Add a Lakehouse to the notebook (*Lakehouse* in the explorer › *Add*).
+3. Set `WORKSPACES` in the first cell (`"*"` for every workspace you can open), run all cells, and schedule the notebook (*Run › Schedule*).
+
+Each run downloads Node.js (checked against the checksum nodejs.org publishes) and the tool from its GitHub release, runs `--scan` with your own Fabric sign-in, and writes the runs to *Files/SemanticModelOptimizer* in the Lakehouse. The last cell prints a table per model, and the command for the report.
+
+**The report**, once: run the printed command on your computer (`SemanticModelOptimizer-cli.exe cli --export C:\SMO-Fabric --report-only --report-source https://onelake.dfs.fabric.microsoft.com/…`). The report then reads the Lakehouse through OneLake instead of a folder. Open it in Power BI Desktop, sign in with your organisational account, **Refresh**, and **Publish** it. In the service, set the data source credentials (OAuth2) of the semantic model and schedule its refresh after the notebook. No gateway is needed.
+
+The notebook needs internet access to nodejs.org and github.com. Where a workspace blocks outbound traffic, run the scan in a pipeline instead and write the runs to OneLake.
+
 ## Lineage
 
 The lineage of a measure or column runs from the source columns on the left, through every measure that builds on it, to the **visuals** that show it and the **report pages** they are on. A visual shows its type and, when a Performance Analyzer export is loaded, its time; hover it to see every field on it. Click a visual or page to open it under *Pages*.

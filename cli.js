@@ -15,6 +15,11 @@
  *   --workspace <name>   also check every report in this Power BI workspace that uses the model (see README)
  *   --export <folder>    add this run to a folder for Power BI: CSV files in a star schema, and the first time a
  *                        ready-made report (Semantic Model Optimizer.pbip) that reads them; run it again for history
+ *   --scan <workspace>   with --export: every semantic model in the workspace (a name, an id, several separated by
+ *                        commas, or * for every workspace you can open), each with the reports that use it
+ *   --report-source <url>  the report reads the runs from this https address instead of the folder on disk, for
+ *                        example a Lakehouse folder in OneLake that a Fabric notebook writes to
+ *   --report-only        with --export: only write the report (again), no run
  *   --csv / --json <file>, --lineage "Name"
  *
  * Exit codes: 0 fine, 1 the check failed, 2 the tool itself could not run. */
@@ -44,7 +49,40 @@ function xmlaFiles(server, database) {
   const csv = opt('--csv'), json = opt('--json'), lin = opt('--lineage'), format = (opt('--format') || 'text').toLowerCase(), summary = opt('--summary');
   const cmpPath = opt('--compare'), cmpRef = opt('--compare-ref'), server = opt('--server'), database = opt('--database');
   const workspace = opt('--workspace'), dataset = opt('--dataset'), exportTo = opt('--export');
+  const scan = opt('--scan'), reportSource = opt('--report-source'), reportOnly = flag('--report-only');
   const check = flag('--check'), strict = flag('--strict'), showRules = flag('--rules'), kimballOnly = flag('--kimball'), riConn = opt('--ri');
+  let version = process.env.SMO_VERSION || '';
+  if (!version) try { version = require('./package.json').version; } catch (e) { /* not next to the program */ }
+  if (reportSource && !/^https:\/\//i.test(reportSource)) { console.error('--report-source takes an https address, for example https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data'); process.exit(2); }
+  if ((scan || reportOnly) && !exportTo) { console.error((scan ? '--scan' : '--report-only') + ' needs --export <folder>.'); process.exit(2); }
+
+  // only the Power BI report, for example on your own computer for runs that a Fabric notebook writes to OneLake
+  if (reportOnly) {
+    const r = require('./powerbi.js').writeReport(exportTo, reportSource, true);
+    console.log('Report written: ' + r.pbip + '\nOpen it in Power BI Desktop and choose Refresh.');
+    return;
+  }
+
+  // every semantic model in one or more workspaces, each with the reports that use it: one run per model
+  if (scan) {
+    const P = require('./powerbi.js');
+    let done = 0, failed = 0;
+    const r = await require('./workspace.js').workspaceModels({ workspace: scan, onModel: async m => {
+      try {
+        const proj = SMO.loadProject(m.files);
+        if (!proj.models.length) throw new Error('no model in its definition');
+        const x = P.exportProject(exportTo, proj, m.workspace + ' / ' + m.name, version, { modelName: m.workspace + ' / ' + m.name, dataSource: reportSource });
+        done++;
+        console.log(`${m.workspace} / ${m.name}: run ${x.run}, ${m.reports.length} report${m.reports.length === 1 ? '' : 's'}`);
+        for (const w of m.warnings) console.log('  ! ' + w);
+      } catch (e) { failed++; console.log(`${m.workspace} / ${m.name}: ${e.message}`); }
+    } });
+    for (const w of r.warnings) console.log('! ' + w);
+    console.log(`\n${done} model${done === 1 ? '' : 's'} exported to ${path.resolve(exportTo)}` + (failed ? `, ${failed} could not be read` : '') +
+      `\nThe report: ${path.join(path.resolve(exportTo), P.NAME + '.pbip')}`);
+    if (!done) process.exitCode = 2;
+    return;
+  }
   if (!args.length && !server) { console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^#!.*\n\/\* ?/, '').replace(/^ \* ?/gm, '')); process.exit(2); }
 
   const files = [], warnings = [];
@@ -183,10 +221,8 @@ function xmlaFiles(server, database) {
     console.log('JSON written: ' + json);
   }
   if (exportTo) {
-    let version = process.env.SMO_VERSION || '';
-    if (!version) try { version = require('./package.json').version; } catch (e) { /* not next to the program */ }
     const source = server ? server + (database ? ' / ' + database : '') : args.map(p => path.resolve(p)).join('; ');
-    const r = require('./powerbi.js').exportProject(exportTo, proj, source, version);
+    const r = require('./powerbi.js').exportProject(exportTo, proj, source, version, { dataSource: reportSource });
     console.log(`\nRun ${r.run} exported for Power BI: ${r.runFolder}` + (r.created ? `\nOpen the report in Power BI Desktop: ${r.pbip}` : `\nRefresh the report to see it: ${r.pbip}`));
   }
 })().catch(e => { console.error(e.message); process.exit(2); });
