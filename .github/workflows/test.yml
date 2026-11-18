@@ -272,7 +272,7 @@ jobs:
             echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
             echo '- Power BI report of the results: `SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO`, then open `C:\SMO\Semantic Model Optimizer.pbip` and choose *Refresh*. Every export adds a run, so the report shows the trend. Every model in your workspaces: `--scan "<workspace>" --export C:\SMO`.'
             echo '- The Power BI report on its own: `SemanticModelOptimizer-Report.zip`. Unzip it, open the .pbip, fill in the parameter *ExportFolder* (a folder of exports, or the Lakehouse folder of the Fabric notebook) and choose *Refresh*.'
-            echo '- In Microsoft Fabric: import `SemanticModelOptimizer.ipynb` as a notebook (or paste `SemanticModelOptimizer.py` into one cell), add a Lakehouse and schedule it. The whole tool is in the notebook, in Python: it downloads nothing. See the README.'
+            echo '- In Microsoft Fabric: import `SemanticModelOptimizer.ipynb` as a notebook (or paste `SemanticModelOptimizer.py` into one cell), add a Lakehouse and schedule it. For regular use, import `SemanticModelOptimizer-Tool.ipynb` and `SemanticModelOptimizer-Run.ipynb` instead: an update then only replaces the tool, and your settings stay. The whole tool is in the notebook, in Python: it downloads nothing. See the README.'
             echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
             echo '## Check the files'
@@ -287,4 +287,4 @@ jobs:
             echo 'The files have no code-signing certificate, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*).'
             echo 'Rather not run a program at all? Use the web version: https://janpaulatmatso.github.io/semantic-model-optimizer/'
           } > notes.md
-          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt dist/SemanticModelOptimizer-Report.zip fabric/SemanticModelOptimizer.ipynb fabric/SemanticModelOptimizer.py --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt dist/SemanticModelOptimizer-Report.zip fabric/SemanticModelOptimizer.ipynb fabric/SemanticModelOptimizer.py fabric/SemanticModelOptimizer-Tool.ipynb fabric/SemanticModelOptimizer-Run.ipynb --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest

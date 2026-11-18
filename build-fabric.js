@@ -2,6 +2,8 @@
 /* Builds the Fabric notebook from the Python port (fabric/smo.py):
  *   fabric/SemanticModelOptimizer.ipynb   to import in Fabric
  *   fabric/SemanticModelOptimizer.py      the same code as one cell, to paste into a new notebook
+ *   fabric/SemanticModelOptimizer-Tool.ipynb and -Run.ipynb   the same, split: the tool (replaced on an update,
+ *                                         never edited) and your settings (scheduled; loads the tool with %run)
  * The notebook holds the whole tool: it downloads nothing and only calls the Power BI and Fabric REST APIs (and, when
  * asked to, Azure Analysis Services).
  * The list of rules in smo.py is written from core.js, so the texts are the same in both.
@@ -102,6 +104,24 @@ Without it, or to have the report on your computer: the runs are also files in t
 3. **Publish** it to a workspace. In the semantic model's settings, set the credentials of the data source (OAuth2) and schedule a refresh after the notebook's schedule.
 `;
 
+const TOOL = 'SemanticModelOptimizer-Tool';
+const TOOL_MD = `
+# Semantic Model Optimizer: the tool
+
+The analysis itself, for the notebook **SemanticModelOptimizer-Run** (or a copy of it per set of workspaces), which loads it with \`%run ${TOOL}\`. Keep this notebook's name **${TOOL}** and keep it in the same workspace as those notebooks.
+
+**Do not change this notebook.** To update, replace it with the newest \`${TOOL}.ipynb\` from the releases: your settings are in the other notebook and stay as they are.
+
+The whole tool is in Python: it downloads nothing and installs nothing, and it only calls the Power BI and Fabric REST APIs (and Azure Analysis Services, when the settings ask for it). More: https://github.com/janpaulatmatso/semantic-model-optimizer#semantic-model-optimizer-in-fabric
+`;
+const RUN_MD = `
+# Semantic Model Optimizer: run
+
+Checks the semantic models in the workspaces you set below, each with the reports that use it, and adds the results to the default Lakehouse of this notebook. The tool itself is in the notebook **${TOOL}**, in the same workspace; this one only holds your settings, so an update of the tool does not touch them.
+
+**Before the first run:** import both notebooks into the same workspace, add a Lakehouse to this one (*Lakehouse* in the explorer › *Add*) and set the settings below. Then run all cells, and schedule this notebook (*Run* › *Schedule*). For another set of workspaces with its own schedule, make a copy of this notebook.
+`;
+
 function outputs(version) {
   const lib = library().replace(/^VERSION = "dev".*$/m, 'VERSION = ' + JSON.stringify(version));
   const t = s => s.replace(/^\n/, '').replace(/\s+$/, '');
@@ -118,13 +138,18 @@ function outputs(version) {
   const lines = s => { const a = t(s).split('\n'); return a.map((l, i) => (i < a.length - 1 ? l + '\n' : l)); };
   const md = s => ({ cell_type: 'markdown', metadata: {}, source: lines(s) });
   const code = (s, tags) => ({ cell_type: 'code', execution_count: null, metadata: tags ? { tags } : {}, outputs: [], source: lines(s) });
-  const nb = {
-    cells: [md(INTRO), code(PARAMS, ['parameters']), md('## The tool\n\nThe analysis itself. Nothing to set here.'), code(lib),
-      md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT)],
+  const notebook = cells => JSON.stringify({
+    cells,
     metadata: { kernel_info: { name: 'synapse_pyspark' }, kernelspec: { display_name: 'Synapse PySpark', language: 'Python', name: 'synapse_pyspark' }, language_info: { name: 'python' } },
     nbformat: 4, nbformat_minor: 4,
-  };
-  return { 'smo.py': library(), 'SemanticModelOptimizer.py': one, 'SemanticModelOptimizer.ipynb': JSON.stringify(nb, null, 1) + '\n' };
+  }, null, 1) + '\n';
+  const nb = notebook([md(INTRO), code(PARAMS, ['parameters']), md('## The tool\n\nThe analysis itself. Nothing to set here.'), code(lib),
+    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT)]);
+  // the same, split in two: the tool, which you replace on an update, and your settings, which you schedule
+  const tool = notebook([md(TOOL_MD), code(lib)]);
+  const run = notebook([md(RUN_MD), code(PARAMS, ['parameters']), md('## The tool\n\nLoads the notebook **' + TOOL + '** from this workspace.'), code('%run ' + TOOL),
+    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT)]);
+  return { 'smo.py': library(), 'SemanticModelOptimizer.py': one, 'SemanticModelOptimizer.ipynb': nb, [TOOL + '.ipynb']: tool, 'SemanticModelOptimizer-Run.ipynb': run };
 }
 
 if (require.main === module) {

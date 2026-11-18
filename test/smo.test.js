@@ -876,6 +876,21 @@ test('Lakehouse tables: the notebook creates the Direct Lake model and report on
   assert.throws(() => run({ ['GET ' + fab + '/workspaces/w1/lakehouses/l1']: ok({ properties: { sqlEndpointProperties: { provisioningStatus: 'InProgress' } } }) }), /SQL analytics endpoint of the Lakehouse is not ready yet \(InProgress\)/);
 });
 
+test('Fabric notebook in two: the tool, and the settings that load it', () => {
+  const B = require('../build-fabric.js');
+  const out = B.outputs('dev');
+  const cells = f => JSON.parse(out[f]).cells;
+  const code = f => cells(f).filter(c => c.cell_type === 'code').map(c => c.source.join(''));
+  const one = code('SemanticModelOptimizer.ipynb'), tool = code('SemanticModelOptimizer-Tool.ipynb'), run = code('SemanticModelOptimizer-Run.ipynb');
+  // the tool notebook is the tool and nothing else: no settings, nothing that runs
+  assert.deepEqual(tool, [one[1]]);
+  assert.ok(!/^(WORKSPACES|FOLDER|DIRECT_LAKE|AAS_TENANT|AAS_CLIENT_ID|AAS_KEY_VAULT|AAS_SECRET_NAME) = /m.test(tool[0]) && !/notebookutils|^result = /m.test(tool[0]));
+  // the run notebook: the same settings and steps, with the tool loaded by %run under the name of the tool notebook
+  assert.deepEqual(run, [one[0], '%run SemanticModelOptimizer-Tool'].concat(one.slice(2)));
+  assert.deepEqual(cells('SemanticModelOptimizer-Run.ipynb')[1].metadata.tags, ['parameters']);
+  assert.ok(fs.existsSync(path.join(__dirname, '..', 'fabric', 'SemanticModelOptimizer-Tool.ipynb')), 'the file name is the name the notebook gets on import');
+});
+
 test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
   const B = require('../build-fabric.js');
   const dir = path.join(__dirname, '..', 'fabric');
