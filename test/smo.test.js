@@ -486,3 +486,32 @@ test('web version: changes to a picked folder use the same modules, checks and b
   assert.match((await L.post('api/compare', { path: l.target, modelRoot: model.root })).error, /desktop app/);
   fs.rmSync(proj, { recursive: true, force: true });
 });
+
+test('Store package: manifest, version and identity', () => {
+  const M = require('../build-msix.js');
+  assert.equal(M.msixVersion('v1.1.12'), '1.1.12.0');
+  assert.equal(M.msixVersion('2.0'), '2.0.0.0');
+  const id = { name: 'Matso.Smo', publisher: 'CN=AB & CD', publisherName: 'Matso <test>' };
+  const xml = M.manifest(id, '1.2.3.0');
+  assert.match(xml, /<Identity Name="Matso\.Smo" Publisher="CN=AB &amp; CD" Version="1\.2\.3\.0"/);
+  assert.match(xml, /<PublisherDisplayName>Matso &lt;test&gt;<\/PublisherDisplayName>/);
+  assert.ok(xml.includes('Executable="app\\SemanticModelOptimizer.exe"'));
+  assert.match(xml, /Alias="SemanticModelOptimizer-cli\.exe"/);
+  assert.match(xml, /runFullTrust/);
+  assert.match(xml, /FileSystemWriteVirtualization>disabled/);
+  // every logo the manifest names exists after logos()
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-msix-'));
+  try {
+    M.logos(dir);
+    const named = [...xml.matchAll(/Assets[\\/]([\w.-]+\.png)/g)].map(m => m[1]);
+    assert.ok(named.length >= 3);
+    for (const f of named) assert.ok(fs.existsSync(path.join(dir, f)), f);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const saved = { ...process.env };
+  delete process.env.SMO_MSIX_NAME; delete process.env.SMO_MSIX_PUBLISHER;
+  assert.equal(M.identity().store, false);
+  process.env.SMO_MSIX_NAME = 'X.Y'; process.env.SMO_MSIX_PUBLISHER = 'CN=Z';
+  assert.equal(M.identity().store, true);
+  process.env = saved;
+});

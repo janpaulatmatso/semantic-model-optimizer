@@ -134,6 +134,68 @@ jobs:
           if (Test-Path "$dir\SemanticModelOptimizer.exe") { throw 'The uninstaller left the program behind' }
           Write-Output 'Install and uninstall OK'
 
+      - name: Build the Store package (MSIX)
+        if: steps.changed.outputs.release == 'yes'
+        env:
+          SMO_VERSION: ${{ steps.version.outputs.tag }}
+          # from Partner Center › Product identity; without them a test package is built
+          SMO_MSIX_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          SMO_MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          SMO_MSIX_PUBLISHER_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: node build-msix.js
+
+      - name: Check the Store package (sign a copy with a test certificate, install, run, remove)
+        if: steps.changed.outputs.release == 'yes'
+        shell: pwsh
+        run: |
+          [xml]$m = Get-Content dist\msix\AppxManifest.xml
+          $name = $m.Package.Identity.Name; $publisher = $m.Package.Identity.Publisher
+          # the Store signs the real package; this copy is signed only to install it here
+          $test = Join-Path $env:RUNNER_TEMP 'smo-test.msix'
+          Copy-Item dist\SemanticModelOptimizer.msix $test
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature -FriendlyName 'SMO test' -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $pw = ConvertTo-SecureString -String 'smo-test' -Force -AsPlainText
+          $pfx = Join-Path $env:RUNNER_TEMP 'smo-test.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pw | Out-Null
+          Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\LocalMachine\TrustedPeople -Password $pw | Out-Null
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\signtool.exe' | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /f $pfx /p smo-test $test
+          if ($LASTEXITCODE) { throw 'signtool failed' }
+          Add-AppxPackage -Path $test
+          $pkg = Get-AppxPackage -Name $name
+          if (-not $pkg) { throw 'The package was not installed' }
+          Write-Output "Installed $($pkg.PackageFullName)"
+          $cli = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\SemanticModelOptimizer-cli.exe'
+          if (-not (Test-Path $cli)) { throw 'The command line alias was not created' }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\SemanticModelOptimizer.exe'))) { throw 'The program alias was not created' }
+          $v = & $cli version
+          Write-Output "From the package: $v"
+          $tag = '${{ steps.version.outputs.tag }}'
+          if ($v -ne "Semantic Model Optimizer $($tag.TrimStart('v'))") { throw "Wrong version from the package: $v" }
+          $project = node -e "console.log(require('./test/fixture.js').makeProject())"
+          & $cli cli $project --check
+          # the server and a PowerShell helper, run from inside the package
+          $env:PORT = '5392'; $env:SMO_IDLE_EXIT = '60'
+          $s = Start-Process $cli -ArgumentList 'serve' -PassThru -WindowStyle Hidden
+          $ping = $null
+          for ($i = 0; $i -lt 30 -and -not $ping; $i++) { Start-Sleep 1; try { $ping = (Invoke-WebRequest http://127.0.0.1:5392/api/ping -UseBasicParsing).Content | ConvertFrom-Json } catch { } }
+          if (-not $ping -or $ping.version -ne $tag.TrimStart('v')) { throw "The packaged server did not answer with version $tag" }
+          $desk = (Invoke-WebRequest http://127.0.0.1:5392/api/desktop -UseBasicParsing -TimeoutSec 120).Content | ConvertFrom-Json
+          if ($desk.error) { throw "PowerShell helper failed inside the package: $($desk.error)" }
+          Write-Output "PowerShell helper answered: $($desk.instances.Count) Power BI Desktop instances"
+          & $cli stop
+          for ($i = 0; $i -lt 20 -and -not $s.HasExited; $i++) { Start-Sleep 1 }
+          Remove-AppxPackage -Package $pkg.PackageFullName
+          if (Get-AppxPackage -Name $name) { throw 'The package was not removed' }
+          Write-Output 'Store package: install, run and remove OK'
+
+      - name: Keep the Store package (upload it in Partner Center)
+        if: steps.changed.outputs.release == 'yes' && vars.MSIX_IDENTITY_NAME != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-package-${{ steps.version.outputs.tag }}
+          path: dist/SemanticModelOptimizer.msix
+
       - name: Checksums
         if: steps.changed.outputs.release == 'yes'
         run: |
@@ -159,6 +221,7 @@ jobs:
             dist/SemanticModelOptimizer.exe
             dist/SemanticModelOptimizer-cli.exe
             dist/SemanticModelOptimizer-Setup.exe
+            dist/SemanticModelOptimizer.msix
             dist/SHA256SUMS.txt
 
       - name: Publish the release
