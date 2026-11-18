@@ -418,3 +418,71 @@ test('web version: every file the page needs, and a policy that forbids connecti
     for (const f of files) assert.ok(fs.existsSync(path.join(out, f)), f + ' built');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
+
+test('web version: changes to a picked folder use the same modules, checks and backups', async () => {
+  const vm = require('vm');
+  const W = require('../build-web.js');
+  const proj = makeProject();
+  // a folder handle as the browser gives it (File System Access API), in memory
+  const notFound = () => Object.assign(new Error('not found'), { name: 'NotFoundError' });
+  class FileH {
+    constructor(name, bytes) { this.kind = 'file'; this.name = name; this.bytes = bytes; }
+    async getFile() { const b = this.bytes; return { name: this.name, size: b.length, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) }; }
+    async createWritable() { const parts = []; return { write: async d => { parts.push(Buffer.from(d)); }, close: async () => { this.bytes = new Uint8Array(Buffer.concat(parts)); } }; }
+  }
+  class Dir {
+    constructor(name) { this.kind = 'directory'; this.name = name; this.kids = new Map(); }
+    async *entries() { for (const e of [...this.kids]) yield e; }
+    async getDirectoryHandle(n, o) { let d = this.kids.get(n); if (!d) { if (!(o && o.create)) throw notFound(); d = new Dir(n); this.kids.set(n, d); } return d; }
+    async getFileHandle(n, o) { let f = this.kids.get(n); if (!f) { if (!(o && o.create)) throw notFound(); f = new FileH(n, new Uint8Array()); this.kids.set(n, f); } return f; }
+    async removeEntry(n) { if (!this.kids.delete(n)) throw notFound(); }
+    async queryPermission() { return 'granted'; }
+    async requestPermission() { return 'granted'; }
+  }
+  const root = new Dir(path.basename(proj));
+  (function fill(dir, h) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { const d = new Dir(e.name); h.kids.set(e.name, d); fill(full, d); }
+      else h.kids.set(e.name, new FileH(e.name, new Uint8Array(fs.readFileSync(full))));
+    }
+  })(proj, root);
+  const fileAt = async rel => { let d = root; const parts = rel.split('/'); for (const p of parts.slice(0, -1)) d = await d.getDirectoryHandle(p); return d.kids.get(parts[parts.length - 1]); };
+  const text = async rel => Buffer.from((await fileAt(rel)).bytes).toString('utf8');
+
+  const ctx = vm.createContext({ SMO, TextEncoder, TextDecoder, Uint8Array, console });
+  vm.runInContext(W.localBundle(), ctx);
+  const L = ctx.SMOLocal;
+  L.open(root);
+  const read = async list => ({ files: await Promise.all(list.filter(f => SMO.wantsFile(f.path)).map(async f => ({ path: f.path, text: SMO.decodeText(new Uint8Array(await f.file.arrayBuffer())) }))), warnings: [] });
+  const l = await L.load(read);
+  assert.equal(l.target, '/' + root.name);
+  const p = SMO.loadProject(l.files);
+  const model = p.models[0];
+  assert.equal(model.format, 'tmdl');
+
+  // edit: a description, with a backup next to the model
+  const e = await L.post('api/edit', { path: l.target, modelRoot: model.root, sel: { type: 'measure', table: 'Sales', name: 'Total' }, changes: { description: 'Net amount, checked in the web version.' } });
+  assert.ok(!e.error, e.error);
+  assert.equal(e.changed, true);
+  assert.match(await text('Demo.SemanticModel/definition/tables/Sales.tmdl'), /\/\/\/ Net amount, checked in the web version\./);
+  assert.ok(root.kids.get('smo-backup'), 'backup folder made');
+  assert.ok(!e.backup.startsWith('/'));
+
+  // delete an unused measure; a failing check changes nothing
+  const d = await L.post('api/delete', { path: l.target, modelRoot: model.root, items: [{ type: 'measure', table: 'Sales', name: 'Total again' }] });
+  assert.ok(!d.error, d.error);
+  assert.equal(d.removed.length, 1);
+  assert.doesNotMatch(await text('Demo.SemanticModel/definition/tables/Sales.tmdl'), /Total again/);
+  const bad = await L.post('api/edit', { path: l.target, modelRoot: model.root, sel: { type: 'measure', table: 'Sales', name: 'Nope' }, changes: { description: 'x' } });
+  assert.match(bad.error, /not found/i);
+
+  // history: two backups; restoring the newest brings the measure back
+  const b = await L.post('api/backups', { path: l.target, modelRoot: model.root });
+  assert.equal(b.backups.length, 2);
+  const r = await L.post('api/restore', { path: l.target, modelRoot: model.root, stamp: b.backups[0].stamp });
+  assert.ok(!r.error, r.error);
+  assert.match(await text('Demo.SemanticModel/definition/tables/Sales.tmdl'), /Total again/);
+  assert.match((await L.post('api/compare', { path: l.target, modelRoot: model.root })).error, /desktop app/);
+  fs.rmSync(proj, { recursive: true, force: true });
+});

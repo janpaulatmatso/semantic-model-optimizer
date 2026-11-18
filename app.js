@@ -202,12 +202,18 @@
 
   async function loadList(list) {
     document.body.style.cursor = 'progress';
-    try { const r = await readBrowserFiles(list); setProject(r.files, r.warnings); }
+    try { const r = await readBrowserFiles(list); if (window.SMOLocal) window.SMOLocal.close(); setProject(r.files, r.warnings); }
     catch (e) { msg('Loading failed: ' + e.message, true); }
     finally { document.body.style.cursor = ''; }
   }
 
-  $('btnDir').onclick = () => $('inDir').click();
+  $('btnDir').onclick = async () => {
+    if (!canPickFolder()) return $('inDir').click();
+    let handle;
+    try { handle = await window.showDirectoryPicker({ id: 'smo-project', mode: 'read' }); }
+    catch (e) { if (e.name !== 'AbortError') msg('Opening the folder failed: ' + e.message, true); return; }
+    openLocalFolder(handle);
+  };
   $('btnFile').onclick = () => $('inFile').click();
   $('inDir').onchange = e => { loadList(Array.from(e.target.files).map(f => ({ file: f, path: f.webkitRelativePath || f.name }))); e.target.value = ''; };
   $('inFile').onchange = e => { loadList(Array.from(e.target.files).map(f => ({ file: f, path: f.name }))); e.target.value = ''; };
@@ -217,7 +223,12 @@
   window.addEventListener('drop', async e => {
     e.preventDefault();
     document.body.classList.remove('dragging');
-    const entries = Array.from(e.dataTransfer.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const items = Array.from(e.dataTransfer.items || []);
+    // web version: one dropped folder is opened like Open folder, so changes can be saved in it
+    const handleP = canPickFolder() && items.length === 1 && items[0].getAsFileSystemHandle ? items[0].getAsFileSystemHandle() : null;
+    const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const handle = handleP ? await handleP.catch(() => null) : null;
+    if (handle && handle.kind === 'directory') return openLocalFolder(handle);
     const acc = [];
     for (const en of entries) await entryFiles(en, '', acc);
     if (acc.length) loadList(acc);
@@ -225,8 +236,10 @@
 
   // via serve.js: paste a path and read sizes from Power BI Desktop
   // the web version (build-web.js) and a page opened as a file have no server; the web version may not make any connection
-  const noServer = !location.protocol.startsWith('http') || !!document.querySelector('meta[name="smo-edition"][content="web"]');
+  const webEdition = !!document.querySelector('meta[name="smo-edition"][content="web"]');
+  const noServer = !location.protocol.startsWith('http') || webEdition;
   document.body.classList.toggle('noserver', noServer);
+  if (webEdition) installableApp();
   if (!noServer) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
       state.server = true;
@@ -238,6 +251,25 @@
       renderRepos();
       Promise.all(repos.paths.map(scanRepoPath)).then(renderRepos);
     } }).catch(() => {});
+  }
+
+  /** Web version: works offline, can be installed as an app, and opens the files Windows hands it (file_handlers). */
+  function installableApp() {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    let prompt = null;
+    window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); prompt = e; $('btnInstall').hidden = false; });
+    window.addEventListener('appinstalled', () => { prompt = null; $('btnInstall').hidden = true; msg('Installed: start it from the Start menu, or open a .pbix, .pbit or .vpax with it.'); });
+    $('btnInstall').onclick = async () => {
+      if (!prompt) return;
+      prompt.prompt();
+      await prompt.userChoice.catch(() => null);
+      prompt = null; $('btnInstall').hidden = true;
+    };
+    if ('launchQueue' in window) window.launchQueue.setConsumer(async p => {
+      if (!p.files || !p.files.length) return;
+      const files = await Promise.all(p.files.map(h => h.getFile()));
+      loadList(files.map(f => ({ file: f, path: f.name })));
+    });
   }
 
   function setStats(stats) {
@@ -489,12 +521,36 @@
     finally { document.body.style.cursor = ''; }
   };
 
+  /** Web version: the folder picked with Open folder, which changes are saved to (local.js). */
+  const localFolder = () => (window.SMOLocal && window.SMOLocal.active() ? window.SMOLocal : null);
   async function apiPost(url, body) {
+    const local = localFolder();
+    if (local && local.handles(url)) {
+      try { return await local.post(url, body); } catch (e) { return { error: e.message }; }
+    }
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(x => x.json());
   }
+  /** The project as it is on disk now: through the server, or from the picked folder in the web version. */
+  async function apiLoad(p) {
+    const local = localFolder();
+    if (local) { try { return await local.load(readBrowserFiles); } catch (e) { return { error: e.message }; } }
+    return fetch('api/load?path=' + encodeURIComponent(p)).then(x => x.json());
+  }
+  /** Web version: opens a folder so that changes can be saved in it (the browser asks before the first change). */
+  async function openLocalFolder(handle) {
+    document.body.style.cursor = 'progress';
+    try {
+      window.SMOLocal.open(handle);
+      const l = await window.SMOLocal.load(readBrowserFiles);
+      setProject(l.files, l.warnings, { base: l.base, path: l.target });
+      if (canWrite()) msg('Changes you make are saved in the folder ' + handle.name + ', with a copy of the old files in smo-backup. The browser asks for permission before the first change.');
+    } catch (e) { window.SMOLocal.close(); msg('Loading failed: ' + e.message, true); }
+    finally { document.body.style.cursor = ''; }
+  }
+  const canPickFolder = () => !!(window.SMOLocal && window.showDirectoryPicker);
   /** Reads the project again from disk after a change, keeping the current view. */
   async function reloadFromDisk(selectId) {
-    const l = await fetch('api/load?path=' + encodeURIComponent(state.loadedPath)).then(x => x.json());
+    const l = await apiLoad(state.loadedPath);
     if (l.error) return msg(l.error, true);
     const keepMsgs = $('msgs').innerHTML;
     reloadKeep(l.files, [], { base: l.base, path: state.loadedPath });
@@ -577,7 +633,7 @@
         ${c ? '<li>For deleted columns a <code>Table.RemoveColumns</code> step is added to the Power Query of the table, so they are no longer loaded either.</li>' : ''}
         <li><b>Close this project in Power BI Desktop first.</b> If it is still open and you save there, everything comes back.</li></ul>`;
     } else {
-      h += `<p class="warn">Deleting directly only works for a Power BI project (TMDL) that you loaded through the path field (in the app, or with <code>node serve.js</code>). You can still download a script for Tabular Editor.</p>`;
+      h += `<p class="warn">Deleting directly only works for a Power BI project (TMDL) that you loaded as a folder: with <b>Open folder</b> in the web version, or through the path field in the app. You can still download a script for Tabular Editor.</p>`;
     }
     h += `<div class="dlgbtn"><button data-act="cancel">Cancel</button><button data-act="script">Tabular Editor script</button>${canWrite() && p.ok.length ? `<button class="danger" data-act="go">Delete ${p.ok.length}</button>` : ''}</div>`;
     dlg.innerHTML = h;
@@ -613,7 +669,7 @@
       if (r.notFound.length) msg(r.notFound.length + ' objects not found in the files: ' + r.notFound.slice(0, 5).map(x => x.table + '[' + x.name + ']').join(', '), true);
       for (const w of r.warnings) msg(w);
       const keepIdx = state.modelIdx, off = state.off, base = state.base, path = state.loadedPath;
-      const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
+      const l = await apiLoad(path);
       if (l.error) return msg(l.error, true);
       setProject(l.files, [], { base: l.base || base, path, keep: true });
       state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off;
@@ -677,7 +733,7 @@
       (state.analysis.stats.noModel ? ' · the model is not loaded, so only the report could be checked' : '') : 'Nothing found. The model passes every check.';
     const open = state.checksOpen || (state.checksOpen = new Set(r.rules.filter(x => x.severity === 'error').map(x => x.id)));
     $('checksList').innerHTML = r.rules.map(rule => `<details class="rule sev-${rule.severity}" data-rule="${rule.id}"${open.has(rule.id) ? ' open' : ''}>
-      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b>${FIXABLE[rule.id] && canWrite() ? `<button type="button" class="fixbtn" data-fix="${rule.id}">${FIXABLE[rule.id]}</button>` : ''}${rule.id === 'measure-no-description' && canWrite() ? '<button type="button" class="fixbtn" data-suggest="1">Suggest descriptions</button>' : ''}<span class="cnt">${rule.items.length}</span></summary>
+      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b>${FIXABLE[rule.id] && canWrite() ? `<button type="button" class="fixbtn" data-fix="${rule.id}">${FIXABLE[rule.id]}</button>` : ''}${rule.id === 'measure-no-description' && canWrite() && state.server ? '<button type="button" class="fixbtn" data-suggest="1">Suggest descriptions</button>' : ''}<span class="cnt">${rule.items.length}</span></summary>
       <p class="muted small">${esc(rule.help)}</p>
       <table class="uses">${rule.items.slice(0, 300).map(it => `<tr><td>${it.id ? `<span class="link" data-id="${esc(it.id)}">${esc(it.label)}</span>` : esc(it.label)}</td><td class="muted">${esc(it.detail)}</td></tr>`).join('')}</table>
       ${rule.items.length > 300 ? `<p class="muted small">… and ${rule.items.length - 300} more. Export to Excel for the full list.</p>` : ''}</details>`).join('');
@@ -1175,7 +1231,7 @@
         if (r.live) return;
         msg(`Saved in ${r.files} file${r.files === 1 ? '' : 's'}` + (r.renamed ? ` (${r.reportFields} fields in reports updated)` : '') + `. Copy of the old files: ${r.backup}`);
         const keepIdx = state.modelIdx, off = state.off, sel = state.sel, path = state.loadedPath;
-        const l = await fetch('api/load?path=' + encodeURIComponent(path)).then(x => x.json());
+        const l = await apiLoad(path);
         if (l.error) return msg(l.error, true);
         setProject(l.files, [], { base: l.base, path, keep: true });
         state.modelIdx = Math.min(keepIdx, state.project.models.length - 1); state.off = off; state.sel = sel; state.selected = r.id;
@@ -1308,7 +1364,7 @@
   }
 
   // what extras.js builds on
-  Object.assign(App, { reloadKeep, renderDetail, renderGrid, state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath, xmlaLoad, loadServerModel });
+  Object.assign(App, { reloadKeep, renderDetail, renderGrid, state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath, xmlaLoad, loadServerModel, openLocalFolder });
   window.dispatchEvent(new Event('smo-ready'));
 
   // test hook: load a project from the address bar (?path=...) when serve.js is running

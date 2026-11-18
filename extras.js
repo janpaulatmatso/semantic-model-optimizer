@@ -290,7 +290,7 @@
 
   const cmpBtn = el('button', { type: 'button', id: 'btnCompare', title: 'What changed compared with a Git branch, tag or commit' }, 'Compare');
   histBtn.after(cmpBtn);
-  App.onRun.push(() => { cmpBtn.hidden = !state.loadedPath; });
+  App.onRun.push(() => { cmpBtn.hidden = !state.loadedPath || !state.server; });
   cmpBtn.onclick = () => {
     const dlg = $('dlg');
     const last = App.store.get('smo.compareRef', 'HEAD');

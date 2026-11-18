@@ -4,7 +4,10 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 ## Getting started
 
-- **Web version, nothing to install:** https://janpaulatmatso.github.io/semantic-model-optimizer/ — choose *Open folder* or *Open file*. The files are read in your browser; the page is not allowed to make any connection (see [For IT administrators](#for-it-administrators)). Connecting to a server or Power BI Desktop, and changing the model, need the desktop app.
+- **Web version, nothing to download:** https://janpaulatmatso.github.io/semantic-model-optimizer/ — choose *Open folder* or *Open file*. The files are read in your browser; the page is not allowed to make any connection (see [For IT administrators](#for-it-administrators)).
+  - **As an app:** *Install as app* (or the install icon in the address bar of Edge or Chrome) gives it its own window and a Start menu entry, works offline, and offers it in *Open with* for `.pbix`, `.pbit`, `.vpax` and `.bim` files.
+  - **Changes:** in Edge and Chrome, a Power BI project opened with *Open folder* (or dropped as a folder) can be changed as in the app: delete, rename, edit formulas and descriptions, fixes, display folders and *History*. The same code does it, with the same checks, and first copies every file it changes into `smo-backup`. The browser asks for permission before the first change. Firefox and Safari can only read.
+  - **Needs the desktop app:** connecting to Analysis Services, a workspace or Power BI Desktop, sizes from Power BI Desktop, comparing with Git, and suggested descriptions.
 - **No install, offline:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
 - **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
 - **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
@@ -267,11 +270,11 @@ Three ways to offer the tool, from least to most that runs on the computer:
 
 | | What runs | What it can do |
 |---|---|---|
-| **Web version** (GitHub Pages, or your own web server) | Static HTML, CSS and JavaScript in the browser | Read Power BI projects, .pbit, .pbix (report part), .vpax and model.bim; every analysis, check, diagram and export |
+| **Web version** (GitHub Pages, or your own web server) | Static HTML, CSS and JavaScript in the browser | Read Power BI projects, .pbit, .pbix (report part), .vpax and model.bim; every analysis, check, diagram and export; in Edge and Chrome also changes to a project folder the user opened |
 | **From source** (`node serve.js`) | Node 18 or later, the code in this repository, no dependencies | Everything |
 | **Desktop app** (Setup or portable exe) | Node and the same code, packed into one executable | Everything |
 
-**Web version.** The page sets a Content Security Policy with `connect-src 'none'`: the browser itself refuses every request the page could make, so loaded files cannot leave the computer. It loads no fonts, scripts or anything else from elsewhere. To host it yourself, run `node build-web.js <folder>` and put that folder on any web server or SharePoint site that serves static files; it needs no server code. Settings (language, chosen rules) are kept in the browser's local storage.
+**Web version.** The page sets a Content Security Policy with `connect-src 'none'`: the browser itself refuses every request the page could make, so loaded files cannot leave the computer. It loads no fonts, scripts or anything else from elsewhere. Its service worker (`sw.js`, there for offline use) only keeps the tool's own files from the same site. It can only write to a folder the user picked, after the browser has asked for permission; it cannot see anything else on the computer. To host it yourself, run `node build-web.js <folder>` and put that folder on any web server or SharePoint site that serves static files; it needs no server code. Settings (language, chosen rules) are kept in the browser's local storage.
 
 **Desktop app.**
 - **Where it comes from:** GitHub Actions builds every release from the public source in this repository; nobody builds it by hand. Each release has a signed build provenance and a `SHA256SUMS.txt`. Check a file with `gh attestation verify SemanticModelOptimizer-Setup.exe --repo janpaulatmatso/semantic-model-optimizer`, or compare `Get-FileHash` with the checksum. The files have no code-signing certificate.

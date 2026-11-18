@@ -9,7 +9,7 @@
 
   const NL = {
     // header and loading
-    'Open folder': 'Map openen', 'Open file': 'Bestand openen', 'Load': 'Laden', 'Sizes from Power BI Desktop': 'Groottes uit Power BI Desktop', 'Sizes from server': 'Groottes van server',
+    'Open folder': 'Map openen', 'Install as app': 'Installeren als app', 'Open file': 'Bestand openen', 'Load': 'Laden', 'Sizes from Power BI Desktop': 'Groottes uit Power BI Desktop', 'Sizes from server': 'Groottes van server',
     'Load a Power BI project': 'Laad een Power BI-project', 'Load that model': 'Laad dat model','Connect': 'Verbinden', 'Close': 'Sluiten', 'Cancel': 'Annuleren', 'Add': 'Toevoegen', 'Choose folder': 'Map kiezen', 'Choose file': 'Bestand kiezen',
     'Load selected': 'Selectie laden', 'Load model': 'Model laden', 'Rescan': 'Opnieuw zoeken', 'Remove': 'Verwijderen', 'Read reports': 'Rapporten lezen', 'Read report views': 'Rapportweergaven lezen',
     '+ Add report': '+ Rapport toevoegen', 'Reports:': 'Rapporten:', 'Model': 'Model',
