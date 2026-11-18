@@ -3,11 +3,11 @@
   "name": "fields",
   "position": {
     "x": 20,
-    "y": 94,
-    "z": 6000,
-    "height": 606,
-    "width": 380,
-    "tabOrder": 6000
+    "y": 144,
+    "z": 7000,
+    "height": 556,
+    "width": 440,
+    "tabOrder": 7000
   },
   "visual": {
     "visualType": "tableEx",

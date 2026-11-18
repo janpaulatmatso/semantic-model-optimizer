@@ -329,60 +329,148 @@ const fieldOf = f => {
 };
 const M = (table, p) => ({ m: table, p }), Cl = (table, p) => ({ c: table, p });
 
+// The look follows Stephen Few: as little ink as possible that is not data. No borders, shadows, gridlines, axis
+// titles or totals; muted colours, and one bright colour (orange) only for what needs attention; bars sorted and
+// labelled directly instead of read off an axis. A light grey page, white panels, and a header bar per page.
+const INK = '#333333', SOFT = '#6B6B6B', LINE = '#E3E3E3', PAGE = '#F2F2F2', BAR = '#2F3B4C';
+const COLOR = { blue: '#5DA5DA', lightBlue: '#88BDE6', grey: '#B3B3B3', orange: '#FAA43A', red: '#F15854' };
+const STATUS_COLORS = [['In report', COLOR.blue], ['Used indirectly', COLOR.lightBlue], ['Model only', COLOR.grey], ['Unused', COLOR.orange], ['Not in model', COLOR.red], ['Model not loaded', COLOR.grey]];
+
 function visual(id, type, x, y, w, h, roles, title, extra) {
   const queryState = {};
   for (const [role, fields] of Object.entries(roles)) queryState[role] = { projections: fields.map(fieldOf) };
   const v = { visualType: type, query: { queryState } };
-  if (extra) Object.assign(v, extra);
+  if (extra) {
+    if (extra.sort) { v.query.sortDefinition = { sort: extra.sort.map(([f, direction]) => ({ field: fieldOf(f).field, direction })), isDefaultSort: true }; }
+    if (extra.objects) v.objects = extra.objects;
+  }
   // a card already shows the name of its measure
   v.visualContainerObjects = { title: [{ properties: type === 'card' ? { show: lit('false') } : { show: lit('true'), text: lit("'" + title.replace(/'/g, "''") + "'") } }] };
   v.drillFilterOtherVisuals = true;
   return { $schema: SCHEMA + 'visualContainer/2.4.0/schema.json', name: id, position: { x, y, z: 0, height: h, width: w, tabOrder: 0 }, visual: v };
 }
+const fill = color => ({ fill: { solid: { color: lit("'" + color + "'") } } });
+/** colours for the values of a column (a series), such as each status */
+const colorsFor = (entity, column, pairs) => pairs.map(([value, color]) => ({
+  properties: fill(color),
+  selector: { data: [{ scopeId: { Comparison: { ComparisonKind: 0, Left: { Column: { Expression: { SourceRef: { Entity: entity } }, Property: column } }, Right: { Literal: { Value: "'" + value.replace(/'/g, "''") + "'" } } } } }] },
+}));
+/** colours for measures (a line or bar per measure) */
+const colorsOf = pairs => pairs.map(([f, color]) => ({ properties: fill(color), selector: { metadata: fieldOf(f).queryRef } }));
 // a slicer as a dropdown; its own header is off, the title of the visual names it
 const dropdown = { objects: { data: [{ properties: { mode: lit("'Dropdown'") } }], header: [{ properties: { show: lit('false') } }] } };
+const slicer = (id, x, y, w, h, f, title) => visual(id, 'slicer', x, y, w, h, { Values: [f] }, title, dropdown);
 const table = (id, x, y, w, h, fields, title) => visual(id, 'tableEx', x, y, w, h, { Values: fields }, title);
 
-const PAGE_W = 1280, PAGE_H = 720, MARGIN = 20, GAP = 10, FILTER_H = 64, TOP = MARGIN + FILTER_H + GAP;
-/** The filters of a page: dropdowns in one row across the top. filters: [[title, table, column]] */
+/** The header bar of a page: the name of the tool, and the page. */
+function header(page) {
+  const run = (value, style) => ({ value, textStyle: Object.assign({ fontFamily: 'Segoe UI', fontSize: '14pt', color: '#FFFFFF' }, style || {}) });
+  return {
+    $schema: SCHEMA + 'visualContainer/2.4.0/schema.json', name: 'header', position: { x: 0, y: 0, z: 0, height: HEADER_H, width: PAGE_W, tabOrder: 0 },
+    visual: {
+      visualType: 'textbox',
+      objects: { general: [{ properties: { paragraphs: [{ textRuns: [run('Semantic Model Optimizer', { fontWeight: 'bold' }), run('   ' + page, { color: '#C5CCD6' })] }] } }] },
+      visualContainerObjects: {
+        background: [{ properties: { show: lit('true'), color: { solid: { color: lit("'" + BAR + "'") } }, transparency: lit('0D') } }],
+        padding: [{ properties: { top: lit('10D'), left: lit('20D'), bottom: lit('0D'), right: lit('20D') } }],
+        title: [{ properties: { show: lit('false') } }],
+        visualHeader: [{ properties: { show: lit('false') } }],
+      },
+    },
+  };
+}
+
+const PAGE_W = 1280, PAGE_H = 720, HEADER_H = 48, MARGIN = 20, GAP = 12, FILTER_H = 70;
+const FILTER_Y = HEADER_H + 14, TOP = FILTER_Y + FILTER_H + GAP;
+/** The filters of a page: dropdowns in one row under the header. filters: [[title, table, column]] */
 function filterRow(filters) {
   const w = (PAGE_W - 2 * MARGIN - (filters.length - 1) * GAP) / filters.length;
-  return filters.map(([title, t, c], i) => visual('filter' + (i + 1), 'slicer', Math.round(MARGIN + i * (w + GAP)), MARGIN, Math.round(w), FILTER_H, { Values: [Cl(t, c)] }, title, dropdown));
+  return filters.map(([title, t, c], i) => slicer('filter' + (i + 1), Math.round(MARGIN + i * (w + GAP)), FILTER_Y, Math.round(w), FILTER_H, Cl(t, c), title));
 }
 
 function pages() {
   const O = 'Dim_Object', F = 'Fact_Object', U = 'Fact_Usage', V = 'Dim_Visual', D = 'Dim_Dependency';
   const fMODEL = ['Model', 'Dim_Run', 'Model'], fTYPE = ['Object type', O, 'Object type'], fTABLE = ['Table', O, 'Table'], fFIELD = ['Measure or column', O, 'Label'];
   const full = PAGE_W - 2 * MARGIN, body = PAGE_H - TOP - MARGIN;
-  const cardW = (full - 6 * GAP) / 7;
+  const cardW = (full - 6 * GAP) / 7, cardH = 84;
   const cards = [['Measures', F], ['Unused measures', F], ['Columns', F], ['Unused columns', F], ['Broken formulas', F], ['Errors', 'Fact_Finding'], ['Warnings', 'Fact_Finding']]
-    .map(([p, t], i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), 100, { Values: [M(t, p)] }, p));
-  const half = (full - GAP) / 2, chartY = TOP + 100 + GAP, chartH = 240, rulesY = chartY + chartH + GAP;
+    .map(([p, t], i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), cardH, { Values: [M(t, p)] }, p));
+  const half = (full - GAP) / 2, chartY = TOP + cardH + GAP, chartH = 236, rulesY = chartY + chartH + GAP;
+  const unused = M(F, 'Unused measures'), unusedCols = M(F, 'Unused columns'), errors = M('Fact_Finding', 'Errors'), findings = M('Fact_Finding', 'Findings');
+  const page = (name, displayName, visuals) => ({ name, displayName, visuals: [header(displayName)].concat(visuals) });
   return [
-    { name: 'overview', displayName: 'Overview', visuals: [
+    page('overview', 'Overview', [
       ...filterRow([fMODEL, fTYPE, fTABLE, ['Date', 'Dim_Date', 'Date']]),
       ...cards,
-      visual('status', 'barChart', MARGIN, chartY, half, chartH, { Category: [Cl(O, 'Object type')], Series: [Cl(O, 'Status')], Y: [M(F, 'Objects')] }, 'Objects by status'),
-      visual('trend', 'lineChart', MARGIN + half + GAP, chartY, half, chartH, { Category: [Cl('Dim_Date', 'Date')], Y: [M(F, 'Unused measures'), M(F, 'Unused columns'), M('Fact_Finding', 'Errors')] }, 'Over time'),
-      visual('rules', 'clusteredBarChart', MARGIN, rulesY, full, PAGE_H - rulesY - MARGIN, { Category: [Cl('Dim_Rule', 'Rule')], Y: [M('Fact_Finding', 'Findings')] }, 'Findings by rule')] },
-    { name: 'objects', displayName: 'Objects', visuals: [
+      visual('status', 'barChart', MARGIN, chartY, half, chartH, { Category: [Cl(O, 'Object type')], Series: [Cl(O, 'Status')], Y: [M(F, 'Objects')] }, 'Objects by status',
+        { objects: { dataPoint: colorsFor(O, 'Status', STATUS_COLORS) } }),
+      visual('trend', 'lineChart', MARGIN + half + GAP, chartY, half, chartH, { Category: [Cl('Dim_Date', 'Date')], Y: [unused, unusedCols, errors] }, 'Over time',
+        { objects: { dataPoint: colorsOf([[unused, COLOR.orange], [unusedCols, COLOR.blue], [errors, COLOR.red]]) } }),
+      // one colour, longest bar first, the number at the bar instead of an axis to read it from
+      visual('rules', 'clusteredBarChart', MARGIN, rulesY, full, PAGE_H - rulesY - MARGIN, { Category: [Cl('Dim_Rule', 'Rule')], Y: [findings] }, 'Findings by rule',
+        { sort: [[findings, 'Descending']], objects: { dataPoint: [{ properties: fill(COLOR.blue) }], labels: [{ properties: { show: lit('true') } }], valueAxis: [{ properties: { show: lit('false') } }] } })]),
+    page('objects', 'Objects', [
       ...filterRow([fMODEL, fTYPE, ['Status', O, 'Status'], fTABLE, ['Hidden', O, 'Hidden'], ['Broken', O, 'Broken']]),
-      table('list', MARGIN, TOP, full, body, [Cl(O, 'Table'), Cl(O, 'Name'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(O, 'Hidden'), M(U, 'Reports using it'), M(U, 'Visuals'), M(F, 'Used by objects'), M(F, 'Size (MB)')], 'Tables, columns and measures')] },
+      table('list', MARGIN, TOP, full, body, [Cl(O, 'Table'), Cl(O, 'Name'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(O, 'Hidden'), M(U, 'Reports using it'), M(U, 'Visuals'), M(F, 'Used by objects'), M(F, 'Size (MB)')], 'Tables, columns and measures')]),
     // where a measure or column is used: pick it in the filters or click it on the left, the visuals are on the right
-    { name: 'usage', displayName: 'Where used', visuals: [
+    page('usage', 'Where used', [
       ...filterRow([fMODEL, fTYPE, fTABLE, fFIELD, ['Report', V, 'Report'], ['Page', V, 'Page']]),
-      table('fields', MARGIN, TOP, 380, body, [Cl(O, 'Label'), M(U, 'Reports using it'), M(U, 'Visuals')], 'Measures and columns in reports'),
-      table('list', MARGIN + 380 + GAP, TOP, full - 380 - GAP, body, [Cl('Dim_Run', 'Model'), Cl(V, 'Report'), Cl(V, 'Page'), Cl(V, 'Visual'), Cl(V, 'Visual type'), Cl(O, 'Label'), Cl(U, 'Role'), M(U, 'Field uses')], 'Reports and visuals that use them')] },
-    { name: 'findings', displayName: 'Findings', visuals: [
+      table('fields', MARGIN, TOP, 440, body, [Cl(O, 'Label'), M(U, 'Reports using it'), M(U, 'Visuals')], 'Measures and columns in reports'),
+      table('list', MARGIN + 440 + GAP, TOP, full - 440 - GAP, body, [Cl('Dim_Run', 'Model'), Cl(V, 'Report'), Cl(V, 'Page'), Cl(V, 'Visual'), Cl(V, 'Visual type'), Cl(O, 'Label'), Cl(U, 'Role'), M(U, 'Field uses')], 'Reports and visuals that use them')]),
+    page('findings', 'Findings', [
       ...filterRow([fMODEL, ['Severity', 'Dim_Rule', 'Severity'], ['Group', 'Dim_Rule', 'Group'], ['Rule', 'Dim_Rule', 'Rule'], fTABLE]),
-      table('list', MARGIN, TOP, full, body, [Cl('Dim_Rule', 'Severity'), Cl('Dim_Rule', 'Rule'), Cl(O, 'Label'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings')] },
-    { name: 'lineage', displayName: 'Lineage', visuals: [
+      table('list', MARGIN, TOP, full, body, [Cl('Dim_Rule', 'Severity'), Cl('Dim_Rule', 'Rule'), Cl(O, 'Label'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings')]),
+    page('lineage', 'Lineage', [
       ...filterRow([fMODEL, fTYPE, fTABLE, ['Object', O, 'Label'], ['Depends on', D, 'Depends on']]),
-      table('list', MARGIN, TOP, full, body, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(D, 'Depends on'), Cl(D, 'Depends on kind'), Cl(D, 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')] },
+      table('list', MARGIN, TOP, full, body, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(D, 'Depends on'), Cl(D, 'Depends on kind'), Cl(D, 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')]),
   ];
 }
 
-const THEME = { name: NAME, dataColors: ['#2456D6', '#7A4FD6', '#E0802B', '#2E9E6A', '#D64C4C', '#7A8296', '#C9A227', '#1F9BB4'], background: '#FFFFFF', foreground: '#1C2330', tableAccent: '#2456D6' };
+const solid = color => ({ solid: { color } });
+const text = { fontFamily: 'Segoe UI', fontSize: 9, color: solid(SOFT) };
+const THEME = {
+  name: NAME,
+  dataColors: [COLOR.blue, COLOR.orange, '#60BD68', '#F17CB0', '#B2912F', '#B276B2', '#DECF3F', COLOR.red, '#4D4D4D'],
+  background: '#FFFFFF', foreground: INK, tableAccent: COLOR.blue,
+  textClasses: {
+    title: { fontFace: 'Segoe UI Semibold', fontSize: 11, color: INK },
+    label: { fontFace: 'Segoe UI', fontSize: 9, color: SOFT },
+    callout: { fontFace: 'Segoe UI Light', fontSize: 24, color: INK },
+  },
+  visualStyles: {
+    page: { '*': {
+      background: [{ color: solid(PAGE), transparency: 0 }],
+      outspace: [{ color: solid(PAGE), transparency: 0 }],
+    } },
+    '*': { '*': {
+      background: [{ show: true, color: solid('#FFFFFF'), transparency: 0 }],
+      border: [{ show: false }],
+      dropShadow: [{ show: false }],
+      title: [{ show: true, fontFamily: 'Segoe UI Semibold', fontSize: 11, fontColor: solid(INK), alignment: 'left' }],
+      padding: [{ top: 8, bottom: 8, left: 12, right: 12 }],
+      valueAxis: [{ gridlineShow: false, showAxisTitle: false, labelColor: solid(SOFT), fontSize: 9 }],
+      categoryAxis: [{ gridlineShow: false, showAxisTitle: false, labelColor: solid(SOFT), fontSize: 9 }],
+      legend: [{ position: 'TopLeft', showTitle: false, labelColor: solid(SOFT), fontSize: 9 }],
+      labels: [{ color: solid(SOFT), fontSize: 9 }],
+    } },
+    card: { '*': {
+      labels: [{ color: solid(INK), fontSize: 24, fontFamily: 'Segoe UI Light' }],
+      categoryLabels: [{ show: true, color: solid(SOFT), fontSize: 9 }],
+    } },
+    lineChart: { '*': { lineStyles: [{ strokeWidth: 2, showMarker: false }] } },
+    tableEx: { '*': {
+      grid: [{ gridVertical: false, gridHorizontal: true, gridHorizontalColor: solid(LINE), gridHorizontalWeight: 1, outlineColor: solid(LINE), rowPadding: 3 }],
+      columnHeaders: [{ fontColor: solid(INK), backColor: solid('#FFFFFF'), fontSize: 9, fontFamily: 'Segoe UI Semibold', outline: 'BottomOnly' }],
+      values: [{ fontColorPrimary: solid(INK), fontColorSecondary: solid(INK), backColorPrimary: solid('#FFFFFF'), backColorSecondary: solid('#FFFFFF'), fontSize: 9, outline: 'None' }],
+      total: [{ totals: false }],
+    } },
+    slicer: { '*': {
+      items: [{ fontColor: solid(INK), fontSize: 9 }],
+      padding: [{ top: 4, bottom: 4, left: 12, right: 12 }],
+    } },
+    textbox: { '*': { background: [{ show: false }] } },
+  },
+};
 
 function reportFiles() {
   const rp = NAME + '.Report/', files = [];
@@ -400,7 +488,8 @@ function reportFiles() {
   const ps = pages();
   add(rp + 'definition/pages/pages.json', { $schema: SCHEMA + 'pagesMetadata/1.1.0/schema.json', pageOrder: ps.map(p => p.name), activePageName: ps[0].name });
   for (const p of ps) {
-    add(rp + `definition/pages/${p.name}/page.json`, { $schema: SCHEMA + 'page/2.1.0/schema.json', name: p.name, displayName: p.displayName, displayOption: 'FitToPage', height: 720, width: 1280 });
+    add(rp + `definition/pages/${p.name}/page.json`, { $schema: SCHEMA + 'page/2.1.0/schema.json', name: p.name, displayName: p.displayName, displayOption: 'FitToPage', height: PAGE_H, width: PAGE_W,
+      objects: { background: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } }, transparency: lit('0D') } }], outspace: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } } } }] } });
     p.visuals.forEach((v, i) => { v.position.z = i * 1000; v.position.tabOrder = i * 1000; add(rp + `definition/pages/${p.name}/visuals/${v.name}/visual.json`, v); });
   }
   return files;

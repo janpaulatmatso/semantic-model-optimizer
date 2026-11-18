@@ -865,12 +865,18 @@ test('Lakehouse tables: the notebook creates the Direct Lake model and report on
   assert.ok(!JSON.stringify(first.sent).includes('{{SQL'), 'the SQL endpoint is filled in everywhere');
 
   // after that: the model is there, so it is only refreshed, and the report is left alone
-  const again = run(Object.assign({
+  const existing = {
     ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }),
     ['POST ' + pbi + '/groups/w1/datasets/m1/refreshes']: ok('', 202),
-  }, lake));
+  };
+  const again = run(Object.assign({ ['GET ' + fab + '/workspaces/w1/reports']: ok({ value: [{ id: 'r1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }) }, existing, lake));
   assert.deepEqual(again.result, { model: 'm1', created: false });
   assert.ok(!again.sent.some(s => /\/reports$|semanticModels$/.test(s.call) && s.call.startsWith('POST')));
+  // a report you deleted comes back on the existing model; the model is not created again
+  const back = run(Object.assign({ ['GET ' + fab + '/workspaces/w1/reports']: ok({ value: [] }), ['POST ' + fab + '/workspaces/w1/reports']: ok({ id: 'r2' }, 201) }, existing, lake));
+  assert.deepEqual(back.result, { model: 'm1', created: false, report: true });
+  assert.ok(!back.sent.some(s => s.call === 'POST ' + fab + '/workspaces/w1/semanticModels'));
+  assert.equal(JSON.parse(decode(back.sent.find(s => s.call === 'POST ' + fab + '/workspaces/w1/reports').body)['definition.pbir']).datasetReference.byConnection.pbiModelDatabaseName, 'm1');
 
   // a Lakehouse whose SQL endpoint is not ready yet: a clear message, nothing created
   assert.throws(() => run({ ['GET ' + fab + '/workspaces/w1/lakehouses/l1']: ok({ properties: { sqlEndpointProperties: { provisioningStatus: 'InProgress' } } }) }), /SQL analytics endpoint of the Lakehouse is not ready yet \(InProgress\)/);

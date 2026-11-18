@@ -2,12 +2,12 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
   "name": "trend",
   "position": {
-    "x": 645,
-    "y": 204,
-    "z": 12000,
-    "height": 240,
-    "width": 615,
-    "tabOrder": 12000
+    "x": 646,
+    "y": 240,
+    "z": 13000,
+    "height": 236,
+    "width": 614,
+    "tabOrder": 13000
   },
   "visual": {
     "visualType": "lineChart",
@@ -78,6 +78,64 @@
           ]
         }
       }
+    },
+    "objects": {
+      "dataPoint": [
+        {
+          "properties": {
+            "fill": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#FAA43A'"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Object.Unused measures"
+          }
+        },
+        {
+          "properties": {
+            "fill": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5DA5DA'"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Object.Unused columns"
+          }
+        },
+        {
+          "properties": {
+            "fill": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#F15854'"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Fact_Finding.Errors"
+          }
+        }
+      ]
     },
     "visualContainerObjects": {
       "title": [

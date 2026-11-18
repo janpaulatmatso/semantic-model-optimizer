@@ -3,11 +3,11 @@
   "name": "filter2",
   "position": {
     "x": 270,
-    "y": 20,
-    "z": 1000,
-    "height": 64,
-    "width": 240,
-    "tabOrder": 1000
+    "y": 62,
+    "z": 2000,
+    "height": 70,
+    "width": 238,
+    "tabOrder": 2000
   },
   "visual": {
     "visualType": "slicer",
