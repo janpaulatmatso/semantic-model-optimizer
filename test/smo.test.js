@@ -402,3 +402,19 @@ test('thin report: the live connection tells where the model lives', () => {
   assert.equal(SMO.parseConnection(JSON.stringify({ datasetReference: { byPath: { path: '../Sales.SemanticModel' } } })), null);
   assert.ok(SMO.zipWants('Connections'));
 });
+
+test('web version: every file the page needs, and a policy that forbids connections', () => {
+  const W = require('../build-web.js');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const files = W.assets(html);
+  for (const f of ['core.js', 'app.js', 'extras.js', 'i18n.js', 'style.css', 'favicon.ico']) assert.ok(files.includes(f), f);
+  assert.ok(!files.some(f => /^(https?:|\/\/)/.test(f)), 'only local files');
+  const page = W.webPage(html);
+  assert.match(page, /Content-Security-Policy[^>]*connect-src 'none'/);
+  const os = require('os');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-web-'));
+  try {
+    W.build(out);
+    for (const f of files) assert.ok(fs.existsSync(path.join(out, f)), f + ' built');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});

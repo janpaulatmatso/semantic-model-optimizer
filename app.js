@@ -11,7 +11,9 @@
     files: [], project: null, modelIdx: 0, off: new Set(), analysis: null,
     q: '', type: 'mc', status: '', table: '', sort: 'status', dir: 1, selected: null, expand: false,
     sel: new Set(), base: null, loadedPath: null, stats: null,
+    server: false, // true once the local server (the app, or node serve.js) answers
   };
+  const DOWNLOAD = 'https://github.com/janpaulatmatso/semantic-model-optimizer/releases/latest';
 
   // ------------------------------------------------------------ loading
 
@@ -106,7 +108,7 @@
   /** Thin reports whose model lives on a server (Azure Analysis Services, a workspace): load that model right away. */
   function offerServerModel() {
     const { c } = thinConnection();
-    if (!c || !location.protocol.startsWith('http') || !autoModel() || state.serverLoad) return;
+    if (!c || !state.server || !autoModel() || state.serverLoad) return;
     startServerLoad(c);
   }
   function startServerLoad(c) {
@@ -124,7 +126,8 @@
     if (c) {
       const where = `The formulas of this report are not in the file: its model lives on the server, <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>. `;
       if (state.serverLoad) box.innerHTML = where + 'Loading that model now… ' + rights;
-      else if (!location.protocol.startsWith('http')) box.innerHTML = where + 'Start the tool as the app (or with <code>node serve.js</code>) to load it.';
+      else if (!state.server) box.innerHTML = where + 'Until it is loaded you see the measures the report defines and the fields it uses. ' +
+        'This version runs in the browser only and cannot connect to a server: to load that model, use the <a href="' + DOWNLOAD + '" target="_blank" rel="noopener">desktop app</a> (or <code>node serve.js</code>).';
       else box.innerHTML = where + 'Until it is loaded you see the measures the report defines and the fields it uses. ' +
         '<button type="button" class="primary" data-load>Load that model</button> ' + rights + ' ' +
         (autoModel() ? '<span class="link" data-auto="off">Don\'t load automatically</span>' : '<span class="link" data-auto="on">Always load automatically</span>');
@@ -221,9 +224,14 @@
   });
 
   // via serve.js: paste a path and read sizes from Power BI Desktop
-  if (location.protocol.startsWith('http')) {
+  // the web version (build-web.js) and a page opened as a file have no server; the web version may not make any connection
+  const noServer = !location.protocol.startsWith('http') || !!document.querySelector('meta[name="smo-edition"][content="web"]');
+  document.body.classList.toggle('noserver', noServer);
+  if (!noServer) {
     fetch('api/ping').then(r => r.ok && r.json()).then(j => { if (j && j.ok) {
+      state.server = true;
       if (j.version) document.querySelector('.top h1').title = 'Version ' + j.version;
+      if (state.project) { run(); offerServerModel(); }
       // keeps the server running while this window is open
       setInterval(() => fetch('api/ping').catch(() => {}), 20000);
       $('pathForm').hidden = false; $('btnDesktop').hidden = false; $('btnRepos').hidden = false; $('btnXmla').hidden = false;

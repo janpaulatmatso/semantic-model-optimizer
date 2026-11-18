@@ -40,6 +40,8 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write      # signs the build provenance
+      attestations: write  # stores it, so anyone can check where a file came from
     concurrency:
       group: release
       cancel-in-progress: false
@@ -132,15 +134,32 @@ jobs:
           if (Test-Path "$dir\SemanticModelOptimizer.exe") { throw 'The uninstaller left the program behind' }
           Write-Output 'Install and uninstall OK'
 
+      - name: Checksums
+        if: steps.changed.outputs.release == 'yes'
+        run: |
+          # the program people download is the one without a console window
+          cp dist/app/SemanticModelOptimizer.exe dist/SemanticModelOptimizer.exe
+          cd dist && sha256sum SemanticModelOptimizer-Setup.exe SemanticModelOptimizer.exe SemanticModelOptimizer-cli.exe | sed 's/ \*/  /' | tee SHA256SUMS.txt
+
+      - name: Build provenance (proof that GitHub Actions built these files from this commit)
+        if: steps.changed.outputs.release == 'yes'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/SemanticModelOptimizer-Setup.exe
+            dist/SemanticModelOptimizer.exe
+            dist/SemanticModelOptimizer-cli.exe
+
       - name: Keep the build (not on main)
         if: steps.changed.outputs.release == 'yes' && github.ref != 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
           path: |
-            dist/app/SemanticModelOptimizer.exe
+            dist/SemanticModelOptimizer.exe
             dist/SemanticModelOptimizer-cli.exe
             dist/SemanticModelOptimizer-Setup.exe
+            dist/SHA256SUMS.txt
 
       - name: Publish the release
         if: steps.changed.outputs.release == 'yes' && github.ref == 'refs/heads/main'
@@ -168,7 +187,16 @@ jobs:
             echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
             echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
-            echo 'The files are not signed, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*). Built automatically by GitHub Actions from commit ${{ github.sha }}.'
+            echo '## Check the files'
+            echo
+            echo 'Built automatically by GitHub Actions from commit ${{ github.sha }}, with a signed build provenance. To check that a file you downloaded is exactly that build:'
+            echo
+            echo '```'
+            echo 'gh attestation verify SemanticModelOptimizer-Setup.exe --repo ${{ github.repository }}'
+            echo '```'
+            echo
+            echo 'Or compare its SHA-256 (PowerShell: `Get-FileHash SemanticModelOptimizer-Setup.exe`) with `SHA256SUMS.txt`.'
+            echo 'The files have no code-signing certificate, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*).'
+            echo 'Rather not run a program at all? Use the web version: https://janpaulatmatso.github.io/semantic-model-optimizer/'
           } > notes.md
-          cp dist/app/SemanticModelOptimizer.exe dist/SemanticModelOptimizer.exe
-          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest

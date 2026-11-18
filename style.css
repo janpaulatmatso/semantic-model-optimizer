@@ -262,3 +262,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 #chkScore { color: var(--muted); }
 #btnRI[hidden] { display: none; }
 #btnDesign[hidden] { display: none; }
+/* hidden always wins over a display set above (the path field showed in the browser-only version) */
+[hidden] { display: none !important; }
+/* web version (no local server) versus the app */
+.web { display: none; }
+body.noserver .web { display: block; }
+body.noserver .srv { display: none; }
+.webnote { border-top: 1px solid var(--line); padding-top: 10px; }
+.drop a, #noModel a { color: var(--accent); }

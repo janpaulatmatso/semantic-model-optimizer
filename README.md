@@ -4,7 +4,8 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 
 ## Getting started
 
-- **No install:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
+- **Web version, nothing to install:** https://janpaulatmatso.github.io/semantic-model-optimizer/ — choose *Open folder* or *Open file*. The files are read in your browser; the page is not allowed to make any connection (see [For IT administrators](#for-it-administrators)). Connecting to a server or Power BI Desktop, and changing the model, need the desktop app.
+- **No install, offline:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
 - **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
 - **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
 
@@ -13,7 +14,7 @@ Shows which measures and columns of a Power BI model are used in reports and whi
 - **Without cloning:** `npx github:janpaulatmatso/semantic-model-optimizer <folder> --check` runs the command line straight from GitHub. `npm start` in a clone starts the server and opens the browser.
 - **Download:** every release on GitHub has three files: `SemanticModelOptimizer-Setup.exe` (installs it as a program with a Start menu shortcut and an uninstaller), `SemanticModelOptimizer.exe` (the same program without installing) and `SemanticModelOptimizer-cli.exe` (for the command line and pipelines). A new release is published automatically after every push to `main` that changes code and passes the tests (the patch number goes up; run the workflow by hand to raise the minor or major number). `SemanticModelOptimizer-cli.exe version` shows which one you have.
 - **As a desktop app:** the program opens in its own window, without address bar or tabs: an app window of your default browser when that is Edge, Chrome, Brave or Vivaldi, otherwise of Edge (which every Windows computer has). No console window appears. The tool stops by itself about two and a half minutes after you close the window; `SemanticModelOptimizer-cli.exe stop` stops it straight away. Set `SMO_BROWSER=1` to open it in a normal browser tab instead.
-- **Portable executable:** `node build-exe.js` builds `dist/SemanticModelOptimizer.exe` (about 90 MB, the console build), which contains Node and the tool, so it runs on a computer without Node. `node build-installer.js` then makes the windowed copy (`dist/app/`), `dist/SemanticModelOptimizer-cli.exe` and, with Inno Setup installed, the Setup. The console build is the command line (`SemanticModelOptimizer-cli.exe cli <folder> --check`) and can add the Power BI Desktop button (`SemanticModelOptimizer-cli.exe install-tool`, as administrator). The executables are not signed, so Windows may ask for confirmation the first time. Suggested descriptions need the Anthropic SDK and are not available from the executable unless `node_modules` sits next to it.
+- **Portable executable:** `node build-exe.js` builds `dist/SemanticModelOptimizer.exe` (about 90 MB, the console build), which contains Node and the tool, so it runs on a computer without Node. `node build-installer.js` then makes the windowed copy (`dist/app/`), `dist/SemanticModelOptimizer-cli.exe` and, with Inno Setup installed, the Setup. The console build is the command line (`SemanticModelOptimizer-cli.exe cli <folder> --check`) and can add the Power BI Desktop button (`SemanticModelOptimizer-cli.exe install-tool`, as administrator). The executables have no code-signing certificate, so Windows may ask for confirmation the first time; every release has a build provenance and checksums instead (see [For IT administrators](#for-it-administrators)). Suggested descriptions need the Anthropic SDK and are not available from the executable unless `node_modules` sits next to it.
 - **From Power BI Desktop:** `node install-external-tool.js` (in a terminal started as administrator) adds a *Semantic Model Optimizer* button to the **External Tools** ribbon. The button opens the tool on the file you have open: a Power BI project (`.pbip`) is loaded as a whole, so reports count and everything can be edited; for a `.pbix` only the model is read. `--remove` takes the button away again.
 - **Language:** the *Nederlands* / *English* button at the top right switches the interface. Labels, buttons, statuses and headings are translated; long explanations in dialogs stay in English.
 
@@ -259,6 +260,29 @@ Click a measure, column or table and choose *Edit*. You can change the name, the
 - Only the loaded reports count. The tool cannot see usage in other reports, Excel (Analyze in Excel), dashboards or external DAX queries.
 - A column that another query reads in Power Query counts as *Model only*. The tool recognises this by name, so an unusual M pattern can be missed.
 - The model inside a `.pbix` cannot be read; save as `.pbip` or `.pbit`.
+
+## For IT administrators
+
+Three ways to offer the tool, from least to most that runs on the computer:
+
+| | What runs | What it can do |
+|---|---|---|
+| **Web version** (GitHub Pages, or your own web server) | Static HTML, CSS and JavaScript in the browser | Read Power BI projects, .pbit, .pbix (report part), .vpax and model.bim; every analysis, check, diagram and export |
+| **From source** (`node serve.js`) | Node 18 or later, the code in this repository, no dependencies | Everything |
+| **Desktop app** (Setup or portable exe) | Node and the same code, packed into one executable | Everything |
+
+**Web version.** The page sets a Content Security Policy with `connect-src 'none'`: the browser itself refuses every request the page could make, so loaded files cannot leave the computer. It loads no fonts, scripts or anything else from elsewhere. To host it yourself, run `node build-web.js <folder>` and put that folder on any web server or SharePoint site that serves static files; it needs no server code. Settings (language, chosen rules) are kept in the browser's local storage.
+
+**Desktop app.**
+- **Where it comes from:** GitHub Actions builds every release from the public source in this repository; nobody builds it by hand. Each release has a signed build provenance and a `SHA256SUMS.txt`. Check a file with `gh attestation verify SemanticModelOptimizer-Setup.exe --repo janpaulatmatso/semantic-model-optimizer`, or compare `Get-FileHash` with the checksum. The files have no code-signing certificate.
+- **Network:** it listens on `127.0.0.1` only (port 5273, or `PORT`), never on the network. It connects outward only when a user asks for it:
+  - Analysis Services, a Power BI workspace (XMLA) or Power BI Desktop: through ADOMD.NET with the user's own Microsoft sign-in.
+  - Workspace scan and activity log: `api.powerbi.com` and `api.fabric.microsoft.com`, with the token of the Azure CLI (`az login`).
+  - Suggested descriptions (optional): `api.anthropic.com`, only with an Anthropic API key set and the Anthropic SDK installed; never from the executable on its own.
+  - There is no telemetry, no update check and no CDN.
+- **Disk:** it reads the folders and files a user opens. It writes only when a user changes, deletes or fixes something in a Power BI project: first a copy of each file into `smo-backup` next to the model, then the change. A change to a model on a server or in Power BI Desktop goes to that model, with the user's own rights.
+- **Needs:** for server connections, ADOMD.NET, which comes with DAX Studio, Tabular Editor or SQL Server Management Studio.
+- **Install silently:** `SemanticModelOptimizer-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS` (or `/CURRENTUSER`, which needs no administrator rights). It installs into `Program Files\Semantic Model Optimizer` (for one user: `%LOCALAPPDATA%\Programs\Semantic Model Optimizer`). Remove it with `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` in that folder. For Intune: package the Setup as a Win32 app with these commands; detection rule: `SemanticModelOptimizer.exe` exists in the install folder.
 
 ## Tests
 
