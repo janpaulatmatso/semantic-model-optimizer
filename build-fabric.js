@@ -83,6 +83,17 @@ display(pd.DataFrame(result["models"]))
 const REPORT = `
 print("SemanticModelOptimizer-cli.exe cli --export C:/SMO-Fabric --report-only --report-source " + SOURCE)
 `;
+const STOP_MD = `
+## Done
+
+When you run the notebook yourself, this stops the Spark session, so it does not stay open until Fabric ends it after 20 idle minutes with a timeout message. The results above stay. Scheduled runs and pipelines stop by themselves, so there it does nothing. To keep working in the session, skip this cell.
+`;
+const STOP = `
+ctx = notebookutils.runtime.context
+if ctx.get("isForInteractive") and not ctx.get("isReferenceRun"):
+    print("Done: the Spark session is stopped.")
+    notebookutils.session.stop()
+`;
 const INTRO = `
 # Semantic Model Optimizer in Fabric
 
@@ -134,6 +145,7 @@ function outputs(version) {
     '', t(PARAMS), '', bar, '# The tool. Nothing to set below this line.', bar, '',
     t(lib), '', '', bar, '# Run', bar, '', t(RUN), '', t(SHOW), '',
     '# the command that writes the Power BI report for this Lakehouse; run it once on your computer', t(REPORT), '',
+    '# done: when you run it yourself, stop the Spark session instead of leaving it to time out (scheduled runs stop by themselves)', t(STOP), '',
   ].join('\n');
   const lines = s => { const a = t(s).split('\n'); return a.map((l, i) => (i < a.length - 1 ? l + '\n' : l)); };
   const md = s => ({ cell_type: 'markdown', metadata: {}, source: lines(s) });
@@ -144,11 +156,11 @@ function outputs(version) {
     nbformat: 4, nbformat_minor: 4,
   }, null, 1) + '\n';
   const nb = notebook([md(INTRO), code(PARAMS, ['parameters']), md('## The tool\n\nThe analysis itself. Nothing to set here.'), code(lib),
-    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT)]);
+    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT), md(STOP_MD), code(STOP)]);
   // the same, split in two: the tool, which you replace on an update, and your settings, which you schedule
   const tool = notebook([md(TOOL_MD), code(lib)]);
   const run = notebook([md(RUN_MD), code(PARAMS, ['parameters']), md('## The tool\n\nLoads the notebook **' + TOOL + '** from this workspace.'), code('%run ' + TOOL),
-    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT)]);
+    md('## Check the models'), code(RUN), md('## What this run found'), code(SHOW), md(REPORT_MD), code(REPORT), md(STOP_MD), code(STOP)]);
   return { 'smo.py': library(), 'SemanticModelOptimizer.py': one, 'SemanticModelOptimizer.ipynb': nb, [TOOL + '.ipynb']: tool, 'SemanticModelOptimizer-Run.ipynb': run };
 }
 

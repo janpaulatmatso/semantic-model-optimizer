@@ -2421,3 +2421,9 @@ display(pd.DataFrame(result["models"]))
 
 # the command that writes the Power BI report for this Lakehouse; run it once on your computer
 print("SemanticModelOptimizer-cli.exe cli --export C:/SMO-Fabric --report-only --report-source " + SOURCE)
+
+# done: when you run it yourself, stop the Spark session instead of leaving it to time out (scheduled runs stop by themselves)
+ctx = notebookutils.runtime.context
+if ctx.get("isForInteractive") and not ctx.get("isReferenceRun"):
+    print("Done: the Spark session is stopped.")
+    notebookutils.session.stop()
