@@ -106,7 +106,8 @@ jobs:
         run: |
           node build-report.js --check
           node build-report.js --zip dist/SemanticModelOptimizer-Report.zip
-          unzip -l dist/SemanticModelOptimizer-Report.zip | grep -q "Semantic Model Optimizer/Semantic Model Optimizer.pbip"
+          unzip -l dist/SemanticModelOptimizer-Report.zip > report-zip.txt   # no pipe into grep -q: that ends unzip early (exit 141)
+          grep -q "Semantic Model Optimizer/Semantic Model Optimizer.pbip" report-zip.txt
 
       - name: Check the executable
         if: steps.changed.outputs.release == 'yes'
