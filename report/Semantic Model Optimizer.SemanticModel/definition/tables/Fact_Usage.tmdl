@@ -31,7 +31,7 @@ table Fact_Usage
 			        "@run", [@run]
 			    )
 			RETURN
-			    CALCULATE ( CALCULATE ( DISTINCTCOUNT ( Dim_Visual[Report] ), Fact_Usage ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    CALCULATE ( COUNTROWS ( SUMMARIZE ( Fact_Usage, Dim_Visual[Report] ) ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
 		formatString: #,0
 
 	column Key_Run

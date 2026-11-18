@@ -154,7 +154,7 @@ function tableDefs() {
       [key('Key_Object'), key('Key_Visual'), C('Role', 'string', { description: 'Where the field sits in the visual, for example Values, Category or Filters.' })], [
         Ms('Field uses', latest(count('Fact_Usage')), null, 'Fields in visuals and filters.'),
         Ms('Visuals', latest('DISTINCTCOUNT ( Fact_Usage[Key_Visual] )'), null, 'Visuals that use at least one field.'),
-        Ms('Reports using it', latest('CALCULATE ( DISTINCTCOUNT ( Dim_Visual[Report] ), Fact_Usage )'), null, 'Reports in which the measure or column is used.'),
+        Ms('Reports using it', latest('COUNTROWS ( SUMMARIZE ( Fact_Usage, Dim_Visual[Report] ) )'), null, 'Reports in which the measure or column is used.'),
       ]),
     facts('Fact_Dependency', 'One row per object that an object refers to directly, per run.', 'dependencies.csv',
       [key('Key_Object'), key('Key_Depends_on'), C('Dependency kind', 'string')], [
@@ -506,6 +506,21 @@ function lakehouseTables() {
   }));
 }
 
+/** A DAX query per visual of the report, with its columns and measures: the notebook runs them after each run, so
+ * Direct Lake has loaded what the report needs before anyone opens it. */
+function warmQueries() {
+  const out = new Set();
+  for (const p of pages()) for (const v of p.visuals) {
+    const fields = [];
+    for (const role of Object.values((v.visual.query && v.visual.query.queryState) || {})) for (const pr of role.projections) fields.push(pr.field);
+    const cols = fields.filter(f => f.Column).map(f => "'" + f.Column.Expression.SourceRef.Entity + "'[" + f.Column.Property + ']');
+    const meas = fields.filter(f => f.Measure).map((f, i) => '"m' + i + '", [' + f.Measure.Property + ']');
+    if (!cols.length && !meas.length) continue;
+    out.add(cols.length ? 'EVALUATE TOPN ( 501, SUMMARIZECOLUMNS ( ' + cols.concat(meas).join(', ') + ' ) )' : 'EVALUATE ROW ( ' + meas.join(', ') + ' )');
+  }
+  return [...out];
+}
+
 /** The Direct Lake model and the report on it, for the notebook to create in Fabric (no .platform files: those are
  * for Git). The report refers to its model with definition.pbir, which the notebook writes once the model exists. */
 function directLakeFiles(server, database) {
@@ -603,5 +618,5 @@ function exportProject(folder, proj, source, version, opts) {
   return writeRun(folder, tables, version, opts);
 }
 
-return { runTables, withRun, validTables, projectFiles, writeRun, writeReport, exportProject, ruleKey, lakehouseTables, directLakeFiles, deltaColumn, NAME };
+return { runTables, withRun, validTables, projectFiles, writeRun, writeReport, exportProject, ruleKey, lakehouseTables, directLakeFiles, warmQueries, deltaColumn, NAME };
 });

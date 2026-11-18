@@ -29,7 +29,7 @@ function library() {
   const report = Object.fromEntries(P.directLakeFiles('{{SQL_SERVER}}', '{{SQL_DATABASE}}').map(f => [f.path, f.text]));
   return src.replace(/(# RULES-BEGIN[^\n]*\n)[\s\S]*?(# RULES-END)/, (m, a, b) => a + 'RULES = [\n' + rules + '\n]\n' + b)
     .replace(/(# LAKEHOUSE-BEGIN[^\n]*\n)[\s\S]*?(# LAKEHOUSE-END)/, (m, a, b) => a + 'LAKEHOUSE_TABLES = [\n' + tables.replace(/\bnull\b/g, 'None').replace(/\btrue\b/g, 'True').replace(/\bfalse\b/g, 'False') + '\n]\n' +
-      'DIRECT_LAKE_FILES = ' + JSON.stringify(report, null, 1) + '\n' + b);
+      'DIRECT_LAKE_FILES = ' + JSON.stringify(report, null, 1) + '\n' + 'WARM_QUERIES = ' + JSON.stringify(P.warmQueries(), null, 1) + '\n' + b);
 }
 
 const PARAMS = `

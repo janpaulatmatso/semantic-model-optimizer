@@ -836,7 +836,11 @@ test('Lakehouse tables: the notebook creates the Direct Lake model and report on
   const fab = 'https://api.fabric.microsoft.com/v1', pbi = 'https://api.powerbi.com/v1.0/myorg';
   const ok = (body, status) => ({ status: status || 200, body });
   const lake = { ['GET ' + fab + '/workspaces/w1/lakehouses/l1']: ok({ id: 'l1', properties: { sqlEndpointProperties: { connectionString: 'abc.datawarehouse.fabric.microsoft.com', id: 'sql1', provisioningStatus: 'Success' } } }),
-    ['POST ' + fab + '/workspaces/w1/sqlEndpoints/sql1/refreshMetadata']: ok({ value: [] }) };
+    ['POST ' + fab + '/workspaces/w1/sqlEndpoints/sql1/refreshMetadata']: ok({ value: [] }),
+    // after the refresh, the queries of the report load Direct Lake into memory
+    ['GET ' + pbi + '/groups/w1/datasets/m1/refreshes?$top=1']: ok({ value: [{ status: 'Completed' }] }),
+    ['POST ' + pbi + '/groups/w1/datasets/m1/executeQueries']: ok({ results: [{ tables: [{ rows: [] }] }] }) };
+  const stamp = 'Results of Semantic Model Optimizer, read from the smo_ tables in the Lakehouse. Version dev.';
   const run = responses => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-dl-'));
     fs.writeFileSync(path.join(tmp, 'responses.json'), JSON.stringify(responses));
@@ -854,7 +858,10 @@ test('Lakehouse tables: the notebook creates the Direct Lake model and report on
   }, lake));
   if (!first) return;
   assert.deepEqual(first.result, { model: 'm1', created: true });
-  assert.match(first.log.join('\n'), /model and report created/);
+  assert.match(first.log.join('\n'), /model and report created[\s\S]*loaded into memory for the report/);
+  const warmed = first.sent.filter(s => s.call.endsWith('/executeQueries')).map(s => JSON.parse(s.body).queries[0].query);
+  assert.deepEqual(warmed, require('../powerbi.js').warmQueries(), 'every visual of the report is loaded once');
+  assert.equal(JSON.parse(first.sent.find(s => s.call === 'POST ' + fab + '/workspaces/w1/semanticModels').body).description, stamp);
   const model = decode(first.sent.find(s => s.call === 'POST ' + fab + '/workspaces/w1/semanticModels').body);
   assert.match(model['definition/expressions.tmdl'], /Sql\.Database\("abc\.datawarehouse\.fabric\.microsoft\.com", "sql1"\)/);
   assert.ok(model['definition.pbism'] && model['definition/model.tmdl'] && model['definition/tables/Fact_Object.tmdl']);
@@ -866,12 +873,25 @@ test('Lakehouse tables: the notebook creates the Direct Lake model and report on
 
   // after that: the model is there, so it is only refreshed, and the report is left alone
   const existing = {
-    ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }),
+    ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)', description: stamp }] }),
     ['POST ' + pbi + '/groups/w1/datasets/m1/refreshes']: ok('', 202),
   };
   const again = run(Object.assign({ ['GET ' + fab + '/workspaces/w1/reports']: ok({ value: [{ id: 'r1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }) }, existing, lake));
   assert.deepEqual(again.result, { model: 'm1', created: false });
-  assert.ok(!again.sent.some(s => /\/reports$|semanticModels$/.test(s.call) && s.call.startsWith('POST')));
+  assert.ok(!again.sent.some(s => /\/reports$|semanticModels$|updateDefinition$/.test(s.call) && s.call.startsWith('POST')));
+  // a model of an older version of the tool gets this version's definition (the faster measures), keeping its id
+  const older = run(Object.assign({}, existing, lake, {
+    ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)', description: 'Results of Semantic Model Optimizer, read from the smo_ tables in the Lakehouse.' }] }),
+    ['GET ' + fab + '/workspaces/w1/reports']: ok({ value: [{ id: 'r1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels/m1/updateDefinition']: ok({}),
+    ['PATCH ' + fab + '/workspaces/w1/semanticModels/m1']: ok({}),
+  }));
+  assert.deepEqual(older.result, { model: 'm1', created: false, updated: true });
+  const updated = decode(older.sent.find(s => s.call.endsWith('/updateDefinition')).body);
+  assert.match(updated['definition/tables/Fact_Usage.tmdl'], /COUNTROWS \( SUMMARIZE \( Fact_Usage, Dim_Visual\[Report\] \) \)/);
+  assert.equal(JSON.parse(older.sent.find(s => s.call.startsWith('PATCH')).body).description, stamp);
+  const order = older.sent.map(s => s.call.replace(/^.*\/(?=[^/]+$)/, ''));
+  assert.ok(order.indexOf('updateDefinition') < order.indexOf('refreshes'), 'the new definition first, then the refresh');
   // a report you deleted comes back on the existing model; the model is not created again
   const back = run(Object.assign({ ['GET ' + fab + '/workspaces/w1/reports']: ok({ value: [] }), ['POST ' + fab + '/workspaces/w1/reports']: ok({ id: 'r2' }, 201) }, existing, lake));
   assert.deepEqual(back.result, { model: 'm1', created: false, report: true });
