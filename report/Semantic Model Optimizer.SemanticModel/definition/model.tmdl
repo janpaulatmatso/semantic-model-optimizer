@@ -9,15 +9,17 @@ model Model
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ExportFolder","LoadCsv","Fact_Object","Fact_Usage","Fact_Dependency","Fact_Finding","Dim_Run","Dim_Date","Dim_Object","Dim_Dependency","Dim_Visual","Dim_Rule"]
+annotation PBI_QueryOrder = ["ExportFolder","LoadCsv","Fact_Object","Fact_Usage","Fact_Dependency","Fact_Finding","Fact_Bus","Dim_Run","Dim_Date","Dim_Object","Dim_Dimension","Dim_Dependency","Dim_Visual","Dim_Rule"]
 
 ref table Fact_Object
 ref table Fact_Usage
 ref table Fact_Dependency
 ref table Fact_Finding
+ref table Fact_Bus
 ref table Dim_Run
 ref table Dim_Date
 ref table Dim_Object
+ref table Dim_Dimension
 ref table Dim_Dependency
 ref table Dim_Visual
 ref table Dim_Rule

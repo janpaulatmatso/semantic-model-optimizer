@@ -1,6 +1,7 @@
 /// One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.
 table Dim_Object
 
+	/// The object (table, column, measure or function) in this run. Relates to Dim_Object; -1 is the model as a whole.
 	column Key_Object
 		dataType: int64
 		isHidden
@@ -21,16 +22,19 @@ table Dim_Object
 		summarizeBy: none
 		sourceColumn: Object type
 
+	/// What the object is in more detail: table, calculated table, column, calculated column, measure, report measure, function, or missing.
 	column Kind
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Kind
 
+	/// The table the object is in; for a table its own name.
 	column Table
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Table
 
+	/// The name of the object.
 	column Name
 		dataType: string
 		summarizeBy: none
@@ -49,6 +53,7 @@ table Dim_Object
 		sourceColumn: Status
 		sortByColumn: 'Status order'
 
+	/// Sorts Status.
 	column 'Status order'
 		dataType: int64
 		isHidden
@@ -56,31 +61,37 @@ table Dim_Object
 		summarizeBy: none
 		sourceColumn: Status order
 
+	/// Yes when the object is hidden in the model.
 	column Hidden
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Hidden
 
+	/// Yes when the formula refers to something that does not exist, or depends on such a formula.
 	column Broken
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Broken
 
+	/// The data type of a column.
 	column 'Data type'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Data type
 
+	/// The display folder of a measure or column.
 	column 'Display folder'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Display folder
 
+	/// The description in the model.
 	column Description
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Description
 
+	/// The DAX of a measure, calculated column or calculated table.
 	column Expression
 		dataType: string
 		summarizeBy: none
@@ -96,7 +107,7 @@ table Dim_Object
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("objects.csv"),
+				    Source = LoadCsv("objects.csv", {"Key_Object", "Object id", "Object type", "Kind", "Table", "Name", "Label", "Status", "Status order", "Hidden", "Broken", "Data type", "Display folder", "Description", "Expression", "Report"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Object", "Object id", "Object type", "Kind", "Table", "Name", "Label", "Status", "Status order", "Hidden", "Broken", "Data type", "Display folder", "Description", "Expression", "Report"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Object", Int64.Type}, {"Object id", type text}, {"Object type", type text}, {"Kind", type text}, {"Table", type text}, {"Name", type text}, {"Label", type text}, {"Status", type text}, {"Status order", Int64.Type}, {"Hidden", type text}, {"Broken", type text}, {"Data type", type text}, {"Display folder", type text}, {"Description", type text}, {"Expression", type text}, {"Report", type text}}, "en-US"),
 				    WithNone = Table.InsertRows(Typed, 0, {[#"Key_Object" = -1, #"Object id" = "", #"Object type" = "Model", #"Kind" = "model", #"Table" = "", #"Name" = "(whole model)", #"Label" = "(whole model)", #"Status" = "(none)", #"Status order" = 9, #"Hidden" = "", #"Broken" = "", #"Data type" = "", #"Display folder" = "", #"Description" = "", #"Expression" = "", #"Report" = ""]})

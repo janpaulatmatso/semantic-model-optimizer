@@ -184,6 +184,7 @@ table Fact_Object
 			    CALCULATE ( CALCULATE ( SUM ( Fact_Object[Size] ), Dim_Object[Object type] = "Column", Dim_Object[Status] = "Unused" ), TREATAS ( _runs, Dim_Run[Key_Run] ) ) / 1000000
 		formatString: #,0.0
 
+	/// The run: one number per export. Relates to Dim_Run.
 	column Key_Run
 		dataType: int64
 		isHidden
@@ -192,6 +193,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Key_Run
 
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
 	column Key_Date
 		dataType: int64
 		isHidden
@@ -200,6 +202,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Key_Date
 
+	/// The object (table, column, measure or function) in this run. Relates to Dim_Object.
 	column Key_Object
 		dataType: int64
 		isHidden
@@ -208,6 +211,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Key_Object
 
+	/// How often the object is a field in a visual or filter. The measure Uses in reports adds these up for the latest run.
 	column 'Report uses'
 		dataType: int64
 		isHidden
@@ -215,6 +219,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Report uses
 
+	/// How many objects this object refers to directly.
 	column 'Depends on'
 		dataType: int64
 		isHidden
@@ -222,6 +227,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Depends on
 
+	/// How many objects refer to this object directly. The measure Used by objects adds these up for the latest run.
 	column 'Used by'
 		dataType: int64
 		isHidden
@@ -229,6 +235,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Used by
 
+	/// Rows of the table, or of the table the column is in. Only when the run had sizes.
 	column Rows
 		dataType: int64
 		isHidden
@@ -236,6 +243,7 @@ table Fact_Object
 		summarizeBy: none
 		sourceColumn: Rows
 
+	/// Distinct values in the column. Only when the run had sizes.
 	column 'Distinct values'
 		dataType: int64
 		isHidden
@@ -255,7 +263,7 @@ table Fact_Object
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("objects.csv"),
+				    Source = LoadCsv("objects.csv", {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
 				    Kept = Table.SelectRows(Source, each [Object type] <> "Missing"),
 				    Picked = Table.SelectColumns(Kept, {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Report uses", Int64.Type}, {"Depends on", Int64.Type}, {"Used by", Int64.Type}, {"Rows", Int64.Type}, {"Distinct values", Int64.Type}, {"Size", Int64.Type}}, "en-US")

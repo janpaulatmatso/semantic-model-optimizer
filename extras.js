@@ -315,7 +315,7 @@
       App.store.set('smo.pbiFolder', folder);
       const a = state.analysis, m = model();
       const source = state.loadedPath || (state.xmla ? state.xmla.server + (state.xmla.database ? ' / ' + state.xmla.database : '') : m.name);
-      const tables = SMOPowerBI.runTables(a, state.checks, { run: 1, now: new Date(), model: m.name, source, reports: a.stats.reportCount, visuals: a.stats.visuals });
+      const tables = SMOPowerBI.runTables(a, state.checks, { run: 1, now: new Date(), model: m.name, source, reports: a.stats.reportCount, visuals: a.stats.visuals, bus: SMO.busMatrix(m.model, a) });
       out.innerHTML = '<p class="small">Writing…</p>';
       const r = await busy(() => App.apiPost('api/powerbi', { folder, tables }));
       if (r.error) { out.innerHTML = `<p class="err">${esc(r.error)}</p>`; return; }

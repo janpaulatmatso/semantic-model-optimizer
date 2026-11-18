@@ -38,7 +38,7 @@ const dateKey = d => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getD
 
 /**
  * The rows of one run.
- * info: {run, now: Date, model: name, source, version, reports: number, visuals: number}
+ * info: {run, now: Date, model: name, source, version, reports: number, visuals: number, bus: SMO.busMatrix(model, analysis)}
  * → {name: {head, rows}} for runs, objects, usage, dependencies, findings and rules
  */
 function runTables(analysis, checks, info) {
@@ -92,9 +92,16 @@ function runTables(analysis, checks, info) {
     for (const it of r.items) findings.rows.push([run, dk, (it.id && key.get(it.id)) || -1, ruleKey(r.id), [it.id ? '' : it.label, it.detail].filter(Boolean).join(' — ')]);
   }
 
+  // the enterprise data warehouse bus matrix: each business process (fact table) with the dimensions it reaches
+  const bus = { head: ['Key_Run', 'Key_Date', 'Key_Object', 'Key_Dimension', 'Mark', 'Relationships', 'Active', 'Through', 'Conformed'], rows: [] };
+  if (info.bus) for (const f of info.bus.facts) for (const d of info.bus.dims) {
+    const c = info.bus.cell(f.name, d.name), kf = key.get('T|' + f.name), kd = key.get('T|' + d.name);
+    if (c && kf && kd) bus.rows.push([run, dk, kf, kd, SMO.busMark(c), c.direct, yn(c.active), c.via || '', yn(d.conformed)]);
+  }
+
   const runs = { head: ['Key_Run', 'Run at', 'Date', 'Model', 'Source', 'Tool version', 'Reports', 'Visuals', 'Has sizes'],
     rows: [[run, stamp(now), stamp(now).slice(0, 10), info.model, info.source || '', info.version || '', info.reports || 0, info.visuals || 0, yn(analysis.stats.hasStats)]] };
-  return { runs, objects, visuals, usage, dependencies, findings, rules };
+  return { runs, objects, visuals, usage, dependencies, findings, rules, bus };
 }
 
 // ---------------------------------------------------------------- the Power BI project
@@ -127,7 +134,77 @@ const OBJECT_COLS = [
   C('Description', 'string'), C('Expression', 'string'), C('Report', 'string', { description: 'For a measure made in a report: that report.' }),
 ];
 
+/** What each column means; columns with the same name mean the same in every table. */
+const DESCRIPTIONS = {
+  Key_Run: 'The run: one number per export. Relates to Dim_Run.',
+  Key_Date: 'The day of the run, as yyyymmdd. Relates to Dim_Date.',
+  Key_Object: 'The object (table, column, measure or function) in this run. Relates to Dim_Object; -1 is the model as a whole.',
+  Key_Visual: 'The visual in this run. Relates to Dim_Visual.',
+  Key_Rule: 'The rule; the same number in every run. Relates to Dim_Rule.',
+  Key_Depends_on: 'The object referred to, in this run. Relates to Dim_Dependency.',
+  Key_Dimension: 'The dimension table, in this run. Relates to Dim_Dimension.',
+  'Fact_Object[Key_Object]': 'The object (table, column, measure or function) in this run. Relates to Dim_Object.',
+  'Fact_Object[Report uses]': 'How often the object is a field in a visual or filter. The measure Uses in reports adds these up for the latest run.',
+  'Fact_Object[Depends on]': 'How many objects this object refers to directly.',
+  'Fact_Object[Used by]': 'How many objects refer to this object directly. The measure Used by objects adds these up for the latest run.',
+  'Fact_Object[Rows]': 'Rows of the table, or of the table the column is in. Only when the run had sizes.',
+  'Fact_Object[Distinct values]': 'Distinct values in the column. Only when the run had sizes.',
+  'Fact_Dependency[Dependency kind]': 'How the one refers to the other: formula, sort-by column, or the expression of a calculated table.',
+  'Fact_Finding[Detail]': 'What the rule found, in words: the reference, relationship or value it is about.',
+  'Fact_Bus[Key_Object]': 'The business process: a fact table, in this run. Relates to Dim_Object.',
+  'Fact_Bus[Mark]': 'X related, X×3 three relationships to the same dimension (role-playing), ○ only through an inactive relationship, · reached through another dimension.',
+  'Fact_Bus[Relationships]': 'How many relationships the fact table has to the dimension; 0 when it is reached through another dimension.',
+  'Fact_Bus[Active]': 'Yes when at least one of those relationships is active.',
+  'Fact_Bus[Through]': 'The dimension through which this one is reached (a snowflake); empty when related directly.',
+  'Fact_Bus[Conformed]': 'Yes when the dimension is used by more than one business process of the model: a conformed dimension.',
+  'Dim_Run[Run at]': 'When the run was made, in the time of the machine that made it.',
+  'Dim_Run[Date]': 'The day of the run.',
+  'Dim_Run[Model]': 'The model the run is about: workspace / model, or the name of the project.',
+  'Dim_Run[Source]': 'Where the model was read from: a folder, a server or a workspace.',
+  'Dim_Run[Tool version]': 'The version of Semantic Model Optimizer that made the run.',
+  'Dim_Run[Reports]': 'How many reports were read with the model.',
+  'Dim_Run[Visuals]': 'How many visuals those reports have.',
+  'Dim_Run[Has sizes]': 'Yes when the run has rows and sizes in memory, from a .vpax or Power BI Desktop.',
+  'Dim_Date[Date]': 'The day.',
+  'Dim_Date[Year]': 'The year.',
+  'Dim_Date[Month]': 'The month, as yyyy-mm.',
+  'Dim_Object[Kind]': 'What the object is in more detail: table, calculated table, column, calculated column, measure, report measure, function, or missing.',
+  'Dim_Object[Table]': 'The table the object is in; for a table its own name.',
+  'Dim_Object[Name]': 'The name of the object.',
+  'Dim_Object[Status order]': 'Sorts Status.',
+  'Dim_Object[Hidden]': 'Yes when the object is hidden in the model.',
+  'Dim_Object[Broken]': 'Yes when the formula refers to something that does not exist, or depends on such a formula.',
+  'Dim_Object[Data type]': 'The data type of a column.',
+  'Dim_Object[Display folder]': 'The display folder of a measure or column.',
+  'Dim_Object[Description]': 'The description in the model.',
+  'Dim_Object[Expression]': 'The DAX of a measure, calculated column or calculated table.',
+  'Dim_Dependency[Depends on]': 'The object referred to: Table[Column], [Measure] or Table.',
+  'Dim_Dependency[Depends on type]': 'Table, Column, Measure or Function.',
+  'Dim_Dependency[Depends on kind]': 'What the object referred to is in more detail, such as calculated column or report measure.',
+  'Dim_Dependency[Depends on table]': 'The table of the object referred to.',
+  'Dim_Dependency[Depends on status]': 'Whether the object referred to is used: In report, Used indirectly, Model only or Unused.',
+  'Dim_Dependency[Depends on status order]': 'Sorts Depends on status.',
+  'Dim_Dimension[Dimension]': 'The name of the dimension table.',
+  'Dim_Dimension[Dimension description]': 'The description of the dimension table in the model.',
+  'Dim_Visual[Report]': 'The report.',
+  'Dim_Visual[Page]': 'The page of the report.',
+  'Dim_Visual[Visual]': 'The title of the visual, or its type when it has no title.',
+  'Dim_Visual[Visual type]': 'The kind of visual, such as tableEx, barChart or slicer.',
+  'Dim_Visual[Visual id]': 'The name of the visual in the report definition.',
+  'Dim_Rule[Rule id]': 'The id of the rule, as used in smo.config.json.',
+  'Dim_Rule[Rule]': 'The name of the rule.',
+  'Dim_Rule[Group]': 'General (best practices) or Kimball (dimensional modelling).',
+  'Dim_Rule[Severity]': 'Error, Warning or Note.',
+  'Dim_Rule[Severity order]': 'Sorts Severity.',
+  'Dim_Rule[Help]': 'Why the rule matters and what to do about it.',
+};
+const describe = (table, column) => DESCRIPTIONS[table + '[' + column + ']'] || DESCRIPTIONS[column] || '';
+
 function tableDefs() {
+  return tableList().map(t => Object.assign({}, t, { cols: t.cols.map(c => (c.description ? c : Object.assign({}, c, { description: describe(t.name, c.name) }))) }));
+}
+
+function tableList() {
   const facts = (name, grain, file, cols, measures, filter) => ({
     name, description: grain, file, cols: [key('Key_Run'), key('Key_Date')].concat(cols), measures, filter,
   });
@@ -167,13 +244,23 @@ function tableDefs() {
         Ms('Warnings', zero(latest(count('Fact_Finding', 'Dim_Rule[Severity] = "Warning"'))), null, 'Findings that are probably wrong or costly.'),
         Ms('Notes', zero(latest(count('Fact_Finding', 'Dim_Rule[Severity] = "Note"'))), null, 'Findings worth a look.'),
       ]),
+    facts('Fact_Bus', 'One row per business process (fact table) and dimension it reaches, per run: the enterprise data warehouse bus matrix.', 'bus.csv',
+      [key('Key_Object'), key('Key_Dimension'), C('Mark', 'string'), C('Relationships', 'int64', { hidden: true }), C('Active', 'string', { hidden: true }),
+        C('Through', 'string'), C('Conformed', 'string')], [
+        Ms('Bus mark', latest('MAX ( Fact_Bus[Mark] )'), null, 'The mark in the bus matrix: X related, X×3 role-playing, ○ only inactive, · reached through another dimension.'),
+        Ms('Business processes', zero(latest('DISTINCTCOUNT ( Fact_Bus[Key_Object] )')), null, 'Fact tables: tables that only sit on the many side of relationships, plus bridge tables with measures.'),
+        Ms('Bus dimensions', zero(latest('DISTINCTCOUNT ( Fact_Bus[Key_Dimension] )')), null, 'Dimensions that business processes reach, directly or through another dimension.'),
+        Ms('Conformed dimensions', zero(latest('CALCULATE ( DISTINCTCOUNT ( Fact_Bus[Key_Dimension] ), Fact_Bus[Conformed] = "Yes" )')), null, 'Dimensions shared by more than one business process of the same model.'),
+      ]),
     { name: 'Dim_Run', description: 'One row per export: when, which model, from where.', file: 'runs.csv',
       cols: [key('Key_Run'), C('Run at', 'dateTime', { format: 'yyyy-mm-dd hh:nn' }), C('Date', 'date', { hidden: true }), C('Model', 'string'), C('Source', 'string'),
         C('Tool version', 'string'), C('Reports', 'int64'), C('Visuals', 'int64', { hidden: true }), C('Has sizes', 'string')] },
     { name: 'Dim_Date', description: 'One row per day from the first to the last run.', dateTable: true,
       cols: [key('Key_Date'), C('Date', 'date'), C('Year', 'int64'), C('Month', 'string')] },
     { name: 'Dim_Object', description: 'One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.', file: 'objects.csv', cols: OBJECT_COLS, unknown: true },
-    { name: 'Dim_Dependency', description: 'Dim_Object in the role "depends on": the object the other one refers to.', role: 'Dim_Object',
+    { name: 'Dim_Dimension', description: 'Dim_Object in the role "dimension": the dimension tables of the bus matrix.', role: 'Dim_Object', rename: DIMENSION_PAIRS,
+      cols: [key('Key_Dimension'), C('Dimension', 'string'), C('Dimension description', 'string')] },
+    { name: 'Dim_Dependency', description: 'Dim_Object in the role "depends on": the object the other one refers to.', role: 'Dim_Object', rename: ROLE_PAIRS,
       cols: [key('Key_Depends_on'), C('Depends on', 'string'), C('Depends on type', 'string'), C('Depends on kind', 'string'), C('Depends on table', 'string'),
         C('Depends on status', 'string', { sortBy: 'Depends on status order' }), C('Depends on status order', 'int64', { hidden: true })] },
     { name: 'Dim_Visual', description: 'One row per visual of a report, per run.', file: 'visuals.csv',
@@ -189,12 +276,15 @@ const RELATIONSHIPS = [
   ['Fact_Usage', 'Key_Run', 'Dim_Run'], ['Fact_Usage', 'Key_Date', 'Dim_Date'], ['Fact_Usage', 'Key_Object', 'Dim_Object'], ['Fact_Usage', 'Key_Visual', 'Dim_Visual'],
   ['Fact_Dependency', 'Key_Run', 'Dim_Run'], ['Fact_Dependency', 'Key_Date', 'Dim_Date'], ['Fact_Dependency', 'Key_Object', 'Dim_Object'], ['Fact_Dependency', 'Key_Depends_on', 'Dim_Dependency'],
   ['Fact_Finding', 'Key_Run', 'Dim_Run'], ['Fact_Finding', 'Key_Date', 'Dim_Date'], ['Fact_Finding', 'Key_Object', 'Dim_Object'], ['Fact_Finding', 'Key_Rule', 'Dim_Rule'],
+  ['Fact_Bus', 'Key_Run', 'Dim_Run'], ['Fact_Bus', 'Key_Date', 'Dim_Date'], ['Fact_Bus', 'Key_Object', 'Dim_Object'], ['Fact_Bus', 'Key_Dimension', 'Dim_Dimension'],
 ];
 
 /** Power Query for a table */
 /** Dim_Dependency is Dim_Object in the role "depends on": these columns, renamed */
 const ROLE_PAIRS = [['Key_Object', 'Key_Depends_on'], ['Label', 'Depends on'], ['Object type', 'Depends on type'], ['Kind', 'Depends on kind'], ['Table', 'Depends on table'],
   ['Status', 'Depends on status'], ['Status order', 'Depends on status order']];
+/** Dim_Dimension is Dim_Object in the role "dimension" of the bus matrix */
+const DIMENSION_PAIRS = [['Key_Object', 'Key_Dimension'], ['Name', 'Dimension'], ['Description', 'Dimension description']];
 /** the row -1 of Dim_Object, for findings about the model as a whole; other columns are empty */
 const NONE_ROW = { Key_Object: -1, 'Status order': 9, 'Object type': 'Model', Kind: 'model', Name: '(whole model)', Label: '(whole model)', Status: '(none)' };
 /** a column name as a column of a Delta table in the Lakehouse: lower case, no spaces (Direct Lake reads these) */
@@ -215,11 +305,11 @@ function source(t) {
       'in', '    Table.SelectColumns(WithMonth, ' + pick + ')'].join('\n');
   }
   if (t.role) {
-    const pairs = ROLE_PAIRS;
+    const pairs = t.rename;
     return ['let', '    Source = ' + t.role + ',', '    Picked = Table.SelectColumns(Source, {' + pairs.map(p => '"' + p[0] + '"').join(', ') + '}),',
       '    Renamed = Table.RenameColumns(Picked, {' + pairs.map(p => `{"${p[0]}", "${p[1]}"}`).join(', ') + '})', 'in', '    Renamed'].join('\n');
   }
-  const lines = ['let', `    Source = LoadCsv("${t.file}"),`];
+  const lines = ['let', `    Source = LoadCsv("${t.file}", ${pick}),`];
   let last = 'Source';
   if (t.filter) { lines.push(`    Kept = Table.SelectRows(${last}, each [${t.filter.column}] <> ${JSON.stringify(t.filter.not)}),`); last = 'Kept'; }
   lines.push(`    Picked = Table.SelectColumns(${last}, ${pick}),`, `    Typed = Table.TransformColumnTypes(Picked, ${types}, "en-US")` + (t.unknown || t.distinct ? ',' : ''));
@@ -305,12 +395,12 @@ function modelFiles(dataFolder, directLake) {
     '\tannotation PBI_ResultType = Text', '',
     '/// Reads one kind of CSV file from every run folder and puts the rows together.',
     'expression LoadCsv =', block([
-      '(name as text) as table =>',
+      '(name as text, columns as list) as table =>',
       'let',
       ...source,
       '    Files = Table.SelectRows(Source, each [Name] = name),',
       '    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),',
-      '    Combined = Table.Combine(Tables)',
+      '    Combined = if List.IsEmpty(Tables) then #table(columns, {}) else Table.Combine(Tables)',
       'in',
       '    Table.TransformColumns(Combined, {}, each if _ = "" then null else _)'].join('\n'), 2), '',
     '\tannotation PBI_ResultType = Function', ''].join('\n'));
@@ -361,6 +451,29 @@ const colorsOf = pairs => pairs.map(([f, color]) => ({ properties: fill(color), 
 const dropdown = { objects: { data: [{ properties: { mode: lit("'Dropdown'") } }], header: [{ properties: { show: lit('false') } }] } };
 const slicer = (id, x, y, w, h, f, title) => visual(id, 'slicer', x, y, w, h, { Values: [f] }, title, dropdown);
 const table = (id, x, y, w, h, fields, title) => visual(id, 'tableEx', x, y, w, h, { Values: fields }, title);
+/** a matrix, opened to its lowest level of rows, without totals */
+function matrix(id, x, y, w, h, rows, columns, values, title) {
+  const v = visual(id, 'pivotTable', x, y, w, h, { Rows: rows, Columns: columns, Values: values }, title, { objects: {
+    subTotals: [{ properties: { rowSubtotals: lit('false'), columnSubtotals: lit('false') } }],
+    columnFormatting: values.map(f => ({ properties: { alignment: lit("'Center'") }, selector: { metadata: fieldOf(f).queryRef } })),
+  } });
+  // every level of the rows and columns is shown (drilled down), not only the first
+  for (const role of ['Rows', 'Columns']) for (const pr of v.visual.query.queryState[role].projections) pr.active = true;
+  v.visual.expansionStates = [{ roles: ['Rows'], levels: rows.map((f, i) => Object.assign({ queryRefs: [fieldOf(f).queryRef] }, i === rows.length - 1 ? { isCollapsed: true } : {}, { isPinned: true })), root: { isToggled: true } }];
+  return v;
+}
+/** a few lines of text, such as a legend */
+function note(id, x, y, w, h, lines) {
+  const run = (value, style) => ({ value, textStyle: Object.assign({ fontFamily: 'Segoe UI', fontSize: '9pt', color: SOFT }, style || {}) });
+  return {
+    $schema: SCHEMA + 'visualContainer/2.4.0/schema.json', name: id, position: { x, y, z: 0, height: h, width: w, tabOrder: 0 },
+    visual: {
+      visualType: 'textbox',
+      objects: { general: [{ properties: { paragraphs: lines.map(l => ({ textRuns: l.map(([value, bold]) => run(value, bold ? { fontWeight: 'bold', color: INK } : null)) })) } }] },
+      visualContainerObjects: { title: [{ properties: { show: lit('false') } }], visualHeader: [{ properties: { show: lit('false') } }] },
+    },
+  };
+}
 
 /** The header bar of a page: the name of the tool, and the page. */
 function header(page) {
@@ -420,6 +533,15 @@ function pages() {
     page('findings', 'Findings', [
       ...filterRow([fMODEL, ['Severity', 'Dim_Rule', 'Severity'], ['Group', 'Dim_Rule', 'Group'], ['Rule', 'Dim_Rule', 'Rule'], fTABLE]),
       table('list', MARGIN, TOP, full, body, [Cl('Dim_Rule', 'Severity'), Cl('Dim_Rule', 'Rule'), Cl(O, 'Label'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings')]),
+    // the enterprise data warehouse bus matrix (Kimball): business processes down, the dimensions they reach across
+    page('bus', 'Bus matrix', [
+      ...filterRow([fMODEL, ['Business process', O, 'Name'], ['Dimension', 'Dim_Dimension', 'Dimension'], ['Conformed', 'Fact_Bus', 'Conformed']]),
+      ...['Business processes', 'Bus dimensions', 'Conformed dimensions'].map((p, i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), cardH, { Values: [M('Fact_Bus', p)] }, p)),
+      note('legend', Math.round(MARGIN + 3 * (cardW + GAP)), TOP, Math.round(full - 3 * (cardW + GAP)), cardH, [
+        [['X', true], [' related    '], ['X×2', true], [' twice (role-playing)    '], ['○', true], [' only inactive    '], ['·', true], [' through another dimension']],
+        [['Business process: a fact table. Conformed: used by more than one business process.']],
+      ]),
+      matrix('matrix', MARGIN, TOP + cardH + GAP, full, PAGE_H - TOP - cardH - GAP - MARGIN, [Cl('Dim_Run', 'Model'), Cl(O, 'Name')], [Cl('Dim_Dimension', 'Dimension')], [M('Fact_Bus', 'Bus mark')], 'Business processes and their dimensions')]),
     page('lineage', 'Lineage', [
       ...filterRow([fMODEL, fTYPE, fTABLE, ['Object', O, 'Label'], ['Depends on', D, 'Depends on']]),
       table('list', MARGIN, TOP, full, body, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(D, 'Depends on'), Cl(D, 'Depends on kind'), Cl(D, 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')]),
@@ -469,6 +591,12 @@ const THEME = {
       padding: [{ top: 4, bottom: 4, left: 12, right: 12 }],
     } },
     textbox: { '*': { background: [{ show: false }] } },
+    pivotTable: { '*': {
+      grid: [{ gridVertical: true, gridVerticalColor: solid(LINE), gridVerticalWeight: 1, gridHorizontal: true, gridHorizontalColor: solid(LINE), gridHorizontalWeight: 1, outlineColor: solid(LINE), rowPadding: 3 }],
+      columnHeaders: [{ fontColor: solid(INK), backColor: solid('#FFFFFF'), fontSize: 9, fontFamily: 'Segoe UI Semibold', outline: 'BottomOnly', alignment: 'Center', wordWrap: true }],
+      rowHeaders: [{ fontColor: solid(INK), backColor: solid('#FFFFFF'), fontSize: 9, outline: 'None', stepped: false }],
+      values: [{ fontColorPrimary: solid(INK), fontColorSecondary: solid(INK), backColorPrimary: solid('#FFFFFF'), backColorSecondary: solid('#FFFFFF'), fontSize: 10, outline: 'None' }],
+    } },
   },
 };
 
@@ -502,7 +630,7 @@ function lakehouseTables() {
     name: t.name, table: deltaTable(t.name), file: t.file || null, from: t.role || null, dates: !!t.dateTable,
     columns: t.cols.map(c => ({ name: c.name, column: deltaColumn(c.name), type: c.dataType })),
     exclude: t.filter || null, distinct: t.distinct || null, none: t.unknown ? NONE_ROW : null,
-    rename: t.role ? ROLE_PAIRS : null,
+    rename: t.rename || null,
   }));
 }
 
@@ -540,7 +668,7 @@ function projectFiles(dataFolder) {
 
 // ---------------------------------------------------------------- writing
 
-const TABLES = ['runs', 'objects', 'visuals', 'usage', 'dependencies', 'findings', 'rules'];
+const TABLES = ['runs', 'objects', 'visuals', 'usage', 'dependencies', 'findings', 'rules', 'bus'];
 
 /** The same tables with another run number: Key_Run, and the keys made from it. */
 function withRun(t, run) {
@@ -614,7 +742,7 @@ function exportProject(folder, proj, source, version, opts) {
   const model = proj.models[0];
   const analysis = SMO.applyStats(SMO.analyze(model.model, proj.reports, { noModel: !!model.missing }), proj.stats || null);
   const checks = SMO.checkRules(model.model, analysis, proj.config, null, proj.design);
-  const tables = runTables(analysis, checks, { run: 1, model: (opts && opts.modelName) || model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals });
+  const tables = runTables(analysis, checks, { run: 1, model: (opts && opts.modelName) || model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals, bus: SMO.busMatrix(model.model, analysis) });
   return writeRun(folder, tables, version, opts);
 }
 

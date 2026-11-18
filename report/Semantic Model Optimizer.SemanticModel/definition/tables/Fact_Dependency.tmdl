@@ -12,6 +12,7 @@ table Fact_Dependency
 			    CALCULATE ( COUNTROWS ( Fact_Dependency ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
 		formatString: #,0
 
+	/// The run: one number per export. Relates to Dim_Run.
 	column Key_Run
 		dataType: int64
 		isHidden
@@ -20,6 +21,7 @@ table Fact_Dependency
 		summarizeBy: none
 		sourceColumn: Key_Run
 
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
 	column Key_Date
 		dataType: int64
 		isHidden
@@ -28,6 +30,7 @@ table Fact_Dependency
 		summarizeBy: none
 		sourceColumn: Key_Date
 
+	/// The object (table, column, measure or function) in this run. Relates to Dim_Object; -1 is the model as a whole.
 	column Key_Object
 		dataType: int64
 		isHidden
@@ -36,6 +39,7 @@ table Fact_Dependency
 		summarizeBy: none
 		sourceColumn: Key_Object
 
+	/// The object referred to, in this run. Relates to Dim_Dependency.
 	column Key_Depends_on
 		dataType: int64
 		isHidden
@@ -44,6 +48,7 @@ table Fact_Dependency
 		summarizeBy: none
 		sourceColumn: Key_Depends_on
 
+	/// How the one refers to the other: formula, sort-by column, or the expression of a calculated table.
 	column 'Dependency kind'
 		dataType: string
 		summarizeBy: none
@@ -53,7 +58,7 @@ table Fact_Dependency
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("dependencies.csv"),
+				    Source = LoadCsv("dependencies.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Depends_on", "Dependency kind"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Depends_on", "Dependency kind"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Depends_on", Int64.Type}, {"Dependency kind", type text}}, "en-US")
 				in

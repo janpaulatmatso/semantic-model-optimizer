@@ -1,0 +1,34 @@
+/// Dim_Object in the role "dimension": the dimension tables of the bus matrix.
+table Dim_Dimension
+
+	/// The dimension table, in this run. Relates to Dim_Dimension.
+	column Key_Dimension
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Dimension
+
+	/// The name of the dimension table.
+	column Dimension
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Dimension
+
+	/// The description of the dimension table in the model.
+	column 'Dimension description'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Dimension description
+
+	partition Dim_Dimension = m
+		mode: import
+		source =
+				let
+				    Source = Dim_Object,
+				    Picked = Table.SelectColumns(Source, {"Key_Object", "Name", "Description"}),
+				    Renamed = Table.RenameColumns(Picked, {{"Key_Object", "Key_Dimension"}, {"Name", "Dimension"}, {"Description", "Dimension description"}})
+				in
+				    Renamed
+
+	annotation PBI_ResultType = Table

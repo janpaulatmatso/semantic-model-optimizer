@@ -284,6 +284,96 @@
           }
         ]
       }
+    },
+    "pivotTable": {
+      "*": {
+        "grid": [
+          {
+            "gridVertical": true,
+            "gridVerticalColor": {
+              "solid": {
+                "color": "#E3E3E3"
+              }
+            },
+            "gridVerticalWeight": 1,
+            "gridHorizontal": true,
+            "gridHorizontalColor": {
+              "solid": {
+                "color": "#E3E3E3"
+              }
+            },
+            "gridHorizontalWeight": 1,
+            "outlineColor": {
+              "solid": {
+                "color": "#E3E3E3"
+              }
+            },
+            "rowPadding": 3
+          }
+        ],
+        "columnHeaders": [
+          {
+            "fontColor": {
+              "solid": {
+                "color": "#333333"
+              }
+            },
+            "backColor": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "fontSize": 9,
+            "fontFamily": "Segoe UI Semibold",
+            "outline": "BottomOnly",
+            "alignment": "Center",
+            "wordWrap": true
+          }
+        ],
+        "rowHeaders": [
+          {
+            "fontColor": {
+              "solid": {
+                "color": "#333333"
+              }
+            },
+            "backColor": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "fontSize": 9,
+            "outline": "None",
+            "stepped": false
+          }
+        ],
+        "values": [
+          {
+            "fontColorPrimary": {
+              "solid": {
+                "color": "#333333"
+              }
+            },
+            "fontColorSecondary": {
+              "solid": {
+                "color": "#333333"
+              }
+            },
+            "backColorPrimary": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "backColorSecondary": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "fontSize": 10,
+            "outline": "None"
+          }
+        ]
+      }
     }
   }
 }

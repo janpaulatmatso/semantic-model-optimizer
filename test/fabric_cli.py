@@ -19,7 +19,8 @@ if mode == "tables":
     out, now, model, source, version = sys.argv[3:8]
     proj = smo.loadProject(files)
     analysis, checks = smo.analyzeProject(proj)
-    t = smo.runTables(analysis, checks, 1, datetime.datetime.strptime(now, "%Y-%m-%d %H:%M:%S"), model, source, version, len(proj["reports"]), analysis["stats"]["visuals"])
+    t = smo.runTables(analysis, checks, 1, datetime.datetime.strptime(now, "%Y-%m-%d %H:%M:%S"), model, source, version, len(proj["reports"]), analysis["stats"]["visuals"],
+                      smo.busMatrix(proj["models"][0]["model"], analysis))
     os.makedirs(out, exist_ok=True)
     for name in smo.TABLES:
         with open(os.path.join(out, name + ".csv"), "w", encoding="utf-8", errors="replace", newline="") as f:

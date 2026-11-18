@@ -1,0 +1,142 @@
+/// One row per business process (fact table) and dimension it reaches, per run: the enterprise data warehouse bus matrix.
+table Fact_Bus
+
+	/// The mark in the bus matrix: X related, X×3 role-playing, ○ only inactive, · reached through another dimension.
+	measure 'Bus mark' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( MAX ( Fact_Bus[Mark] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Fact tables: tables that only sit on the many side of relationships, plus bridge tables with measures.
+	measure 'Business processes' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( DISTINCTCOUNT ( Fact_Bus[Key_Object] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Dimensions that business processes reach, directly or through another dimension.
+	measure 'Bus dimensions' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( DISTINCTCOUNT ( Fact_Bus[Key_Dimension] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Dimensions shared by more than one business process of the same model.
+	measure 'Conformed dimensions' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( DISTINCTCOUNT ( Fact_Bus[Key_Dimension] ), Fact_Bus[Conformed] = "Yes" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// The run: one number per export. Relates to Dim_Run.
+	column Key_Run
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
+	column Key_Date
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	/// The business process: a fact table, in this run. Relates to Dim_Object.
+	column Key_Object
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	/// The dimension table, in this run. Relates to Dim_Dimension.
+	column Key_Dimension
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Dimension
+
+	/// X related, X×3 three relationships to the same dimension (role-playing), ○ only through an inactive relationship, · reached through another dimension.
+	column Mark
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Mark
+
+	/// How many relationships the fact table has to the dimension; 0 when it is reached through another dimension.
+	column Relationships
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Relationships
+
+	/// Yes when at least one of those relationships is active.
+	column Active
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: Active
+
+	/// The dimension through which this one is reached (a snowflake); empty when related directly.
+	column Through
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Through
+
+	/// Yes when the dimension is used by more than one business process of the model: a conformed dimension.
+	column Conformed
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Conformed
+
+	partition Fact_Bus = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("bus.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension", "Mark", "Relationships", "Active", "Through", "Conformed"}),
+				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension", "Mark", "Relationships", "Active", "Through", "Conformed"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Dimension", Int64.Type}, {"Mark", type text}, {"Relationships", Int64.Type}, {"Active", type text}, {"Through", type text}, {"Conformed", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

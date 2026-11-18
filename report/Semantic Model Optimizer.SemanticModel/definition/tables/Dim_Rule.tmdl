@@ -1,6 +1,7 @@
 /// One row per rule of the checks.
 table Dim_Rule
 
+	/// The rule; the same number in every run. Relates to Dim_Rule.
 	column Key_Rule
 		dataType: int64
 		isHidden
@@ -8,28 +9,33 @@ table Dim_Rule
 		summarizeBy: none
 		sourceColumn: Key_Rule
 
+	/// The id of the rule, as used in smo.config.json.
 	column 'Rule id'
 		dataType: string
 		isHidden
 		summarizeBy: none
 		sourceColumn: Rule id
 
+	/// The name of the rule.
 	column Rule
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Rule
 
+	/// General (best practices) or Kimball (dimensional modelling).
 	column Group
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Group
 
+	/// Error, Warning or Note.
 	column Severity
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Severity
 		sortByColumn: 'Severity order'
 
+	/// Sorts Severity.
 	column 'Severity order'
 		dataType: int64
 		isHidden
@@ -37,6 +43,7 @@ table Dim_Rule
 		summarizeBy: none
 		sourceColumn: Severity order
 
+	/// Why the rule matters and what to do about it.
 	column Help
 		dataType: string
 		summarizeBy: none
@@ -46,7 +53,7 @@ table Dim_Rule
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("rules.csv"),
+				    Source = LoadCsv("rules.csv", {"Key_Rule", "Rule id", "Rule", "Group", "Severity", "Severity order", "Help"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Rule", "Rule id", "Rule", "Group", "Severity", "Severity order", "Help"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Rule", Int64.Type}, {"Rule id", type text}, {"Rule", type text}, {"Group", type text}, {"Severity", type text}, {"Severity order", Int64.Type}, {"Help", type text}}, "en-US"),
 				    Once = Table.Distinct(Typed, {"Key_Rule"})

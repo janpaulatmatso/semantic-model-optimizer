@@ -34,6 +34,7 @@ table Fact_Usage
 			    CALCULATE ( COUNTROWS ( SUMMARIZE ( Fact_Usage, Dim_Visual[Report] ) ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
 		formatString: #,0
 
+	/// The run: one number per export. Relates to Dim_Run.
 	column Key_Run
 		dataType: int64
 		isHidden
@@ -42,6 +43,7 @@ table Fact_Usage
 		summarizeBy: none
 		sourceColumn: Key_Run
 
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
 	column Key_Date
 		dataType: int64
 		isHidden
@@ -50,6 +52,7 @@ table Fact_Usage
 		summarizeBy: none
 		sourceColumn: Key_Date
 
+	/// The object (table, column, measure or function) in this run. Relates to Dim_Object; -1 is the model as a whole.
 	column Key_Object
 		dataType: int64
 		isHidden
@@ -58,6 +61,7 @@ table Fact_Usage
 		summarizeBy: none
 		sourceColumn: Key_Object
 
+	/// The visual in this run. Relates to Dim_Visual.
 	column Key_Visual
 		dataType: int64
 		isHidden
@@ -76,7 +80,7 @@ table Fact_Usage
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("usage.csv"),
+				    Source = LoadCsv("usage.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Visual", Int64.Type}, {"Role", type text}}, "en-US")
 				in

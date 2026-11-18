@@ -1,6 +1,7 @@
 /// Dim_Object in the role "depends on": the object the other one refers to.
 table Dim_Dependency
 
+	/// The object referred to, in this run. Relates to Dim_Dependency.
 	column Key_Depends_on
 		dataType: int64
 		isHidden
@@ -8,32 +9,38 @@ table Dim_Dependency
 		summarizeBy: none
 		sourceColumn: Key_Depends_on
 
+	/// The object referred to: Table[Column], [Measure] or Table.
 	column 'Depends on'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Depends on
 
+	/// Table, Column, Measure or Function.
 	column 'Depends on type'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Depends on type
 
+	/// What the object referred to is in more detail, such as calculated column or report measure.
 	column 'Depends on kind'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Depends on kind
 
+	/// The table of the object referred to.
 	column 'Depends on table'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Depends on table
 
+	/// Whether the object referred to is used: In report, Used indirectly, Model only or Unused.
 	column 'Depends on status'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Depends on status
 		sortByColumn: 'Depends on status order'
 
+	/// Sorts Depends on status.
 	column 'Depends on status order'
 		dataType: int64
 		isHidden

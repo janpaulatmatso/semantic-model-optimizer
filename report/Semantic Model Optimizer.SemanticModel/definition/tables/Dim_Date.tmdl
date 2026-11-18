@@ -2,6 +2,7 @@
 table Dim_Date
 	dataCategory: Time
 
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
 	column Key_Date
 		dataType: int64
 		isHidden
@@ -9,6 +10,7 @@ table Dim_Date
 		summarizeBy: none
 		sourceColumn: Key_Date
 
+	/// The day.
 	column Date
 		dataType: dateTime
 		formatString: yyyy-mm-dd
@@ -17,12 +19,14 @@ table Dim_Date
 
 		annotation UnderlyingDateTimeDataType = Date
 
+	/// The year.
 	column Year
 		dataType: int64
 		formatString: 0
 		summarizeBy: none
 		sourceColumn: Year
 
+	/// The month, as yyyy-mm.
 	column Month
 		dataType: string
 		summarizeBy: none

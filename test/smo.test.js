@@ -430,8 +430,8 @@ test('Power BI export: a star schema per run, and a report that passes its own c
   const pbip = path.join(out, 'Semantic Model Optimizer.pbip');
   assert.ok(fs.existsSync(pbip));
   const { p, m, a } = await load(out);
-  assert.equal(m.model.tables.length, 10);
-  assert.equal(m.model.relationships.length, 15);
+  assert.equal(m.model.tables.length, 12);
+  assert.equal(m.model.relationships.length, 19);
   assert.equal(a.stats.broken, 0);
   assert.equal(a.list.filter(n => n.broken).length, 0);
   const checks = SMO.checkRules(m.model, a, p.config, null, p.design);
@@ -450,13 +450,35 @@ test('Power BI export: a star schema per run, and a report that passes its own c
   assert.ok(fs.existsSync(path.join(out, 'data/run-000002/objects.csv')), 'the runs stay');
 });
 
+test('Power BI model: every table, column and measure has a description', () => {
+  const P = require('../powerbi.js');
+  for (const lake of [false, true]) {
+    const files = lake ? P.directLakeFiles('server', 'db') : P.projectFiles('');
+    const tables = Object.entries(files.length ? Object.fromEntries(files.map(f => [f.path, f.text])) : files).filter(([p]) => /\/tables\/[^/]+\.tmdl$/.test(p));
+    assert.ok(tables.length >= 11);
+    for (const [p, text] of tables) {
+      const lines = text.split('\n');
+      lines.forEach((l, i) => {
+        if (/^(table|\tcolumn|\tmeasure) /.test(l)) assert.match(lines[i - 1] || '', /^\t?\/\/\/ \S/, `${p}: ${l.trim()} has no description`);
+      });
+    }
+  }
+});
+
 test('Power BI export from the app: the page makes the tables, the server writes them', async () => {
   const os = require('os');
   const P = require('../powerbi.js');
   const { p, m, a } = await load(makeProject());
   const checks = SMO.checkRules(m.model, a, p.config, null, p.design);
-  const t = P.runTables(a, checks, { run: 1, model: 'Demo', reports: 1, visuals: 2 });
+  const t = P.runTables(a, checks, { run: 1, model: 'Demo', reports: 1, visuals: 2, bus: SMO.busMatrix(m.model, a) });
+  // the bus matrix: each fact table with the dimensions it reaches, as keys of Dim_Object
+  const objectOf = k => t.objects.rows.find(r => r[2] === k)[7];
+  const bm = SMO.busMatrix(m.model, a), cells = [];
+  for (const f of bm.facts) for (const d of bm.dims) if (bm.cell(f.name, d.name)) cells.push([f.name, d.name, SMO.busMark(bm.cell(f.name, d.name))]);
+  assert.ok(cells.length > 0);
+  assert.deepEqual(t.bus.rows.map(r => [objectOf(r[2]), objectOf(r[3]), r[4]]), cells);
   const t7 = P.withRun(t, 7);
+  assert.equal(t7.bus.rows[0][3], t.bus.rows[0][3] - 10000000 + 7 * 10000000);
   assert.equal(t7.runs.rows[0][0], 7);
   assert.equal(t7.objects.rows[0][2], 7 * 10000000 + 1);
   assert.equal(t7.findings.rows[0][3], t.findings.rows[0][3]); // rule keys stay
@@ -564,7 +586,7 @@ test('Fabric notebook: the Python port gives the same CSV files as the JavaScrip
     const a = SMO.applyStats(SMO.analyze(m.model, proj.reports, { noModel: !!m.missing }), null);
     const checks = SMO.checkRules(m.model, a, null, null, null);
     for (const r of checks.rules) hit.add(r.id);
-    const tables = P.runTables(a, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'Model', source: 'Source', version: '9.9.9', reports: proj.reports.length, visuals: a.stats.visuals });
+    const tables = P.runTables(a, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'Model', source: 'Source', version: '9.9.9', reports: proj.reports.length, visuals: a.stats.visuals, bus: SMO.busMatrix(m.model, a) });
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-py-'));
     fs.writeFileSync(path.join(tmp, 'files.json'), JSON.stringify(files));
     const out = py(t, ['tables', path.join(tmp, 'files.json'), path.join(tmp, 'out'), '2026-01-02 03:04:05', 'Model', 'Source', '9.9.9']);
@@ -676,7 +698,7 @@ test('Fabric notebook: a report on Azure Analysis Services is checked with the m
   const proj = SMO.loadProject(files), m = proj.models[0];
   const an = SMO.applyStats(SMO.analyze(m.model, proj.reports), null);
   const checks = SMO.checkRules(m.model, an, null, null, null);
-  const tables = P.runTables(an, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'AAS testserver / SMO Test', source: 'asazure://westeurope.asazure.windows.net/testserver / SMO Test', version: 'dev', reports: 1, visuals: an.stats.visuals });
+  const tables = P.runTables(an, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'AAS testserver / SMO Test', source: 'asazure://westeurope.asazure.windows.net/testserver / SMO Test', version: 'dev', reports: 1, visuals: an.stats.visuals, bus: SMO.busMatrix(m.model, an) });
   assert.equal(an.nodes.get('M|Feit_Verkoop|Omzet').status, 'direct');
   assert.equal(an.nodes.get('C|Dim_Datum|Maand').status, 'direct');
   assert.equal(an.nodes.get('M|Feit_Verkoop|Omzet (verzonden)').status, 'indirect');

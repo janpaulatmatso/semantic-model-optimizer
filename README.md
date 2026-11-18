@@ -205,12 +205,13 @@ Every export adds a run to `C:\SMO\data\run-000001`, `run-000002`, … The first
 
 **The report on its own.** The folder [`report/`](report/) in this repository (and `SemanticModelOptimizer-Report.zip` with every release) holds the same report without any data folder, address or sign-in. Open `Semantic Model Optimizer.pbip`, choose *Transform data › Edit parameters*, fill in **ExportFolder** with the data folder of your exports (`C:\SMO\data`) or the Lakehouse folder of the Fabric notebook (`https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data`), sign in when Power BI asks, and choose **Refresh**. Left empty, the refresh says what to fill in.
 
-The report has five pages:
+The report has six pages:
 
 - **Overview:** measures, columns, unused ones, broken formulas, errors and warnings; objects by status; the trend over time; findings per rule.
 - **Objects:** every table, column and measure with its status, the reports and visuals that use it, dependents and size.
 - **Where used:** pick a measure or column (in the filters, or click it in the list on the left) and see every report, page and visual that uses it, and in which role.
 - **Findings:** every finding of the checks, filtered by severity, group, rule and table.
+- **Bus matrix:** the enterprise data warehouse bus matrix of every model: business processes (fact tables) down, the dimensions they reach across, with the same marks as the documentation (`X`, `X×2` role-playing, `○` only inactive, `·` through another dimension), and how many dimensions are conformed.
 - **Lineage:** what depends on what.
 
 The filters of every page are dropdowns in one row across the top.
@@ -223,7 +224,10 @@ The model behind it is a star schema, so you can build your own pages:
 | `Fact_Usage` | field in a visual or filter |
 | `Fact_Dependency` | object an object refers to directly |
 | `Fact_Finding` | finding of a rule |
-| `Dim_Run`, `Dim_Date`, `Dim_Object`, `Dim_Dependency`, `Dim_Visual`, `Dim_Rule` | run, day, object, object in the role "depends on", visual, rule |
+| `Fact_Bus` | business process (fact table) and dimension it reaches: a cell of the bus matrix |
+| `Dim_Run`, `Dim_Date`, `Dim_Object`, `Dim_Dependency`, `Dim_Dimension`, `Dim_Visual`, `Dim_Rule` | run, day, object, object in the role "depends on", object in the role "dimension", visual, rule |
+
+Every table, column and measure has a description, so the field list explains itself (and Copilot can use it). Runs made before the bus matrix existed have no `bus.csv`; the report reads them anyway, and their bus matrix fills in from the next run.
 
 The counts (*Measures*, *Unused columns*, *Errors*, …) take the latest run of each model within the filters, so they never add up runs. Sizes are filled when the run had them: give a `.vpax` (DAX Studio › Advanced › Export Metrics) as an extra path. Moved the folder? Change the parameter *ExportFolder* (Transform data › Edit parameters). The report itself passes the checks of this tool, including the Kimball rules.
 

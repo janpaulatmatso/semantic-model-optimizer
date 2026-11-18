@@ -60,6 +60,7 @@ table Fact_Finding
 			)
 		formatString: #,0
 
+	/// The run: one number per export. Relates to Dim_Run.
 	column Key_Run
 		dataType: int64
 		isHidden
@@ -68,6 +69,7 @@ table Fact_Finding
 		summarizeBy: none
 		sourceColumn: Key_Run
 
+	/// The day of the run, as yyyymmdd. Relates to Dim_Date.
 	column Key_Date
 		dataType: int64
 		isHidden
@@ -76,6 +78,7 @@ table Fact_Finding
 		summarizeBy: none
 		sourceColumn: Key_Date
 
+	/// The object (table, column, measure or function) in this run. Relates to Dim_Object; -1 is the model as a whole.
 	column Key_Object
 		dataType: int64
 		isHidden
@@ -84,6 +87,7 @@ table Fact_Finding
 		summarizeBy: none
 		sourceColumn: Key_Object
 
+	/// The rule; the same number in every run. Relates to Dim_Rule.
 	column Key_Rule
 		dataType: int64
 		isHidden
@@ -92,6 +96,7 @@ table Fact_Finding
 		summarizeBy: none
 		sourceColumn: Key_Rule
 
+	/// What the rule found, in words: the reference, relationship or value it is about.
 	column Detail
 		dataType: string
 		summarizeBy: none
@@ -101,7 +106,7 @@ table Fact_Finding
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("findings.csv"),
+				    Source = LoadCsv("findings.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Detail"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Detail"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Rule", Int64.Type}, {"Detail", type text}}, "en-US")
 				in

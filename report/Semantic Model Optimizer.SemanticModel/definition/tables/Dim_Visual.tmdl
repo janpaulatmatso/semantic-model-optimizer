@@ -1,6 +1,7 @@
 /// One row per visual of a report, per run.
 table Dim_Visual
 
+	/// The visual in this run. Relates to Dim_Visual.
 	column Key_Visual
 		dataType: int64
 		isHidden
@@ -8,26 +9,31 @@ table Dim_Visual
 		summarizeBy: none
 		sourceColumn: Key_Visual
 
+	/// The report.
 	column Report
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Report
 
+	/// The page of the report.
 	column Page
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Page
 
+	/// The title of the visual, or its type when it has no title.
 	column Visual
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Visual
 
+	/// The kind of visual, such as tableEx, barChart or slicer.
 	column 'Visual type'
 		dataType: string
 		summarizeBy: none
 		sourceColumn: Visual type
 
+	/// The name of the visual in the report definition.
 	column 'Visual id'
 		dataType: string
 		isHidden
@@ -38,7 +44,7 @@ table Dim_Visual
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("visuals.csv"),
+				    Source = LoadCsv("visuals.csv", {"Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Visual", Int64.Type}, {"Report", type text}, {"Page", type text}, {"Visual", type text}, {"Visual type", type text}, {"Visual id", type text}}, "en-US")
 				in

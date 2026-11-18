@@ -5,6 +5,7 @@
     "objects",
     "usage",
     "findings",
+    "bus",
     "lineage"
   ],
   "activePageName": "overview"

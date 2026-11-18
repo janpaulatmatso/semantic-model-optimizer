@@ -57,3 +57,19 @@ relationship 5d462053-c32e-44f9-8a0e-2ad756485b03
 relationship 8c7161da-f90a-49c4-84a7-53de69e098aa
 	fromColumn: Fact_Finding.Key_Rule
 	toColumn: Dim_Rule.Key_Rule
+
+relationship 5b12f026-b15a-4148-8724-ee9ad39e1816
+	fromColumn: Fact_Bus.Key_Run
+	toColumn: Dim_Run.Key_Run
+
+relationship 46b0e635-f28a-420b-86eb-a9e9fdc7a5a5
+	fromColumn: Fact_Bus.Key_Date
+	toColumn: Dim_Date.Key_Date
+
+relationship a2356716-87b8-44ec-8b05-9f0a7e250bc6
+	fromColumn: Fact_Bus.Key_Object
+	toColumn: Dim_Object.Key_Object
+
+relationship 087de72f-41fc-4bc9-8f07-17537691acbf
+	fromColumn: Fact_Bus.Key_Dimension
+	toColumn: Dim_Dimension.Key_Dimension
