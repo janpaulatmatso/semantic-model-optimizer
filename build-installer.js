@@ -21,7 +21,7 @@ fs.writeFileSync(path.join(dist, 'smo.ico'), ico([16, 24, 32, 48, 64, 256]));
 // the program people start runs as a Windows application (no console window); the console build stays for the command line
 fs.mkdirSync(path.join(dist, 'app'), { recursive: true });
 require('./exe-gui.js').guiCopy(exe, path.join(dist, 'app', 'SemanticModelOptimizer.exe'));
-fs.copyFileSync(exe, path.join(dist, 'SemanticModelOptimizer-cli.exe'));
+require('./exe-gui.js').plainCopy(exe, path.join(dist, 'SemanticModelOptimizer-cli.exe'));
 const candidates = [process.env.ISCC, 'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe', 'C:\\Program Files\\Inno Setup 6\\ISCC.exe',
   path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Inno Setup 6', 'ISCC.exe')].filter(Boolean);
 const iscc = candidates.find(p => fs.existsSync(p));

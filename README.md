@@ -273,6 +273,7 @@ Three ways to offer the tool, from least to most that runs on the computer:
 | **Web version** (GitHub Pages, or your own web server) | Static HTML, CSS and JavaScript in the browser | Read Power BI projects, .pbit, .pbix (report part), .vpax and model.bim; every analysis, check, diagram and export; in Edge and Chrome also changes to a project folder the user opened |
 | **From source** (`node serve.js`) | Node 18 or later, the code in this repository, no dependencies | Everything |
 | **Desktop app** (Setup or portable exe) | Node and the same code, packed into one executable | Everything |
+| **Microsoft Store** (MSIX, once published; see [Microsoft Store package](#microsoft-store-package)) | The same executable, signed by Microsoft; deployable with Intune as a Store app | Everything |
 
 **Web version.** The page sets a Content Security Policy with `connect-src 'none'`: the browser itself refuses every request the page could make, so loaded files cannot leave the computer. It loads no fonts, scripts or anything else from elsewhere. Its service worker (`sw.js`, there for offline use) only keeps the tool's own files from the same site. It can only write to a folder the user picked, after the browser has asked for permission; it cannot see anything else on the computer. To host it yourself, run `node build-web.js <folder>` and put that folder on any web server or SharePoint site that serves static files; it needs no server code. Settings (language, chosen rules) are kept in the browser's local storage.
 
@@ -286,6 +287,26 @@ Three ways to offer the tool, from least to most that runs on the computer:
 - **Disk:** it reads the folders and files a user opens. It writes only when a user changes, deletes or fixes something in a Power BI project: first a copy of each file into `smo-backup` next to the model, then the change. A change to a model on a server or in Power BI Desktop goes to that model, with the user's own rights.
 - **Needs:** for server connections, ADOMD.NET, which comes with DAX Studio, Tabular Editor or SQL Server Management Studio.
 - **Install silently:** `SemanticModelOptimizer-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS` (or `/CURRENTUSER`, which needs no administrator rights). It installs into `Program Files\Semantic Model Optimizer` (for one user: `%LOCALAPPDATA%\Programs\Semantic Model Optimizer`). Remove it with `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` in that folder. For Intune: package the Setup as a Win32 app with these commands; detection rule: `SemanticModelOptimizer.exe` exists in the install folder.
+
+## Microsoft Store package
+
+`node build-msix.js` (after `build-exe.js` and `build-installer.js`, with the Windows SDK) packs the program and the command line into `dist/SemanticModelOptimizer.msix`. The Store signs it, so it needs no certificate of its own, and Windows installs it without a SmartScreen warning. Once installed, `SemanticModelOptimizer.exe` and `SemanticModelOptimizer-cli.exe` work from any terminal. The release workflow builds the package every time, installs a copy signed with a test certificate, runs the command line, the server and a PowerShell helper from it, and removes it again.
+
+To publish it:
+
+1. Register as a developer in [Partner Center](https://partner.microsoft.com/dashboard) (as a company or as an individual).
+2. *Apps and games* › *New product* › *MSIX or PWA app*, and reserve the name *Semantic Model Optimizer*.
+3. Under *Product management* › *Product identity*, copy the three values into the repository's Actions variables (*Settings* › *Secrets and variables* › *Actions* › *Variables*):
+   - `MSIX_IDENTITY_NAME` ← *Package/Identity/Name*
+   - `MSIX_PUBLISHER` ← *Package/Identity/Publisher*
+   - `MSIX_PUBLISHER_DISPLAY_NAME` ← *Package/Properties/PublisherDisplayName*
+4. From the next release on, the run in *Actions* has an artifact `store-package-v…` with the package for the Store. Upload it in the submission under *Packages*.
+5. The package asks for two restricted capabilities; Partner Center asks why:
+   - `runFullTrust`: "A desktop program (Node.js) that runs a local web server on 127.0.0.1, opens it in the user's browser and runs PowerShell to read Power BI models over XMLA."
+   - `unvirtualizedResources`: "The program opens the user's default browser in app mode. With file system virtualization the browser would write its profile inside the package instead of the user's real profile."
+6. As privacy policy, link to [For IT administrators](#for-it-administrators): the tool collects nothing and sends nothing.
+
+The Power BI Desktop button is not added by the Store installation: run `SemanticModelOptimizer-cli.exe install-tool` once in a terminal started as administrator.
 
 ## Tests
 
