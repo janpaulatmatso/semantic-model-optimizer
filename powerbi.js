@@ -153,6 +153,7 @@ function tableDefs() {
       [key('Key_Object'), key('Key_Visual'), C('Role', 'string', { description: 'Where the field sits in the visual, for example Values, Category or Filters.' })], [
         Ms('Field uses', latest(count('Fact_Usage')), null, 'Fields in visuals and filters.'),
         Ms('Visuals', latest('DISTINCTCOUNT ( Fact_Usage[Key_Visual] )'), null, 'Visuals that use at least one field.'),
+        Ms('Reports using it', latest('CALCULATE ( DISTINCTCOUNT ( Dim_Visual[Report] ), Fact_Usage )'), null, 'Reports in which the measure or column is used.'),
       ]),
     facts('Fact_Dependency', 'One row per object that an object refers to directly, per run.', 'dependencies.csv',
       [key('Key_Object'), key('Key_Depends_on'), C('Dependency kind', 'string')], [
@@ -309,40 +310,46 @@ function visual(id, type, x, y, w, h, roles, title, extra) {
   v.drillFilterOtherVisuals = true;
   return { $schema: SCHEMA + 'visualContainer/2.4.0/schema.json', name: id, position: { x, y, z: 0, height: h, width: w, tabOrder: 0 }, visual: v };
 }
-const dropdown = { objects: { data: [{ properties: { mode: lit("'Dropdown'") } }] } };
-const slicer = (id, x, y, w, h, f, title, drop) => visual(id, 'slicer', x, y, w, h, { Values: [f] }, title, drop ? dropdown : null);
+// a slicer as a dropdown; its own header is off, the title of the visual names it
+const dropdown = { objects: { data: [{ properties: { mode: lit("'Dropdown'") } }], header: [{ properties: { show: lit('false') } }] } };
 const table = (id, x, y, w, h, fields, title) => visual(id, 'tableEx', x, y, w, h, { Values: fields }, title);
 
+const PAGE_W = 1280, PAGE_H = 720, MARGIN = 20, GAP = 10, FILTER_H = 64, TOP = MARGIN + FILTER_H + GAP;
+/** The filters of a page: dropdowns in one row across the top. filters: [[title, table, column]] */
+function filterRow(filters) {
+  const w = (PAGE_W - 2 * MARGIN - (filters.length - 1) * GAP) / filters.length;
+  return filters.map(([title, t, c], i) => visual('filter' + (i + 1), 'slicer', Math.round(MARGIN + i * (w + GAP)), MARGIN, Math.round(w), FILTER_H, { Values: [Cl(t, c)] }, title, dropdown));
+}
+
 function pages() {
-  const O = 'Dim_Object', F = 'Fact_Object';
-  const model = id => slicer(id, 20, 20, 220, 70, Cl('Dim_Run', 'Model'), 'Model', true);
+  const O = 'Dim_Object', F = 'Fact_Object', U = 'Fact_Usage', V = 'Dim_Visual', D = 'Dim_Dependency';
+  const fMODEL = ['Model', 'Dim_Run', 'Model'], fTYPE = ['Object type', O, 'Object type'], fTABLE = ['Table', O, 'Table'], fFIELD = ['Measure or column', O, 'Label'];
+  const full = PAGE_W - 2 * MARGIN, body = PAGE_H - TOP - MARGIN;
+  const cardW = (full - 6 * GAP) / 7;
   const cards = [['Measures', F], ['Unused measures', F], ['Columns', F], ['Unused columns', F], ['Broken formulas', F], ['Errors', 'Fact_Finding'], ['Warnings', 'Fact_Finding']]
-    .map(([p, t], i) => visual('card' + i, 'card', 260 + i * 145, 20, 135, 110, { Values: [M(t, p)] }, p));
+    .map(([p, t], i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), 100, { Values: [M(t, p)] }, p));
+  const half = (full - GAP) / 2, chartY = TOP + 100 + GAP, chartH = 240, rulesY = chartY + chartH + GAP;
   return [
-    { name: 'overview', displayName: 'Overview', visuals: [model('model'),
-      slicer('type', 20, 110, 220, 200, Cl(O, 'Object type'), 'Object type'),
-      slicer('date', 20, 330, 220, 120, Cl('Dim_Date', 'Date'), 'Date'),
+    { name: 'overview', displayName: 'Overview', visuals: [
+      ...filterRow([fMODEL, fTYPE, fTABLE, ['Date', 'Dim_Date', 'Date']]),
       ...cards,
-      visual('status', 'barChart', 260, 150, 490, 270, { Category: [Cl(O, 'Object type')], Series: [Cl(O, 'Status')], Y: [M(F, 'Objects')] }, 'Objects by status'),
-      visual('trend', 'lineChart', 770, 150, 490, 270, { Category: [Cl('Dim_Date', 'Date')], Y: [M(F, 'Unused measures'), M(F, 'Unused columns'), M('Fact_Finding', 'Errors')] }, 'Over time'),
-      visual('rules', 'clusteredBarChart', 260, 440, 1000, 260, { Category: [Cl('Dim_Rule', 'Rule')], Y: [M('Fact_Finding', 'Findings')] }, 'Findings by rule')] },
-    { name: 'objects', displayName: 'Objects', visuals: [model('model'),
-      slicer('status', 20, 110, 220, 170, Cl(O, 'Status'), 'Status'),
-      slicer('type', 20, 300, 220, 170, Cl(O, 'Object type'), 'Object type'),
-      slicer('table', 20, 490, 220, 70, Cl(O, 'Table'), 'Table', true),
-      table('list', 260, 20, 1000, 680, [Cl(O, 'Table'), Cl(O, 'Name'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(O, 'Hidden'), M(F, 'Uses in reports'), M(F, 'Used by objects'), M(F, 'Size (MB)')], 'Tables, columns and measures')] },
-    { name: 'findings', displayName: 'Findings', visuals: [model('model'),
-      slicer('severity', 20, 110, 220, 150, Cl('Dim_Rule', 'Severity'), 'Severity'),
-      slicer('group', 20, 280, 220, 120, Cl('Dim_Rule', 'Group'), 'Group'),
-      table('list', 260, 20, 1000, 680, [Cl('Dim_Rule', 'Severity'), Cl('Dim_Rule', 'Rule'), Cl(O, 'Label'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings')] },
-    { name: 'usage', displayName: 'Report usage', visuals: [model('model'),
-      slicer('report', 20, 110, 220, 70, Cl('Dim_Visual', 'Report'), 'Report', true),
-      slicer('page', 20, 200, 220, 70, Cl('Dim_Visual', 'Page'), 'Page', true),
-      table('list', 260, 20, 1000, 680, [Cl('Dim_Visual', 'Report'), Cl('Dim_Visual', 'Page'), Cl('Dim_Visual', 'Visual'), Cl('Dim_Visual', 'Visual type'), Cl(O, 'Label'), Cl(O, 'Status'), Cl('Fact_Usage', 'Role'), M('Fact_Usage', 'Field uses')], 'Fields in visuals')] },
-    { name: 'lineage', displayName: 'Lineage', visuals: [model('model'),
-      slicer('object', 20, 110, 220, 70, Cl(O, 'Label'), 'Object', true),
-      slicer('needed', 20, 200, 220, 70, Cl('Dim_Dependency', 'Depends on'), 'Depends on', true),
-      table('list', 260, 20, 1000, 680, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl('Dim_Dependency', 'Depends on'), Cl('Dim_Dependency', 'Depends on kind'), Cl('Dim_Dependency', 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')] },
+      visual('status', 'barChart', MARGIN, chartY, half, chartH, { Category: [Cl(O, 'Object type')], Series: [Cl(O, 'Status')], Y: [M(F, 'Objects')] }, 'Objects by status'),
+      visual('trend', 'lineChart', MARGIN + half + GAP, chartY, half, chartH, { Category: [Cl('Dim_Date', 'Date')], Y: [M(F, 'Unused measures'), M(F, 'Unused columns'), M('Fact_Finding', 'Errors')] }, 'Over time'),
+      visual('rules', 'clusteredBarChart', MARGIN, rulesY, full, PAGE_H - rulesY - MARGIN, { Category: [Cl('Dim_Rule', 'Rule')], Y: [M('Fact_Finding', 'Findings')] }, 'Findings by rule')] },
+    { name: 'objects', displayName: 'Objects', visuals: [
+      ...filterRow([fMODEL, fTYPE, ['Status', O, 'Status'], fTABLE, ['Hidden', O, 'Hidden'], ['Broken', O, 'Broken']]),
+      table('list', MARGIN, TOP, full, body, [Cl(O, 'Table'), Cl(O, 'Name'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(O, 'Hidden'), M(U, 'Reports using it'), M(U, 'Visuals'), M(F, 'Used by objects'), M(F, 'Size (MB)')], 'Tables, columns and measures')] },
+    // where a measure or column is used: pick it in the filters or click it on the left, the visuals are on the right
+    { name: 'usage', displayName: 'Where used', visuals: [
+      ...filterRow([fMODEL, fTYPE, fTABLE, fFIELD, ['Report', V, 'Report'], ['Page', V, 'Page']]),
+      table('fields', MARGIN, TOP, 380, body, [Cl(O, 'Label'), M(U, 'Reports using it'), M(U, 'Visuals')], 'Measures and columns in reports'),
+      table('list', MARGIN + 380 + GAP, TOP, full - 380 - GAP, body, [Cl('Dim_Run', 'Model'), Cl(V, 'Report'), Cl(V, 'Page'), Cl(V, 'Visual'), Cl(V, 'Visual type'), Cl(O, 'Label'), Cl(U, 'Role'), M(U, 'Field uses')], 'Reports and visuals that use them')] },
+    { name: 'findings', displayName: 'Findings', visuals: [
+      ...filterRow([fMODEL, ['Severity', 'Dim_Rule', 'Severity'], ['Group', 'Dim_Rule', 'Group'], ['Rule', 'Dim_Rule', 'Rule'], fTABLE]),
+      table('list', MARGIN, TOP, full, body, [Cl('Dim_Rule', 'Severity'), Cl('Dim_Rule', 'Rule'), Cl(O, 'Label'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings')] },
+    { name: 'lineage', displayName: 'Lineage', visuals: [
+      ...filterRow([fMODEL, fTYPE, fTABLE, ['Object', O, 'Label'], ['Depends on', D, 'Depends on']]),
+      table('list', MARGIN, TOP, full, body, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(D, 'Depends on'), Cl(D, 'Depends on kind'), Cl(D, 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')] },
   ];
 }
 

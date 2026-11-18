@@ -2256,7 +2256,7 @@
     for (const f of bm.facts) {
       const t = table(f.name);
       if (!bm.dims.some(d => isDate(d.name) && bm.cell(f.name, d.name) && !bm.cell(f.name, d.name).via)) add('k-fact-no-date', t, 'no relationship to a date table');
-      if (!/(één|een|1|one)\s+(rij|regel|row|record)\s+(per|for)\b/i.test(f.description || '')) add('k-grain-missing', t, f.description ? 'description: "' + f.description.slice(0, 80) + '"' : 'no description');
+      if (!/(één|eén|een|1|one)\s+(rij|regel|row|record)\s+(per|for)\b/i.test(f.description || '')) add('k-grain-missing', t, f.description ? 'description: "' + f.description.slice(0, 80) + '"' : 'no description');
       for (const c of colsOf(f.name)) {
         if (relCols.has(c.id)) continue;
         if (/^(int64|double|decimal)$/i.test(c.dataType || '') && /%|percent|pct|ratio|quote|quotum|\brate\b/i.test(c.name)) add('k-ratio-fact', c, c.dataType);

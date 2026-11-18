@@ -1272,7 +1272,7 @@ def checkRules(model, analysis):
 # ---------------------------------------------------------------- Kimball dimensional modelling
 
 _K_DATE = re.compile("date|datum|calendar|kalender", I)
-_K_GRAIN = re.compile("(één|een|1|one)" + S + "+(rij|regel|row|record)" + S + "+(per|for)" + B, I)
+_K_GRAIN = re.compile("(één|eén|een|1|one)" + S + "+(rij|regel|row|record)" + S + "+(per|for)" + B, I)
 _K_RATIO = re.compile("%|percent|pct|ratio|quote|quotum|" + B + "rate" + B, I)
 _K_NUMBERLIKE = re.compile(r"(nummer|number|nr|no|id|code)\Z", I)
 _K_CODE = re.compile("(.*?)[" + WSC + r"_-]*code\Z", I)

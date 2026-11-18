@@ -206,10 +206,12 @@ Every export adds a run to `C:\SMO\data\run-000001`, `run-000002`, … The first
 The report has five pages:
 
 - **Overview:** measures, columns, unused ones, broken formulas, errors and warnings; objects by status; the trend over time; findings per rule.
-- **Objects:** every table, column and measure with its status, uses in reports, dependents and size.
-- **Findings:** every finding of the checks, filtered by severity and group.
-- **Report usage:** which fields every visual of every report uses.
+- **Objects:** every table, column and measure with its status, the reports and visuals that use it, dependents and size.
+- **Where used:** pick a measure or column (in the filters, or click it in the list on the left) and see every report, page and visual that uses it, and in which role.
+- **Findings:** every finding of the checks, filtered by severity, group, rule and table.
 - **Lineage:** what depends on what.
+
+The filters of every page are dropdowns in one row across the top.
 
 The model behind it is a star schema, so you can build your own pages:
 

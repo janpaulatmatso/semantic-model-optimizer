@@ -53,7 +53,7 @@ try {
 
     $tables = [ordered]@{}; $colName = @{}; $tableOfCol = @{}
     foreach ($t in $tRows) {
-      $tables[[string]$t.ID] = [ordered]@{ name = [string]$t.Name; description = [string]$t.Description; isHidden = [bool]$t.IsHidden; columns = @(); measures = @(); partitions = @(); hierarchies = @() }
+      $tables[[string]$t.ID] = [ordered]@{ name = [string]$t.Name; description = [string]$t.Description; isHidden = [bool]$t.IsHidden; dataCategory = [string]$t.DataCategory; columns = @(); measures = @(); partitions = @(); hierarchies = @() }
     }
     foreach ($col in (Query 'SELECT * FROM $SYSTEM.TMSCHEMA_COLUMNS')) {
       $t = $tables[[string]$col.TableID]; if (-not $t) { continue }
