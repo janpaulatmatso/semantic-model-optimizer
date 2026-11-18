@@ -236,7 +236,7 @@ SemanticModelOptimizer-cli.exe cli --scan * --export C:\SMO
 
 The notebook [`fabric/SemanticModelOptimizer.ipynb`](fabric/SemanticModelOptimizer.ipynb) (also attached to every release) does the same in Microsoft Fabric, on a schedule, without anything on your computer:
 
-1. In a Fabric workspace: **New item › Import notebook**, choose the file.
+1. In a Fabric workspace: **Import › Notebook › From this computer**, choose the file. Or copy it: create a new notebook and paste all of [`fabric/SemanticModelOptimizer.py`](fabric/SemanticModelOptimizer.py) into its one cell (the same code, in one piece).
 2. Add a Lakehouse to the notebook (*Lakehouse* in the explorer › *Add*).
 3. Set `WORKSPACES` in the first cell (`"*"` for every workspace you can open), run all cells, and schedule the notebook (*Run › Schedule*).
 

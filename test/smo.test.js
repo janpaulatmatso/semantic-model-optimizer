@@ -530,6 +530,10 @@ test('Fabric: every model of a workspace with its reports, one run each, read fr
   assert.ok(opts.includes('--scan') && opts.includes('--report-source'));
   for (const o of opts) assert.ok(cli.includes("'" + o + "'"), o + ' is an option of cli.js');
   assert.match(src, /SHASUMS256/);
+  // the version for one cell: the same code, in the same order
+  const one = fs.readFileSync(path.join(__dirname, '..', 'fabric', 'SemanticModelOptimizer.py'), 'utf8').replace(/\r\n/g, '\n');
+  const cellsCode = nb.cells.filter(c => c.cell_type === 'code').map(c => c.source.join('').replace(/\r\n/g, '\n'));
+  assert.ok(one.endsWith('\n' + cellsCode.join('\n\n') + '\n'), 'fabric/SemanticModelOptimizer.py has the code of the notebook');
 });
 
 test('thin report: the live connection tells where the model lives', () => {
