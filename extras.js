@@ -286,6 +286,47 @@
   }, true);
   App.documentationHtml = documentationHtml;
 
+  // ------------------------------------------------------------ Power BI report: a run in a folder, read by a ready-made .pbip (app only)
+
+  const pbiOpt = el('option', { value: 'pbi' }, 'Power BI report…');
+  $('selExport').appendChild(pbiOpt);
+  App.onRun.push(() => { pbiOpt.hidden = !state.server || !window.SMOPowerBI; });
+  document.addEventListener('change', e => {
+    if (e.target !== $('selExport') || e.target.value !== 'pbi') return;
+    e.stopImmediatePropagation();
+    e.target.value = '';
+    const dlg = $('dlg');
+    dlg.innerHTML = `<h2>Power BI report</h2><p class="small">Adds the results for this model to a folder, as a run. The first time the folder also gets <b>Semantic Model Optimizer.pbip</b>, a report with an overview, the objects, the findings, report usage and lineage. Export again later, or export other models to the same folder, to see the trend and compare models.</p>
+      <form class="addrep" id="pbiForm"><input id="pbiFolder" type="text" value="${esc(App.store.get('smo.pbiFolder', ''))}" placeholder="Documents\\Semantic Model Optimizer" spellcheck="false"><button class="primary">Export</button></form>
+      <div id="pbiOut"></div><div class="dlgbtn"><button type="button" data-act="cancel">Close</button></div>`;
+    const out = dlg.querySelector('#pbiOut');
+    dlg.onclick = async ev => {
+      const t = ev.target;
+      if (t.dataset && t.dataset.act === 'cancel') dlg.close();
+      if (t.dataset && t.dataset.open) {
+        const r = await App.apiPost('api/powerbi', { open: t.dataset.open });
+        if (r.error) out.insertAdjacentHTML('beforeend', `<p class="err">${esc(r.error)}</p>`);
+        else t.textContent = 'Opening…';
+      }
+    };
+    dlg.querySelector('#pbiForm').onsubmit = async ev => {
+      ev.preventDefault();
+      const folder = dlg.querySelector('#pbiFolder').value.trim();
+      App.store.set('smo.pbiFolder', folder);
+      const a = state.analysis, m = model();
+      const source = state.loadedPath || (state.xmla ? state.xmla.server + (state.xmla.database ? ' / ' + state.xmla.database : '') : m.name);
+      const tables = SMOPowerBI.runTables(a, state.checks, { run: 1, now: new Date(), model: m.name, source, reports: a.stats.reportCount, visuals: a.stats.visuals });
+      out.innerHTML = '<p class="small">Writing…</p>';
+      const r = await busy(() => App.apiPost('api/powerbi', { folder, tables }));
+      if (r.error) { out.innerHTML = `<p class="err">${esc(r.error)}</p>`; return; }
+      out.innerHTML = `<p>Run ${r.run} written to <code>${esc(r.folder)}</code>.</p>` +
+        `<p class="small">${r.created ? 'Open the report in Power BI Desktop and choose <b>Refresh</b>.' : 'Refresh the report in Power BI Desktop to see this run.'}</p>` +
+        `<p><button type="button" class="primary" data-open="${esc(r.pbip)}">Open in Power BI Desktop</button></p>`;
+    };
+    dlg.showModal();
+    dlg.querySelector('#pbiFolder').focus();
+  }, true);
+
   // ------------------------------------------------------------ compare with a Git branch or commit (in History)
 
   const cmpBtn = el('button', { type: 'button', id: 'btnCompare', title: 'What changed compared with a Git branch, tag or commit' }, 'Compare');

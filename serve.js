@@ -65,11 +65,12 @@ function psWithInput(script, server, database, payload, timeout) {
 }
 
 const PORT = Number(process.env.PORT || process.argv[2] || 5273);
-const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js', '/extras.js': 'extras.js', '/i18n.js': 'i18n.js' };
+const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/core.js': 'core.js', '/style.css': 'style.css', '/diagram.js': 'diagram.js', '/export.js': 'export.js', '/powerbi.js': 'powerbi.js', '/extras.js': 'extras.js', '/i18n.js': 'i18n.js' };
 const TYPES = { html: 'text/html', js: 'text/javascript', css: 'text/css' };
 
 // started from the executable or launch.js: stop when the window has been closed for a while (the page pings every 20 s)
 let lastSeen = Date.now(), active = 0;
+const written = new Set(); // Power BI reports this server wrote, the only files it will open
 const idle = Number(process.env.SMO_IDLE_EXIT || 0);
 if (idle > 0) setInterval(() => { if (!active && Date.now() - lastSeen > idle * 1000) process.exit(0); }, 5000).unref();
 
@@ -112,6 +113,29 @@ http.createServer(async (req, res) => {
       if (!j.path || !j.modelRoot || !Array.isArray(j.items)) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
       try { return send(200, JSON.stringify(removeObjects(modelRootAbs(await loadPath(String(j.path)), j.modelRoot), j.items)), 'application/json'); }
       catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
+    }
+    if (url.pathname === '/api/powerbi') {
+      // writes a run for the Power BI report, or opens a report this server wrote; only from this page itself
+      const origin = String(req.headers.origin || '');
+      if (req.method !== 'POST' || !/^application\/json/.test(String(req.headers['content-type'] || '')) ||
+        !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) return send(403, JSON.stringify({ error: 'Not allowed' }), 'application/json');
+      let body = '';
+      for await (const chunk of req) { body += chunk; if (body.length > 200e6) throw new Error('Too large'); }
+      const j = JSON.parse(body);
+      const P = require('./powerbi.js');
+      if (j.open) {
+        if (!written.has(String(j.open))) return send(200, JSON.stringify({ error: 'Only a report written here can be opened.' }), 'application/json');
+        execFile('explorer.exe', [String(j.open)], () => {});
+        return send(200, JSON.stringify({ ok: true }), 'application/json');
+      }
+      const folder = String(j.folder || '').trim() || path.join(os.homedir(), 'Documents', P.NAME);
+      if (!path.isAbsolute(folder)) return send(200, JSON.stringify({ error: 'Give the full path of a folder, for example C:\\SMO.' }), 'application/json');
+      if (!P.validTables(j.tables)) return send(400, JSON.stringify({ error: 'Incomplete request' }), 'application/json');
+      try {
+        const r = P.writeRun(folder, j.tables, process.env.SMO_VERSION || require('./package.json').version);
+        written.add(r.pbip);
+        return send(200, JSON.stringify(Object.assign({ folder }, r)), 'application/json');
+      } catch (e) { return send(200, JSON.stringify({ error: e.message }), 'application/json'); }
     }
     if (url.pathname === '/api/xmla') {
       // starts a sign-in window for cloud servers, so only this page itself may call it

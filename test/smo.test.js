@@ -440,6 +440,38 @@ test('Power BI export: a star schema per run, and a report that passes its own c
   assert.ok(expr.includes(JSON.stringify(path.join(out, 'data'))));
 });
 
+test('Power BI export from the app: the page makes the tables, the server writes them', async () => {
+  const os = require('os');
+  const P = require('../powerbi.js');
+  const { p, m, a } = await load(makeProject());
+  const checks = SMO.checkRules(m.model, a, p.config, null, p.design);
+  const t = P.runTables(a, checks, { run: 1, model: 'Demo', reports: 1, visuals: 2 });
+  const t7 = P.withRun(t, 7);
+  assert.equal(t7.runs.rows[0][0], 7);
+  assert.equal(t7.objects.rows[0][2], 7 * 10000000 + 1);
+  assert.equal(t7.findings.rows[0][3], t.findings.rows[0][3]); // rule keys stay
+  assert.ok(P.validTables(t) && !P.validTables({ runs: t.runs }));
+
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-pbi-app-'));
+  const port = 5390 + Math.floor(Math.random() * 50);
+  const srv = require('child_process').spawn(process.execPath, [path.join(__dirname, '..', 'serve.js'), String(port)], { stdio: 'ignore' });
+  try {
+    const base = `http://127.0.0.1:${port}/api/powerbi`;
+    for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${port}/api/ping`); break; } catch (e) { await new Promise(r => setTimeout(r, 100)); } }
+    const post = (body, origin) => fetch(base, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, origin ? { Origin: origin } : {}), body: JSON.stringify(body) });
+    assert.equal((await post({ folder: out, tables: t })).status, 403); // another website cannot write
+    const own = `http://127.0.0.1:${port}`;
+    const r1 = await (await post({ folder: out, tables: t }, own)).json();
+    assert.equal(r1.run, 1); assert.equal(r1.created, true);
+    const r2 = await (await post({ folder: out, tables: t }, own)).json();
+    assert.equal(r2.run, 2); assert.equal(r2.created, false);
+    assert.match(fs.readFileSync(path.join(out, 'data/run-000002/objects.csv'), 'utf8'), /"2","\d+","20000001"/);
+    assert.ok(fs.existsSync(path.join(out, 'Semantic Model Optimizer.pbip')));
+    assert.match((await (await post({ open: path.join(out, 'other.pbip') }, own)).json()).error, /Only a report written here/);
+    assert.match((await (await post({ folder: 'relative', tables: t }, own)).json()).error, /full path/);
+  } finally { srv.kill(); }
+});
+
 test('thin report: the live connection tells where the model lives', () => {
   const pbir = conn => JSON.stringify({ version: '4.0', datasetReference: { byConnection: { connectionString: conn } } });
   const page = { path: 'Sales.Report/definition/pages/p1/page.json', text: JSON.stringify({ name: 'p1', displayName: 'Page 1' }) };

@@ -193,6 +193,8 @@ All three are generated in the browser; nothing is uploaded.
 
 ### A Power BI report of the results
 
+In the app: **Export… › Power BI report…**, choose a folder (default *Documents\Semantic Model Optimizer*), then **Open in Power BI Desktop**. This works for every model you can load, also one open in Power BI Desktop or on a server, and uses the sizes the app has. Not in the web version, which cannot write files outside the browser. From the command line:
+
 ```
 node cli.js <folder> --export C:\SMO
 SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO

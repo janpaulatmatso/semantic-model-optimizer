@@ -225,6 +225,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 #btnCompare { padding: 5px 12px; }
 #btnCompare[hidden] { display: none; }
 .cmpout { max-height: 50vh; overflow: auto; margin-top: 10px; }
+#pbiOut { margin-top: 10px; overflow-wrap: anywhere; }
+#pbiOut .err { color: var(--unused); }
 .cmpout h3 { font-size: 13px; margin: 14px 0 4px; }
 .sg { display: block; margin: 10px 0; }
 .sg textarea { display: block; width: 100%; margin-top: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical; }

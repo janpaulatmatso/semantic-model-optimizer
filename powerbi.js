@@ -7,13 +7,16 @@
  * Tables: Fact_Object (one row per object per run), Fact_Usage (one row per field in a visual), Fact_Dependency
  * (one row per object an object depends on), Fact_Finding (one row per finding of a rule), and the dimensions
  * Dim_Run, Dim_Date, Dim_Object, Dim_Dependency (Dim_Object in the role "depends on"), Dim_Visual and Dim_Rule.
- * Counts show the latest run of each model in the filter context, so a date axis gives the trend. */
+ * Counts show the latest run of each model in the filter context, so a date axis gives the trend.
+ *
+ * Works in Node (the command line and the server write the files) and in the browser (window.SMOPowerBI: the app
+ * computes the tables of a run and sends them to the server). */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./core.js'), require('./export.js'));
+  else root.SMOPowerBI = factory(root.SMO, root.SMOExport);
+})(typeof self !== 'undefined' ? self : this, function (SMO, X) {
 'use strict';
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const SMO = require('./core.js');
-const { toCsv } = require('./export.js');
+const { toCsv } = X;
 
 const NAME = 'Semantic Model Optimizer';
 const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model only', unused: 'Unused' };
@@ -96,7 +99,9 @@ function runTables(analysis, checks, info) {
 // ---------------------------------------------------------------- the Power BI project
 
 const q = n => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? n : "'" + n.replace(/'/g, "''") + "'");
-const uuid = seed => { const h = crypto.createHash('sha256').update(seed).digest('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`; };
+/** a fixed GUID for a name (FNV-1a with four seeds): the same model gets the same ids every time */
+const hex8 = (s, seed) => { let h = seed >>> 0; for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
+const uuid = seed => { const h = [0x811c9dc5, 0x050c5d1f, 0x9e3779b9, 0x7f4a7c15].map(s => hex8(seed, s)).join(''); return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`; };
 const block = (text, tabs) => text.split('\n').map(l => '\t'.repeat(tabs) + l).join('\n');
 
 const M_TYPE = { int64: 'Int64.Type', string: 'type text', dateTime: 'type datetime', date: 'type date' };
@@ -165,7 +170,7 @@ function tableDefs() {
         C('Tool version', 'string'), C('Reports', 'int64'), C('Visuals', 'int64', { hidden: true }), C('Has sizes', 'string')] },
     { name: 'Dim_Date', description: 'One row per day from the first to the last run.', dateTable: true,
       cols: [key('Key_Date'), C('Date', 'date'), C('Year', 'int64'), C('Month', 'string')] },
-    { name: 'Dim_Object', description: 'One row per object per run, plus the row -1 (none) for findings about the model as a whole.', file: 'objects.csv', cols: OBJECT_COLS, unknown: true },
+    { name: 'Dim_Object', description: 'One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.', file: 'objects.csv', cols: OBJECT_COLS, unknown: true },
     { name: 'Dim_Dependency', description: 'Dim_Object in the role "depends on": the object the other one refers to.', role: 'Dim_Object',
       cols: [key('Key_Depends_on'), C('Depends on', 'string'), C('Depends on type', 'string'), C('Depends on kind', 'string'), C('Depends on table', 'string'),
         C('Depends on status', 'string', { sortBy: 'Depends on status order' }), C('Depends on status order', 'int64', { hidden: true })] },
@@ -210,7 +215,9 @@ function source(t) {
   last = 'Typed';
   if (t.distinct) { lines.push(`    Once = Table.Distinct(${last}, {"${t.distinct}"})`); last = 'Once'; }
   if (t.unknown) {
-    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (c.name === 'Key_Object' ? '-1' : c.name === 'Status order' ? '9' : ['Name', 'Label', 'Status', 'Object type', 'Kind'].includes(c.name) ? '"(none)"' : '""')).join(', ') + ']';
+    // the row for findings about the model as a whole
+    const none = { Key_Object: '-1', 'Status order': '9', 'Object type': '"Model"', Kind: '"model"', Name: '"(whole model)"', Label: '"(whole model)"', Status: '"(none)"' };
+    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (none[c.name] || '""')).join(', ') + ']';
     lines.push(`    WithNone = Table.InsertRows(${last}, 0, {${rec}})`);
     last = 'WithNone';
   }
@@ -368,12 +375,41 @@ function projectFiles(dataFolder) {
 
 // ---------------------------------------------------------------- writing
 
+const TABLES = ['runs', 'objects', 'visuals', 'usage', 'dependencies', 'findings', 'rules'];
+
+/** The same tables with another run number: Key_Run, and the keys made from it. */
+function withRun(t, run) {
+  const from = Number(t.runs.rows[0][0]);
+  const out = {};
+  for (const name of TABLES) {
+    const idx = t[name].head.map((h, i) => (/^Key_/.test(h) && h !== 'Key_Date' && h !== 'Key_Rule' ? i : -1)).filter(i => i >= 0);
+    out[name] = { head: t[name].head, rows: t[name].rows.map(r => {
+      const c = r.slice();
+      for (const i of idx) {
+        const v = Number(c[i]);
+        if (t[name].head[i] === 'Key_Run') c[i] = run;
+        else if (v > 0) c[i] = v - from * STEP + run * STEP;
+      }
+      return c;
+    }) };
+  }
+  return out;
+}
+
+/** Checks tables that came from a page before they are written. */
+function validTables(t) {
+  if (!t || typeof t !== 'object') return false;
+  return TABLES.every(n => t[n] && Array.isArray(t[n].head) && Array.isArray(t[n].rows) && t[n].rows.every(r => Array.isArray(r) && r.length === t[n].head.length)) &&
+    t.runs.rows.length === 1 && Number.isInteger(Number(t.runs.rows[0][0]));
+}
+
 /**
- * Adds a run to the folder, and writes the Power BI project the first time.
- * opts: {analysis, checks, model, source, version, reports, visuals, now}
+ * Adds a run to the folder, and writes the Power BI project the first time (Node only).
+ * tables: from runTables (any run number; it gets the next free one), version: written into the run when empty
  * → {run, runFolder, pbip, created}
  */
-function exportRun(folder, opts) {
+function writeRun(folder, tables, version) {
+  const fs = require('fs'), path = require('path');
   folder = path.resolve(folder);
   const data = path.join(folder, 'data');
   fs.mkdirSync(data, { recursive: true });
@@ -381,8 +417,9 @@ function exportRun(folder, opts) {
   const run = (runs.length ? Math.max(...runs) : 0) + 1;
   const runFolder = path.join(data, 'run-' + pad(run, 6));
   fs.mkdirSync(runFolder);
-  const t = runTables(opts.analysis, opts.checks, Object.assign({}, opts, { run }));
-  for (const [name, table] of Object.entries(t)) fs.writeFileSync(path.join(runFolder, name + '.csv'), toCsv(table));
+  const t = withRun(tables, run);
+  if (version && !t.runs.rows[0][5]) t.runs.rows[0][5] = version;
+  for (const name of TABLES) fs.writeFileSync(path.join(runFolder, name + '.csv'), toCsv(t[name]));
   const pbip = path.join(folder, NAME + '.pbip');
   const created = !fs.existsSync(pbip);
   if (created) {
@@ -396,12 +433,14 @@ function exportRun(folder, opts) {
   return { run, runFolder, pbip, created };
 }
 
-/** Analyses a loaded project the way the command line does, and exports it. */
+/** Analyses a loaded project the way the command line does, and exports it (Node only). */
 function exportProject(folder, proj, source, version) {
   const model = proj.models[0];
   const analysis = SMO.applyStats(SMO.analyze(model.model, proj.reports, { noModel: !!model.missing }), proj.stats || null);
   const checks = SMO.checkRules(model.model, analysis, proj.config, null, proj.design);
-  return exportRun(folder, { analysis, checks, model: model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals });
+  const tables = runTables(analysis, checks, { run: 1, model: model.name, source, version, reports: proj.reports.length, visuals: analysis.stats.visuals });
+  return writeRun(folder, tables, version);
 }
 
-module.exports = { runTables, projectFiles, exportRun, exportProject, ruleKey, NAME };
+return { runTables, withRun, validTables, projectFiles, writeRun, exportProject, ruleKey, NAME };
+});

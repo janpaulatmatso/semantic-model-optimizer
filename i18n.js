@@ -15,7 +15,7 @@
     '+ Add report': '+ Rapport toevoegen', 'Reports:': 'Rapporten:', 'Model': 'Model',
     // tabs and actions
     'Objects': 'Objecten', 'Model diagram': 'Modeldiagram', 'Bus matrix': 'Busmatrix', 'Business process': 'Bedrijfsproces', 'Business processes': 'Bedrijfsprocessen', 'Dimensions': 'Dimensies', 'Checks': 'Controles', 'Pages': "Pagina's", 'Performance': 'Prestaties', 'History': 'Geschiedenis', 'Compare': 'Vergelijken', 'Values': 'Waarden',
-    'Export…': 'Exporteren…', 'Documentation (.html)': 'Documentatie (.html)', 'Select all unused': 'Selecteer alle ongebruikte', 'Folder…': 'Map…', 'Edit': 'Wijzigen', 'Save': 'Opslaan', 'Restore': 'Terugzetten',
+    'Export…': 'Exporteren…', 'Documentation (.html)': 'Documentatie (.html)', 'Power BI report…': 'Power BI-rapport…', 'Power BI report': 'Power BI-rapport', 'Export': 'Exporteren', 'Open in Power BI Desktop': 'Openen in Power BI Desktop', 'Select all unused': 'Selecteer alle ongebruikte', 'Folder…': 'Map…', 'Edit': 'Wijzigen', 'Save': 'Opslaan', 'Restore': 'Terugzetten',
     'Delete…': 'Verwijderen…', 'Tabular Editor script': 'Tabular Editor-script', 'Clear selection': 'Selectie wissen', 'Fit': 'Passend',
     // tiles
     'Measures': 'Measures', 'Columns': 'Kolommen', 'Model only': 'Alleen model', 'Calculated columns': 'Berekende kolommen', 'Tables': 'Tabellen', 'Report': 'Rapport', 'Model size': 'Modelgrootte',
