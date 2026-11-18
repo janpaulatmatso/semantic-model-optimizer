@@ -93,37 +93,54 @@
     state.selected = null; state.table = ''; state.q = ''; $('q').value = '';
     $('empty').hidden = true; $('app').hidden = false;
     run();
-    if (noModel) offerServerModel(project.reports);
+    if (noModel) offerServerModel();
   }
 
-  /** Thin reports whose model lives on a server (Azure Analysis Services, a workspace): offer to load that model. */
-  function offerServerModel(reports) {
-    const all = reports.map(r => r.connection).filter(Boolean);
-    const c = all.find(x => x.kind !== 'service');
-    if (!c) {
-      if (all.length) msg('This report is connected live to a semantic model in the Power BI service. To see its formulas, load that model too: with Server › workspace (powerbi://api.powerbi.com/v1.0/myorg/<workspace>, needs Premium, PPU or Fabric) or as a Power BI project (.pbip).');
-      return;
-    }
-    if (!location.protocol.startsWith('http')) {
-      return msg('This report gets its model live from ' + (c.database || 'a model') + ' on ' + c.server + '. Start the tool as the app (or with node serve.js) and choose Server to load that model, so you see its formulas and what the report uses.');
-    }
-    const d = document.createElement('div');
-    d.className = 'msg';
-    const where = `This report gets its model live from <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>.`;
-    const rights = '<span class="muted">A sign-in window may open. Reading the definition needs admin rights on the model.</span>';
-    if (store.get('smo.autoModel', true)) {
-      // load it straight away, so formulas and usage show up without a second connection
-      d.innerHTML = `${where} Loading that model now… ${rights} <span class="link" data-off>Don't load automatically</span>`;
-      d.querySelector('[data-off]').onclick = () => { store.set('smo.autoModel', false); d.querySelector('[data-off]').remove(); msg('From now on you get a button instead; the model is not loaded automatically.'); };
-      $('msgs').appendChild(d);
-      state.serverLoad = loadServerModel(c.server, c.database, true).then(ok => { if (ok) d.remove(); }).finally(() => { state.serverLoad = null; });
-      return;
-    }
-    d.innerHTML = `${where} The formulas are there, not in the report. <button type="button" class="primary">Load that model</button> ${rights} <span class="link" data-on>Always load automatically</span>`;
-    d.querySelector('button').onclick = () => loadServerModel(c.server, c.database);
-    d.querySelector('[data-on]').onclick = () => { store.set('smo.autoModel', true); loadServerModel(c.server, c.database); };
-    $('msgs').appendChild(d);
+  /** The live connection of the loaded thin reports that the tool can follow (not a model in the Power BI service). */
+  function thinConnection() {
+    const all = state.project ? state.project.reports.filter(r => !state.off.has(r.root)).map(r => r.connection).filter(Boolean) : [];
+    return { c: all.find(x => x.kind !== 'service'), service: all.some(x => x.kind === 'service') };
   }
+  const autoModel = () => store.get('smo.autoModel', true);
+
+  /** Thin reports whose model lives on a server (Azure Analysis Services, a workspace): load that model right away. */
+  function offerServerModel() {
+    const { c } = thinConnection();
+    if (!c || !location.protocol.startsWith('http') || !autoModel() || state.serverLoad) return;
+    startServerLoad(c);
+  }
+  function startServerLoad(c) {
+    state.serverLoad = loadServerModel(c.server, c.database, true).finally(() => { state.serverLoad = null; if (state.project) run(); });
+    run(); // the bar above shows that it is loading
+  }
+
+  /** The bar shown while the model is missing: where the model lives, and loading it. */
+  function renderNoModel(cur) {
+    const box = $('noModel');
+    box.hidden = !cur.missing;
+    if (!cur.missing) return;
+    const { c, service } = thinConnection();
+    const rights = '<span class="muted">A sign-in window may open. Reading the definition needs admin rights on the model.</span>';
+    if (c) {
+      const where = `The formulas of this report are not in the file: its model lives on the server, <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>. `;
+      if (state.serverLoad) box.innerHTML = where + 'Loading that model now… ' + rights;
+      else if (!location.protocol.startsWith('http')) box.innerHTML = where + 'Start the tool as the app (or with <code>node serve.js</code>) to load it.';
+      else box.innerHTML = where + 'Until it is loaded you see the measures the report defines and the fields it uses. ' +
+        '<button type="button" class="primary" data-load>Load that model</button> ' + rights + ' ' +
+        (autoModel() ? '<span class="link" data-auto="off">Don\'t load automatically</span>' : '<span class="link" data-auto="on">Always load automatically</span>');
+      return;
+    }
+    box.innerHTML = service
+      ? 'The model is not loaded: this report is connected live to a semantic model in the Power BI service. You see the measures the report defines and the fields it uses. To see the formulas, load that model too: with <b>Server</b> › workspace (<code>powerbi://api.powerbi.com/v1.0/myorg/&lt;workspace&gt;</code>, needs Premium, PPU or Fabric) or as a Power BI project (.pbip).'
+      : 'The model is not loaded, and the report does not say where it lives. You see the measures the reports define themselves and the fields they use; whether those fields exist cannot be checked. Load the model with <b>Server</b> (for example <code>asazure://…</code>), or next to it as <code>model.bim</code>, a Power BI project or a .pbit.';
+  }
+  $('noModel').onclick = e => {
+    const { c } = thinConnection();
+    if (!c) return;
+    if (e.target.closest('[data-load]')) return startServerLoad(c);
+    const a = e.target.closest('[data-auto]');
+    if (a) { store.set('smo.autoModel', a.dataset.auto === 'on'); if (a.dataset.auto === 'on') startServerLoad(c); else run(); }
+  };
   /** Loads the model of a thin report from its server; without a database name it opens the Server panel to pick one.
    *  → true when the model is loaded. */
   async function loadServerModel(server, database, announced) {
@@ -616,7 +633,7 @@
     const reports = p.reports.filter(r => !state.off.has(r.root));
     const cur = p.models[state.modelIdx];
     state.analysis = SMO.applyStats(SMO.analyze(cur.model, reports, { noModel: !!cur.missing }), state.stats);
-    $('noModel').hidden = !cur.missing;
+    renderNoModel(cur);
     if (state.selected && !state.analysis.nodes.has(state.selected)) state.selected = null;
     for (const id of [...state.sel]) { const n = state.analysis.nodes.get(id); if (!n || !canSel(n)) state.sel.delete(id); }
     renderBar(); renderTiles(); renderTableFilter(); renderGrid(); renderDetail();
