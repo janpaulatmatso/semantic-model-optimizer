@@ -1,0 +1,47 @@
+/// One row per visual of a report, per run.
+table Dim_Visual
+
+	column Key_Visual
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Visual
+
+	column Report
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Report
+
+	column Page
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Page
+
+	column Visual
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Visual
+
+	column 'Visual type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Visual type
+
+	column 'Visual id'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: Visual id
+
+	partition Dim_Visual = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("visuals.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Visual", Int64.Type}, {"Report", type text}, {"Page", type text}, {"Visual", type text}, {"Visual type", type text}, {"Visual id", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

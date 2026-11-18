@@ -203,6 +203,8 @@ SemanticModelOptimizer-cli.exe cli --server localhost:51234 --export C:\SMO     
 
 Every export adds a run to `C:\SMO\data\run-000001`, `run-000002`, … The first export also writes **`Semantic Model Optimizer.pbip`**, a ready-made report. Open it in Power BI Desktop and choose **Refresh**. Later exports leave the report alone (your changes stay), so just refresh it. Export several models to the same folder to see them side by side, and export on a schedule (for example in a pipeline) to see the trend.
 
+**The report on its own.** The folder [`report/`](report/) in this repository (and `SemanticModelOptimizer-Report.zip` with every release) holds the same report without any data folder, address or sign-in. Open `Semantic Model Optimizer.pbip`, choose *Transform data › Edit parameters*, fill in **ExportFolder** with the data folder of your exports (`C:\SMO\data`) or the Lakehouse folder of the Fabric notebook (`https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data`), sign in when Power BI asks, and choose **Refresh**. Left empty, the refresh says what to fill in.
+
 The report has five pages:
 
 - **Overview:** measures, columns, unused ones, broken formulas, errors and warnings; objects by status; the trend over time; findings per rule.

@@ -1,0 +1,54 @@
+/// Dim_Object in the role "depends on": the object the other one refers to.
+table Dim_Dependency
+
+	column Key_Depends_on
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Depends_on
+
+	column 'Depends on'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Depends on
+
+	column 'Depends on type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Depends on type
+
+	column 'Depends on kind'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Depends on kind
+
+	column 'Depends on table'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Depends on table
+
+	column 'Depends on status'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Depends on status
+		sortByColumn: 'Depends on status order'
+
+	column 'Depends on status order'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Depends on status order
+
+	partition Dim_Dependency = m
+		mode: import
+		source =
+				let
+				    Source = Dim_Object,
+				    Picked = Table.SelectColumns(Source, {"Key_Object", "Label", "Object type", "Kind", "Table", "Status", "Status order"}),
+				    Renamed = Table.RenameColumns(Picked, {{"Key_Object", "Key_Depends_on"}, {"Label", "Depends on"}, {"Object type", "Depends on type"}, {"Kind", "Depends on kind"}, {"Table", "Depends on table"}, {"Status", "Depends on status"}, {"Status order", "Depends on status order"}})
+				in
+				    Renamed
+
+	annotation PBI_ResultType = Table

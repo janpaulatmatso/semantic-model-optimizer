@@ -1,0 +1,20 @@
+/// The folder with the exports: a folder on disk or in OneLake, such as C:\SMO\data, or a Lakehouse folder in OneLake, such as https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data.
+expression ExportFolder = "" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=false]
+
+	annotation PBI_ResultType = Text
+
+/// Reads one kind of CSV file from every run folder and puts the rows together.
+expression LoadCsv =
+		(name as text) as table =>
+		let
+		    Source =
+		        if ExportFolder = "" then error "Fill in the parameter ExportFolder (Transform data > Edit parameters): the data folder of your exports, such as C:\SMO\data, or a Lakehouse folder in OneLake, such as https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data. Then choose Refresh."
+		        else if Text.StartsWith(ExportFolder, "https://", Comparer.OrdinalIgnoreCase) then AzureStorage.DataLake(ExportFolder, [HierarchicalNavigation = false])
+		        else Folder.Files(ExportFolder),
+		    Files = Table.SelectRows(Source, each [Name] = name),
+		    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),
+		    Combined = Table.Combine(Tables)
+		in
+		    Table.TransformColumns(Combined, {}, each if _ = "" then null else _)
+
+	annotation PBI_ResultType = Function

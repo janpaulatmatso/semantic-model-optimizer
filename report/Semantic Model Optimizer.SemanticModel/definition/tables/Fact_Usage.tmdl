@@ -1,0 +1,85 @@
+/// One row per field in a visual or filter of a report, per run.
+table Fact_Usage
+
+	/// Fields in visuals and filters.
+	measure 'Field uses' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( COUNTROWS ( Fact_Usage ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Visuals that use at least one field.
+	measure Visuals =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( DISTINCTCOUNT ( Fact_Usage[Key_Visual] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Reports in which the measure or column is used.
+	measure 'Reports using it' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( CALCULATE ( DISTINCTCOUNT ( Dim_Visual[Report] ), Fact_Usage ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	column Key_Run
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	column Key_Date
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	column Key_Object
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	column Key_Visual
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Visual
+
+	/// Where the field sits in the visual, for example Values, Category or Filters.
+	column Role
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Role
+
+	partition Fact_Usage = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("usage.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Visual", Int64.Type}, {"Role", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

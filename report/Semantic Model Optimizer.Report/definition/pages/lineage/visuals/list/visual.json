@@ -1,0 +1,144 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "list",
+  "position": {
+    "x": 20,
+    "y": 94,
+    "z": 5000,
+    "height": 606,
+    "width": 1240,
+    "tabOrder": 5000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Label"
+                }
+              },
+              "queryRef": "Dim_Object.Label",
+              "nativeQueryRef": "Label"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Kind"
+                }
+              },
+              "queryRef": "Dim_Object.Kind",
+              "nativeQueryRef": "Kind"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Status"
+                }
+              },
+              "queryRef": "Dim_Object.Status",
+              "nativeQueryRef": "Status"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Dependency"
+                    }
+                  },
+                  "Property": "Depends on"
+                }
+              },
+              "queryRef": "Dim_Dependency.Depends on",
+              "nativeQueryRef": "Depends on"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Dependency"
+                    }
+                  },
+                  "Property": "Depends on kind"
+                }
+              },
+              "queryRef": "Dim_Dependency.Depends on kind",
+              "nativeQueryRef": "Depends on kind"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Dependency"
+                    }
+                  },
+                  "Property": "Depends on status"
+                }
+              },
+              "queryRef": "Dim_Dependency.Depends on status",
+              "nativeQueryRef": "Depends on status"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Dependency"
+                    }
+                  },
+                  "Property": "Dependencies"
+                }
+              },
+              "queryRef": "Fact_Dependency.Dependencies",
+              "nativeQueryRef": "Dependencies"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'What depends on what'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

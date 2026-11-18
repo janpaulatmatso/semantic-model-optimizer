@@ -1,0 +1,106 @@
+/// One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.
+table Dim_Object
+
+	column Key_Object
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	/// Stable name of the object: type, table and name. The same in every run.
+	column 'Object id'
+		dataType: string
+		isHidden
+		summarizeBy: none
+		sourceColumn: Object id
+
+	/// Table, Column, Measure, Function, or Missing for a field a report uses that is not in the model.
+	column 'Object type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Object type
+
+	column Kind
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Kind
+
+	column Table
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Table
+
+	column Name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Name
+
+	/// Table[Column], [Measure] or Table.
+	column Label
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Label
+
+	/// In report, Used indirectly (needed by something in a report), Model only (relationship, RLS, hierarchy, query) or Unused.
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Status
+		sortByColumn: 'Status order'
+
+	column 'Status order'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Status order
+
+	column Hidden
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Hidden
+
+	column Broken
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Broken
+
+	column 'Data type'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Data type
+
+	column 'Display folder'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Display folder
+
+	column Description
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Description
+
+	column Expression
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Expression
+
+	/// For a measure made in a report: that report.
+	column Report
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Report
+
+	partition Dim_Object = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("objects.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Object", "Object id", "Object type", "Kind", "Table", "Name", "Label", "Status", "Status order", "Hidden", "Broken", "Data type", "Display folder", "Description", "Expression", "Report"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Object", Int64.Type}, {"Object id", type text}, {"Object type", type text}, {"Kind", type text}, {"Table", type text}, {"Name", type text}, {"Label", type text}, {"Status", type text}, {"Status order", Int64.Type}, {"Hidden", type text}, {"Broken", type text}, {"Data type", type text}, {"Display folder", type text}, {"Description", type text}, {"Expression", type text}, {"Report", type text}}, "en-US"),
+				    WithNone = Table.InsertRows(Typed, 0, {[#"Key_Object" = -1, #"Object id" = "", #"Object type" = "Model", #"Kind" = "model", #"Table" = "", #"Name" = "(whole model)", #"Label" = "(whole model)", #"Status" = "(none)", #"Status order" = 9, #"Hidden" = "", #"Broken" = "", #"Data type" = "", #"Display folder" = "", #"Description" = "", #"Expression" = "", #"Report" = ""]})
+				in
+				    WithNone
+
+	annotation PBI_ResultType = Table

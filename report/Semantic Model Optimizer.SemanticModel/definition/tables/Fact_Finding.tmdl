@@ -1,0 +1,110 @@
+/// One row per finding of a rule, per run.
+table Fact_Finding
+
+	/// Findings of the best-practice and Kimball checks.
+	measure Findings =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( COUNTROWS ( Fact_Finding ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Findings that break the model or a report.
+	measure Errors =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Finding ), Dim_Rule[Severity] = "Error" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Findings that are probably wrong or costly.
+	measure Warnings =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Finding ), Dim_Rule[Severity] = "Warning" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Findings worth a look.
+	measure Notes =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Finding ), Dim_Rule[Severity] = "Note" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	column Key_Run
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	column Key_Date
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	column Key_Object
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	column Key_Rule
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Rule
+
+	column Detail
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Detail
+
+	partition Fact_Finding = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("findings.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Detail"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Rule", Int64.Type}, {"Detail", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

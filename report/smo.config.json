@@ -1,0 +1,7 @@
+{
+  "kimball": {
+    "fact": "Fact_",
+    "dim": "Dim_",
+    "key": "Key_"
+  }
+}

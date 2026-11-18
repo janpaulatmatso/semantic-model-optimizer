@@ -1,0 +1,69 @@
+/// One row per export: when, which model, from where.
+table Dim_Run
+
+	column Key_Run
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	column 'Run at'
+		dataType: dateTime
+		formatString: yyyy-mm-dd hh:nn
+		summarizeBy: none
+		sourceColumn: Run at
+
+	column Date
+		dataType: dateTime
+		isHidden
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Model
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Model
+
+	column Source
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Source
+
+	column 'Tool version'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Tool version
+
+	column Reports
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Reports
+
+	column Visuals
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Visuals
+
+	column 'Has sizes'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Has sizes
+
+	partition Dim_Run = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("runs.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Run", "Run at", "Date", "Model", "Source", "Tool version", "Reports", "Visuals", "Has sizes"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Run at", type datetime}, {"Date", type date}, {"Model", type text}, {"Source", type text}, {"Tool version", type text}, {"Reports", Int64.Type}, {"Visuals", Int64.Type}, {"Has sizes", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

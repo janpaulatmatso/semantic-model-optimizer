@@ -1,0 +1,88 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "fields",
+  "position": {
+    "x": 20,
+    "y": 94,
+    "z": 6000,
+    "height": 606,
+    "width": 380,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Label"
+                }
+              },
+              "queryRef": "Dim_Object.Label",
+              "nativeQueryRef": "Label"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Reports using it"
+                }
+              },
+              "queryRef": "Fact_Usage.Reports using it",
+              "nativeQueryRef": "Reports using it"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Visuals"
+                }
+              },
+              "queryRef": "Fact_Usage.Visuals",
+              "nativeQueryRef": "Visuals"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Measures and columns in reports'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

@@ -1,0 +1,62 @@
+/// One row per object that an object refers to directly, per run.
+table Fact_Dependency
+
+	/// Direct references from one object to another.
+	measure Dependencies =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( COUNTROWS ( Fact_Dependency ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	column Key_Run
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	column Key_Date
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	column Key_Object
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	column Key_Depends_on
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Depends_on
+
+	column 'Dependency kind'
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Dependency kind
+
+	partition Fact_Dependency = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("dependencies.csv"),
+				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Depends_on", "Dependency kind"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Depends_on", Int64.Type}, {"Dependency kind", type text}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

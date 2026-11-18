@@ -1,0 +1,265 @@
+/// One row per table, column, measure and function of the model, per run.
+table Fact_Object
+
+	/// Tables, columns, measures and functions in the latest run of each model.
+	measure Objects =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( COUNTROWS ( Fact_Object ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Measures in the model and in reports.
+	measure Measures =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Measure" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Measures that no report, measure or other part of the model uses.
+	measure 'Unused measures' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Measure", Dim_Object[Status] = "Unused" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Columns, including calculated columns.
+	measure Columns =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Column" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Columns that no report, formula, relationship, hierarchy, role or query uses.
+	measure 'Unused columns' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Column", Dim_Object[Status] = "Unused" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Tables, including calculated tables.
+	measure Tables =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Table" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Tables of which nothing is used.
+	measure 'Unused tables' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Object type] = "Table", Dim_Object[Status] = "Unused" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Formulas that refer to something that does not exist, or depend on such a formula.
+	measure 'Broken formulas' =
+			IF (
+			    NOT ISBLANK ( [Objects] ),
+			    (
+			        VAR _runs =
+			            SELECTCOLUMNS (
+			                ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			                "@run", [@run]
+			            )
+			        RETURN
+			            CALCULATE ( CALCULATE ( COUNTROWS ( Fact_Object ), Dim_Object[Broken] = "Yes" ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+			    ) + 0
+			)
+		formatString: #,0
+
+	/// Unused measures and columns as a share of all measures and columns.
+	measure 'Unused share' =
+			DIVIDE ( [Unused measures] + [Unused columns], [Measures] + [Columns] )
+		formatString: 0.0%
+
+	/// How often the object is a field in a visual or filter.
+	measure 'Uses in reports' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( SUM ( Fact_Object[Report uses] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// How many measures, columns and tables refer to the object directly.
+	measure 'Used by objects' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( SUM ( Fact_Object[Used by] ), TREATAS ( _runs, Dim_Run[Key_Run] ) )
+		formatString: #,0
+
+	/// Memory used, in megabytes. Only when the run had sizes.
+	measure 'Size (MB)' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( SUM ( Fact_Object[Size] ), TREATAS ( _runs, Dim_Run[Key_Run] ) ) / 1000000
+		formatString: #,0.0
+
+	/// Only when the run had sizes (a .vpax or the model in Power BI Desktop).
+	measure 'Model size (MB)' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( CALCULATE ( SUM ( Fact_Object[Size] ), Dim_Object[Object type] = "Table" ), TREATAS ( _runs, Dim_Run[Key_Run] ) ) / 1000000
+		formatString: #,0.0
+
+	/// Memory used by columns nothing uses.
+	measure 'Unused size (MB)' =
+			VAR _runs =
+			    SELECTCOLUMNS (
+			        ADDCOLUMNS ( VALUES ( Dim_Run[Model] ), "@run", CALCULATE ( MAX ( Fact_Object[Key_Run] ), REMOVEFILTERS ( Dim_Object ) ) ),
+			        "@run", [@run]
+			    )
+			RETURN
+			    CALCULATE ( CALCULATE ( SUM ( Fact_Object[Size] ), Dim_Object[Object type] = "Column", Dim_Object[Status] = "Unused" ), TREATAS ( _runs, Dim_Run[Key_Run] ) ) / 1000000
+		formatString: #,0.0
+
+	column Key_Run
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Run
+
+	column Key_Date
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	column Key_Object
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Object
+
+	column 'Report uses'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Report uses
+
+	column 'Depends on'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Depends on
+
+	column 'Used by'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Used by
+
+	column Rows
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Rows
+
+	column 'Distinct values'
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Distinct values
+
+	/// Bytes in memory, from a VertiPaq export (.vpax) or Power BI Desktop.
+	column Size
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Size
+
+	partition Fact_Object = m
+		mode: import
+		source =
+				let
+				    Source = LoadCsv("objects.csv"),
+				    Kept = Table.SelectRows(Source, each [Object type] <> "Missing"),
+				    Picked = Table.SelectColumns(Kept, {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Report uses", Int64.Type}, {"Depends on", Int64.Type}, {"Used by", Int64.Type}, {"Rows", Int64.Type}, {"Distinct values", Int64.Type}, {"Size", Int64.Type}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

@@ -1,0 +1,46 @@
+/// One row per day from the first to the last run.
+table Dim_Date
+	dataCategory: Time
+
+	column Key_Date
+		dataType: int64
+		isHidden
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Date
+
+	column Date
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Year
+		dataType: int64
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Year
+
+	column Month
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Month
+
+	partition Dim_Date = m
+		mode: import
+		source =
+				let
+				    Runs = Dim_Run,
+				    First = List.Min(Runs[Date]),
+				    Last = List.Max(Runs[Date]),
+				    Days = List.Dates(First, Duration.Days(Last - First) + 1, #duration(1, 0, 0, 0)),
+				    Dates = Table.FromList(Days, Splitter.SplitByNothing(), type table [Date = date]),
+				    WithKey = Table.AddColumn(Dates, "Key_Date", each Date.Year([Date]) * 10000 + Date.Month([Date]) * 100 + Date.Day([Date]), Int64.Type),
+				    WithYear = Table.AddColumn(WithKey, "Year", each Date.Year([Date]), Int64.Type),
+				    WithMonth = Table.AddColumn(WithYear, "Month", each Date.ToText([Date], "yyyy-MM"), type text)
+				in
+				    Table.SelectColumns(WithMonth, {"Key_Date", "Date", "Year", "Month"})
+
+	annotation PBI_ResultType = Table

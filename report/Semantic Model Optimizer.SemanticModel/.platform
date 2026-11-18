@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "Semantic Model Optimizer"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "b08b665a-44a7-46dc-8b06-000eb904d90a"
+  }
+}

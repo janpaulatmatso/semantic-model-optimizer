@@ -1,0 +1,172 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "list",
+  "position": {
+    "x": 20,
+    "y": 94,
+    "z": 6000,
+    "height": 606,
+    "width": 1240,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Table"
+                }
+              },
+              "queryRef": "Dim_Object.Table",
+              "nativeQueryRef": "Table"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Name"
+                }
+              },
+              "queryRef": "Dim_Object.Name",
+              "nativeQueryRef": "Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Kind"
+                }
+              },
+              "queryRef": "Dim_Object.Kind",
+              "nativeQueryRef": "Kind"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Status"
+                }
+              },
+              "queryRef": "Dim_Object.Status",
+              "nativeQueryRef": "Status"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Hidden"
+                }
+              },
+              "queryRef": "Dim_Object.Hidden",
+              "nativeQueryRef": "Hidden"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Reports using it"
+                }
+              },
+              "queryRef": "Fact_Usage.Reports using it",
+              "nativeQueryRef": "Reports using it"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Visuals"
+                }
+              },
+              "queryRef": "Fact_Usage.Visuals",
+              "nativeQueryRef": "Visuals"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Object"
+                    }
+                  },
+                  "Property": "Used by objects"
+                }
+              },
+              "queryRef": "Fact_Object.Used by objects",
+              "nativeQueryRef": "Used by objects"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Object"
+                    }
+                  },
+                  "Property": "Size (MB)"
+                }
+              },
+              "queryRef": "Fact_Object.Size (MB)",
+              "nativeQueryRef": "Size (MB)"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Tables, columns and measures'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

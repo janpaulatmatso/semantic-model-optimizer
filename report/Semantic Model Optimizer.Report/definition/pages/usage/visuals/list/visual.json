@@ -1,0 +1,158 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "list",
+  "position": {
+    "x": 410,
+    "y": 94,
+    "z": 7000,
+    "height": 606,
+    "width": 850,
+    "tabOrder": 7000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Run"
+                    }
+                  },
+                  "Property": "Model"
+                }
+              },
+              "queryRef": "Dim_Run.Model",
+              "nativeQueryRef": "Model"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Report"
+                }
+              },
+              "queryRef": "Dim_Visual.Report",
+              "nativeQueryRef": "Report"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Page"
+                }
+              },
+              "queryRef": "Dim_Visual.Page",
+              "nativeQueryRef": "Page"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Visual"
+                }
+              },
+              "queryRef": "Dim_Visual.Visual",
+              "nativeQueryRef": "Visual"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Visual type"
+                }
+              },
+              "queryRef": "Dim_Visual.Visual type",
+              "nativeQueryRef": "Visual type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Object"
+                    }
+                  },
+                  "Property": "Label"
+                }
+              },
+              "queryRef": "Dim_Object.Label",
+              "nativeQueryRef": "Label"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Role"
+                }
+              },
+              "queryRef": "Fact_Usage.Role",
+              "nativeQueryRef": "Role"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Usage"
+                    }
+                  },
+                  "Property": "Field uses"
+                }
+              },
+              "queryRef": "Fact_Usage.Field uses",
+              "nativeQueryRef": "Field uses"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Reports and visuals that use them'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

@@ -268,19 +268,29 @@ function modelFiles(dataFolder) {
   add(sm + 'definition/model.tmdl', ['model Model', '\tculture: en-US', '\tdefaultPowerBIDataSourceVersion: powerBI_V3', '\tsourceQueryCulture: en-US', '\tdiscourageImplicitMeasures',
     '\tdataAccessOptions', '\t\tlegacyRedirects', '\t\treturnErrorValuesAsNull', '', 'annotation __PBI_TimeIntelligenceEnabled = 0', '',
     'annotation PBI_QueryOrder = ' + JSON.stringify(order), '', ...defs.map(t => 'ref table ' + q(t.name)), ''].join('\n'));
+  // where the runs are: a folder on disk, a folder in OneLake, or (the template in the repository) left to the user
+  const kind = !dataFolder ? 'any' : isUrl(dataFolder) ? 'url' : 'folder';
+  const EXAMPLE = 'such as C:\\SMO\\data, or a Lakehouse folder in OneLake, such as https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data';
+  const source = {
+    url: ['    Source = AzureStorage.DataLake(ExportFolder, [HierarchicalNavigation = false]),'],
+    folder: ['    Source = Folder.Files(ExportFolder),'],
+    any: ['    Source =',
+      '        if ExportFolder = "" then error "Fill in the parameter ExportFolder (Transform data > Edit parameters): the data folder of your exports, ' + EXAMPLE.replace(/\\/g, '\\') + '. Then choose Refresh."',
+      '        else if Text.StartsWith(ExportFolder, "https://", Comparer.OrdinalIgnoreCase) then AzureStorage.DataLake(ExportFolder, [HierarchicalNavigation = false])',
+      '        else Folder.Files(ExportFolder),'],
+  }[kind];
   add(sm + 'definition/expressions.tmdl', [
-    isUrl(dataFolder)
-      ? '/// The folder with the exports in OneLake (a Fabric Lakehouse) or Azure Data Lake: https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/<folder>/data'
-      : '/// The folder with the exports: the data folder next to this report. Change it when you move the files.',
-    'expression ExportFolder = ' + JSON.stringify(dataFolder) + ' meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]', '',
+    { url: '/// The folder with the exports in OneLake (a Fabric Lakehouse) or Azure Data Lake: https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/<folder>/data',
+      folder: '/// The folder with the exports: the data folder next to this report. Change it when you move the files.',
+      any: '/// The folder with the exports: a folder on disk or in OneLake, ' + EXAMPLE + '.' }[kind],
+    'expression ExportFolder = ' + JSON.stringify(dataFolder || '') + ' meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=' + (kind === 'any' ? 'false' : 'true') + ']', '',
     '\tannotation PBI_ResultType = Text', '',
     '/// Reads one kind of CSV file from every run folder and puts the rows together.',
     'expression LoadCsv =', block([
       '(name as text) as table =>',
       'let',
-      isUrl(dataFolder)
-        ? '    Files = Table.SelectRows(AzureStorage.DataLake(ExportFolder, [HierarchicalNavigation = false]), each [Name] = name),'
-        : '    Files = Table.SelectRows(Folder.Files(ExportFolder), each [Name] = name),',
+      ...source,
+      '    Files = Table.SelectRows(Source, each [Name] = name),',
       '    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),',
       '    Combined = Table.Combine(Tables)',
       'in',
@@ -378,7 +388,8 @@ function reportFiles() {
   return files;
 }
 
-/** Every file of the Power BI project, for a data folder (an absolute path). */
+/** Every file of the Power BI project, for a data folder (an absolute path, or an https address in OneLake). Without
+ * one it is the template in the repository: the user fills in the parameter ExportFolder. */
 function projectFiles(dataFolder) {
   return [
     { path: NAME + '.pbip', text: JSON.stringify({ $schema: 'https://developer.microsoft.com/json-schemas/fabric/pbip/pbipProperties/1.0.0/schema.json', version: '1.0', artifacts: [{ report: { path: NAME + '.Report' } }], settings: { enableAutoRecovery: true } }, null, 2) + '\n' },

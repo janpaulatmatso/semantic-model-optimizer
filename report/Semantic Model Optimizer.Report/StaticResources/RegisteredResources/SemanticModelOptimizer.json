@@ -1,0 +1,16 @@
+{
+  "name": "Semantic Model Optimizer",
+  "dataColors": [
+    "#2456D6",
+    "#7A4FD6",
+    "#E0802B",
+    "#2E9E6A",
+    "#D64C4C",
+    "#7A8296",
+    "#C9A227",
+    "#1F9BB4"
+  ],
+  "background": "#FFFFFF",
+  "foreground": "#1C2330",
+  "tableAccent": "#2456D6"
+}

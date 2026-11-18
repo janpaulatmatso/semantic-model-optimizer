@@ -762,6 +762,21 @@ test('Workspaces: a report whose model is in another workspace is followed to it
   assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000002/visuals.csv'), 'utf8'), /"Sales - Kosten"/);
 });
 
+test('Power BI report template: in the repository, up to date, and without an address or sign-in of anyone', () => {
+  const R = require('../build-report.js');
+  const dir = path.join(__dirname, '..', 'report');
+  const files = R.files();
+  for (const f of files) assert.equal(fs.readFileSync(path.join(dir, f.path), 'utf8').replace(/\r\n/g, '\n'), f.text, 'report/' + f.path + ' is not up to date: run node build-report.js');
+  const all = files.map(f => f.text).join('\n');
+  assert.match(all, /expression ExportFolder = "" meta/);
+  assert.match(all, /if ExportFolder = "" then error "Fill in the parameter ExportFolder/);
+  assert.ok(all.includes('AzureStorage.DataLake(ExportFolder') && all.includes('Folder.Files(ExportFolder)'), 'both a folder and OneLake');
+  // nothing of anyone: no workspace or lakehouse in an address, no path on a disk, no mail address, no password
+  assert.ok(!/onelake\.dfs\.fabric\.microsoft\.com\/[0-9a-f]{8}-/i.test(all));
+  assert.ok(!/[A-Z]:\\(Users|Documents)|\/Users\/|@[a-z0-9-]+\.(nl|com)\b|password|secret|asazure:\/\/[a-z]/i.test(all));
+  assert.ok(!files.some(f => /\.pbi\/|cache\.abf|localSettings/i.test(f.path)));
+});
+
 test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
   const B = require('../build-fabric.js');
   const dir = path.join(__dirname, '..', 'fabric');

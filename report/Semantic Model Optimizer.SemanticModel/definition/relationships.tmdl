@@ -1,0 +1,59 @@
+relationship 141027a1-0b57-4427-89bf-6b7d9a4002d1
+	fromColumn: Fact_Object.Key_Run
+	toColumn: Dim_Run.Key_Run
+
+relationship 0fdd5900-7e59-4f7a-8802-bb7c5acbcef0
+	fromColumn: Fact_Object.Key_Date
+	toColumn: Dim_Date.Key_Date
+
+relationship b92a1eb3-8e0c-4d2d-8381-b4bfc426b5a3
+	fromColumn: Fact_Object.Key_Object
+	toColumn: Dim_Object.Key_Object
+
+relationship 8b212233-bd1c-4985-8c65-3d478be102e3
+	fromColumn: Fact_Usage.Key_Run
+	toColumn: Dim_Run.Key_Run
+
+relationship 84be3e36-12ea-48e4-8b78-7a1a196c7466
+	fromColumn: Fact_Usage.Key_Date
+	toColumn: Dim_Date.Key_Date
+
+relationship 3cce7289-ba20-4ae7-8a09-61cda9d97539
+	fromColumn: Fact_Usage.Key_Object
+	toColumn: Dim_Object.Key_Object
+
+relationship 808d887e-94da-4e2c-8ba1-5c327e43e1ae
+	fromColumn: Fact_Usage.Key_Visual
+	toColumn: Dim_Visual.Key_Visual
+
+relationship f16d5b1f-651f-47f1-82d1-188baf6a3d6f
+	fromColumn: Fact_Dependency.Key_Run
+	toColumn: Dim_Run.Key_Run
+
+relationship 36f7e232-97f9-4b90-828b-fc8e52557c02
+	fromColumn: Fact_Dependency.Key_Date
+	toColumn: Dim_Date.Key_Date
+
+relationship 68bcbc85-eac4-4643-8a8a-4d61b735cfd5
+	fromColumn: Fact_Dependency.Key_Object
+	toColumn: Dim_Object.Key_Object
+
+relationship 5fd02463-af66-4ecd-825e-1cf7ca31afb3
+	fromColumn: Fact_Dependency.Key_Depends_on
+	toColumn: Dim_Dependency.Key_Depends_on
+
+relationship eb7c29c1-ce8c-46a3-86de-c235ff2199b1
+	fromColumn: Fact_Finding.Key_Run
+	toColumn: Dim_Run.Key_Run
+
+relationship 0ee5dfa0-3667-4626-8556-4f1463396b50
+	fromColumn: Fact_Finding.Key_Date
+	toColumn: Dim_Date.Key_Date
+
+relationship 5d462053-c32e-44f9-8a0e-2ad756485b03
+	fromColumn: Fact_Finding.Key_Object
+	toColumn: Dim_Object.Key_Object
+
+relationship 8c7161da-f90a-49c4-84a7-53de69e098aa
+	fromColumn: Fact_Finding.Key_Rule
+	toColumn: Dim_Rule.Key_Rule
