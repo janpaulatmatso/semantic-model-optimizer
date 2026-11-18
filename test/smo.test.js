@@ -777,6 +777,105 @@ test('Power BI report template: in the repository, up to date, and without an ad
   assert.ok(!files.some(f => /\.pbi\/|cache\.abf|localSettings/i.test(f.path)));
 });
 
+test('Lakehouse tables: the star schema the notebook writes, complete and with every key in its dimension', async t => {
+  const os = require('os');
+  const P = require('../powerbi.js');
+  const { makeStress } = require('./fixture-stress.js');
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-lake-'));
+  const cli = path.join(__dirname, '..', 'cli.js');
+  for (const dir of [makeProject(), makeStress(), makeProject()]) {
+    const r = spawnSync(process.execPath, [cli, dir, '--export', out], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  }
+  const star = py(t, ['star', out]);
+  if (!star) return;
+  const defs = P.lakehouseTables();
+  assert.deepEqual(Object.keys(star), defs.map(d => d.name));
+  for (const d of defs) {
+    assert.equal(star[d.name].table, 'smo_' + d.name.toLowerCase());
+    assert.deepEqual(star[d.name].columns, d.columns.map(c => [c.column, c.type]));
+    for (const [c] of star[d.name].columns) assert.match(c, /^[a-z0-9_]+$/, 'a column name Delta and Direct Lake accept');
+  }
+  const col = (table, name) => { const i = defs.find(d => d.name === table).columns.findIndex(c => c.name === name); return star[table].rows.map(r => r[i]); };
+  // the CSV files, counted here on their own
+  const csvRows = file => fs.readdirSync(path.join(out, 'data')).sort().flatMap(run => fs.readFileSync(path.join(out, 'data', run, file), 'utf8').replace(/^﻿/, '').split('\r\n').slice(1).filter(Boolean));
+  const objects = csvRows('objects.csv'), missing = objects.filter(l => l.includes('"Missing"')).length;
+  assert.ok(missing > 0);
+  assert.equal(star.Fact_Object.rows.length, objects.length - missing, 'Fact_Object leaves out the fields that are missing from a model');
+  assert.equal(star.Dim_Object.rows.length, objects.length + 1);
+  assert.deepEqual(star.Dim_Object.rows[0].slice(0, 3), [-1, '', 'Model']);
+  assert.equal(star.Dim_Run.rows.length, 3);
+  assert.equal(new Set(col('Dim_Rule', 'Key_Rule')).size, star.Dim_Rule.rows.length, 'one row per rule');
+  assert.deepEqual(col('Dim_Dependency', 'Key_Depends_on'), col('Dim_Object', 'Key_Object'));
+  // every key in a fact table has its row in the dimension
+  const keys = { Key_Run: ['Dim_Run', 'Key_Run'], Key_Date: ['Dim_Date', 'Key_Date'], Key_Object: ['Dim_Object', 'Key_Object'], Key_Visual: ['Dim_Visual', 'Key_Visual'],
+    Key_Rule: ['Dim_Rule', 'Key_Rule'], Key_Depends_on: ['Dim_Dependency', 'Key_Depends_on'] };
+  for (const f of defs.filter(d => d.name.startsWith('Fact_'))) {
+    for (const c of f.columns.filter(c => keys[c.name])) {
+      const have = new Set(col(...keys[c.name]));
+      const lost = col(f.name, c.name).filter(v => !have.has(v));
+      assert.deepEqual(lost, [], `${f.name}[${c.name}] has keys without a row in ${keys[c.name][0]}`);
+    }
+  }
+  // the Direct Lake model reads these tables, and passes the checks of this tool like the import model
+  const files = P.directLakeFiles('server.datawarehouse.fabric.microsoft.com', 'database-id');
+  assert.ok(!files.some(f => /\.platform$|definition\.pbir$/.test(f.path)));
+  const tmdl = files.filter(f => /\.tmdl$/.test(f.path)).map(f => f.text).join('\n');
+  assert.equal((tmdl.match(/mode: directLake/g) || []).length, defs.length);
+  assert.ok(!/= m\n|Folder\.Files|AzureStorage|LoadCsv|ExportFolder/.test(tmdl), 'no Power Query in a Direct Lake model');
+  for (const d of defs) for (const c of d.columns) assert.ok(tmdl.includes('sourceColumn: ' + c.column), d.name + '.' + c.name);
+  const proj = SMO.loadProject(files.map(f => ({ path: f.path, text: f.text })).concat([{ path: P.NAME + '.Report/definition.pbir', text: '{}' }]));
+  const m = proj.models[0], a = SMO.analyze(m.model, proj.reports);
+  assert.equal(m.model.tables.length, defs.length);
+  assert.equal(a.list.filter(n => n.broken).length, 0);
+  assert.equal(a.broken.length, 0, 'every field the report uses is in the Direct Lake model');
+});
+
+test('Lakehouse tables: the notebook creates the Direct Lake model and report once, and refreshes them after', t => {
+  const os = require('os');
+  const fab = 'https://api.fabric.microsoft.com/v1', pbi = 'https://api.powerbi.com/v1.0/myorg';
+  const ok = (body, status) => ({ status: status || 200, body });
+  const lake = { ['GET ' + fab + '/workspaces/w1/lakehouses/l1']: ok({ id: 'l1', properties: { sqlEndpointProperties: { connectionString: 'abc.datawarehouse.fabric.microsoft.com', id: 'sql1', provisioningStatus: 'Success' } } }),
+    ['POST ' + fab + '/workspaces/w1/sqlEndpoints/sql1/refreshMetadata']: ok({ value: [] }) };
+  const run = responses => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-dl-'));
+    fs.writeFileSync(path.join(tmp, 'responses.json'), JSON.stringify(responses));
+    return py(t, ['publish', path.join(tmp, 'responses.json')]);
+  };
+  const decode = body => Object.fromEntries(JSON.parse(body).definition.parts.map(p => [p.path, Buffer.from(p.payload, 'base64').toString('utf8')]));
+
+  // the first time: the model, then the report on it
+  const first = run(Object.assign({
+    ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'other', displayName: 'Sales' }] }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels']: ok({ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)' }, 201),
+    ['POST ' + fab + '/workspaces/w1/reports']: { status: 202, headers: { location: fab + '/operations/op1' }, body: '' },
+    ['GET ' + fab + '/operations/op1']: ok({ status: 'Succeeded' }),
+    ['GET ' + fab + '/operations/op1/result']: ok({ id: 'r1' }),
+  }, lake));
+  if (!first) return;
+  assert.deepEqual(first.result, { model: 'm1', created: true });
+  assert.match(first.log.join('\n'), /model and report created/);
+  const model = decode(first.sent.find(s => s.call === 'POST ' + fab + '/workspaces/w1/semanticModels').body);
+  assert.match(model['definition/expressions.tmdl'], /Sql\.Database\("abc\.datawarehouse\.fabric\.microsoft\.com", "sql1"\)/);
+  assert.ok(model['definition.pbism'] && model['definition/model.tmdl'] && model['definition/tables/Fact_Object.tmdl']);
+  assert.ok(!Object.keys(model).some(p => /platform|Report/.test(p)));
+  const report = decode(first.sent.find(s => s.call === 'POST ' + fab + '/workspaces/w1/reports').body);
+  assert.equal(JSON.parse(report['definition.pbir']).datasetReference.byConnection.pbiModelDatabaseName, 'm1');
+  assert.ok(report['definition/report.json'] && report['definition/pages/usage/visuals/list/visual.json'] && report['StaticResources/RegisteredResources/SemanticModelOptimizer.json']);
+  assert.ok(!JSON.stringify(first.sent).includes('{{SQL'), 'the SQL endpoint is filled in everywhere');
+
+  // after that: the model is there, so it is only refreshed, and the report is left alone
+  const again = run(Object.assign({
+    ['GET ' + fab + '/workspaces/w1/semanticModels']: ok({ value: [{ id: 'm1', displayName: 'Semantic Model Optimizer (Direct Lake)' }] }),
+    ['POST ' + pbi + '/groups/w1/datasets/m1/refreshes']: ok('', 202),
+  }, lake));
+  assert.deepEqual(again.result, { model: 'm1', created: false });
+  assert.ok(!again.sent.some(s => /\/reports$|semanticModels$/.test(s.call) && s.call.startsWith('POST')));
+
+  // a Lakehouse whose SQL endpoint is not ready yet: a clear message, nothing created
+  assert.throws(() => run({ ['GET ' + fab + '/workspaces/w1/lakehouses/l1']: ok({ properties: { sqlEndpointProperties: { provisioningStatus: 'InProgress' } } }) }), /SQL analytics endpoint of the Lakehouse is not ready yet \(InProgress\)/);
+});
+
 test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
   const B = require('../build-fabric.js');
   const dir = path.join(__dirname, '..', 'fabric');
@@ -799,7 +898,8 @@ test('Fabric notebook: built from the Python port, complete, and it calls nothin
     assert.ok(!one.includes(bad), 'the notebook should not use ' + bad);
   const hosts = [...one.matchAll(/https:\/\/([a-z0-9.-]+)/g)].map(m => m[1]).filter((h, i, a) => a.indexOf(h) === i).sort();
   // github.com: the link to the manual; login.microsoftonline.com: the sign-in of the service principal for Analysis Services
-  assert.deepEqual(hosts, ['api.fabric.microsoft.com', 'api.powerbi.com', 'github.com', 'login.microsoftonline.com', 'onelake.dfs.fabric.microsoft.com']);
+  // developer.microsoft.com: the schemas named in the files of the Direct Lake report (never called)
+  assert.deepEqual(hosts, ['api.fabric.microsoft.com', 'api.powerbi.com', 'developer.microsoft.com', 'github.com', 'login.microsoftonline.com', 'onelake.dfs.fabric.microsoft.com']);
 });
 
 test('thin report: the live connection tells where the model lives', () => {

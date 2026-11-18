@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const SMO = require('./core.js');
+const P = require('./powerbi.js');
 
 const dir = path.join(__dirname, 'fabric');
 const read = f => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n');
@@ -20,7 +21,13 @@ function library() {
   const src = read('smo.py');
   const rules = SMO.RULES.map(r => '    ' + JSON.stringify({ id: r.id, group: r.group || '', severity: r.severity, title: r.title, help: r.help }) + ',').join('\n');
   if (!/# RULES-BEGIN[^\n]*\n[\s\S]*?# RULES-END/.test(src)) throw new Error('No RULES block found in fabric/smo.py');
-  return src.replace(/(# RULES-BEGIN[^\n]*\n)[\s\S]*?(# RULES-END)/, (m, a, b) => a + 'RULES = [\n' + rules + '\n]\n' + b);
+  if (!/# LAKEHOUSE-BEGIN[^\n]*\n[\s\S]*?# LAKEHOUSE-END/.test(src)) throw new Error('No LAKEHOUSE block found in fabric/smo.py');
+  // the tables in the Lakehouse and the Direct Lake report, from powerbi.js; the notebook fills in the SQL endpoint
+  const tables = P.lakehouseTables().map(t => '    ' + JSON.stringify(t) + ',').join('\n');
+  const report = Object.fromEntries(P.directLakeFiles('{{SQL_SERVER}}', '{{SQL_DATABASE}}').map(f => [f.path, f.text]));
+  return src.replace(/(# RULES-BEGIN[^\n]*\n)[\s\S]*?(# RULES-END)/, (m, a, b) => a + 'RULES = [\n' + rules + '\n]\n' + b)
+    .replace(/(# LAKEHOUSE-BEGIN[^\n]*\n)[\s\S]*?(# LAKEHOUSE-END)/, (m, a, b) => a + 'LAKEHOUSE_TABLES = [\n' + tables.replace(/\bnull\b/g, 'None').replace(/\btrue\b/g, 'True').replace(/\bfalse\b/g, 'False') + '\n]\n' +
+      'DIRECT_LAKE_FILES = ' + JSON.stringify(report, null, 1) + '\n' + b);
 }
 
 const PARAMS = `
@@ -29,6 +36,10 @@ WORKSPACES = "*"
 
 # Folder under Files in the default Lakehouse
 FOLDER = "SemanticModelOptimizer"
+
+# Also write the results as tables (smo_...) in the Lakehouse, and create the report "Semantic Model Optimizer
+# (Direct Lake)" on them in this workspace: no refresh to schedule and no sign-in to set up. False: only the files.
+DIRECT_LAKE = True
 
 # Azure Analysis Services (optional). Reports that are connected live to a model on Azure Analysis Services are
 # checked with that model when you fill these in. A notebook cannot sign in to Analysis Services as you, so it needs
@@ -57,6 +68,11 @@ if AAS_CLIENT_ID:  # the service principal for Azure Analysis Services; its secr
 result = scan(WORKSPACES, OUT, token, aas_token=aas)
 if not result["models"]:
     raise Exception("No model could be exported (see above).")
+
+# the results as tables in the Lakehouse, and the Direct Lake report on them
+if DIRECT_LAKE:
+    writeLakehouseTables(spark, OUT)
+    publishDirectLake(workspace_id, lakehouse_id, token)
 `;
 const SHOW = `
 import pandas as pd
@@ -77,7 +93,9 @@ The whole tool is in this notebook, in Python: it downloads nothing and installs
 const REPORT_MD = `
 ## The Power BI report
 
-The run is in the Lakehouse. To see it in Power BI, do this once:
+With \`DIRECT_LAKE = True\` the report *Semantic Model Optimizer (Direct Lake)* is in this workspace: open it, nothing to set up. It reads the \`smo_\` tables in the Lakehouse and shows each run as soon as the notebook is done.
+
+Without it, or to have the report on your computer: the runs are also files in the Lakehouse. To see them in Power BI, do this once:
 
 1. On your computer, with Semantic Model Optimizer (the setup or the portable exe from the releases), run the command the cell below prints. It writes the report, set up to read this Lakehouse.
 2. Open *Semantic Model Optimizer.pbip* in Power BI Desktop, sign in with your organisational account when it asks for OneLake, and choose **Refresh**.

@@ -50,5 +50,25 @@ elif mode == "scan":
     aas = smo.aasToken("tenant-id", "client-id", "s3cret") if any("login.microsoftonline.com" in k for k in responses) else None
     result = smo.scan(sys.argv[4], sys.argv[3], "test-token", now=datetime.datetime(2026, 1, 2, 3, 4, 5), log=lines.append, aas_token=aas)
     print(json.dumps({"result": result, "log": lines, "calls": calls}))
+elif mode == "star":  # the tables the notebook writes to the Lakehouse, from the runs in a folder
+    t = smo.starTables(sys.argv[2])
+    print(json.dumps({k: {"table": v["table"], "columns": v["columns"], "rows": v["rows"]} for k, v in t.items()}, default=str))
+elif mode == "publish":  # creating the Direct Lake model and report, with the APIs replaced
+    responses = json.load(open(sys.argv[2], encoding="utf-8"))
+    sent = []
+
+    def fake(method, url, token=None, body=None, headers=None):
+        sent.append({"call": method + " " + url, "body": body.decode("utf-8") if body else None})
+        assert token == "test-token"
+        r = responses.get(method + " " + url)
+        if r is None:
+            raise Exception("unexpected call " + method + " " + url)
+        return r["status"], r.get("headers") or {}, r["body"] if isinstance(r["body"], str) else json.dumps(r["body"])
+
+    smo.http = fake
+    smo.sleep = lambda s: None
+    lines = []
+    out = smo.publishDirectLake("w1", "l1", "test-token", log=lines.append)
+    print(json.dumps({"result": out, "log": lines, "sent": sent}))
 elif mode == "sort":
     print(json.dumps(sorted(json.load(open(sys.argv[2], encoding="utf-8")), key=smo.loc_key)))

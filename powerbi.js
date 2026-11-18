@@ -149,7 +149,7 @@ function tableDefs() {
         Ms('Size (MB)', latest('SUM ( Fact_Object[Size] )') + ' / 1000000', '#,0.0', 'Memory used, in megabytes. Only when the run had sizes.'),
         Ms('Model size (MB)', latest(`CALCULATE ( SUM ( Fact_Object[Size] ), ${isType('Table')} )`) + ' / 1000000', '#,0.0', 'Only when the run had sizes (a .vpax or the model in Power BI Desktop).'),
         Ms('Unused size (MB)', latest(`CALCULATE ( SUM ( Fact_Object[Size] ), ${isType('Column')}, ${isStatus('Unused')} )`) + ' / 1000000', '#,0.0', 'Memory used by columns nothing uses.'),
-      ], 'each [Object type] <> "Missing"'),
+      ], { column: 'Object type', not: 'Missing' }),
     facts('Fact_Usage', 'One row per field in a visual or filter of a report, per run.', 'usage.csv',
       [key('Key_Object'), key('Key_Visual'), C('Role', 'string', { description: 'Where the field sits in the visual, for example Values, Category or Filters.' })], [
         Ms('Field uses', latest(count('Fact_Usage')), null, 'Fields in visuals and filters.'),
@@ -192,6 +192,16 @@ const RELATIONSHIPS = [
 ];
 
 /** Power Query for a table */
+/** Dim_Dependency is Dim_Object in the role "depends on": these columns, renamed */
+const ROLE_PAIRS = [['Key_Object', 'Key_Depends_on'], ['Label', 'Depends on'], ['Object type', 'Depends on type'], ['Kind', 'Depends on kind'], ['Table', 'Depends on table'],
+  ['Status', 'Depends on status'], ['Status order', 'Depends on status order']];
+/** the row -1 of Dim_Object, for findings about the model as a whole; other columns are empty */
+const NONE_ROW = { Key_Object: -1, 'Status order': 9, 'Object type': 'Model', Kind: 'model', Name: '(whole model)', Label: '(whole model)', Status: '(none)' };
+/** a column name as a column of a Delta table in the Lakehouse: lower case, no spaces (Direct Lake reads these) */
+const deltaColumn = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+/** the name of a table in the Lakehouse */
+const deltaTable = name => 'smo_' + deltaColumn(name);
+
 function source(t) {
   const types = '{' + t.cols.map(c => `{"${c.name}", ${M_TYPE[c.dataType]}}`).join(', ') + '}';
   const pick = '{' + t.cols.map(c => '"' + c.name + '"').join(', ') + '}';
@@ -205,21 +215,19 @@ function source(t) {
       'in', '    Table.SelectColumns(WithMonth, ' + pick + ')'].join('\n');
   }
   if (t.role) {
-    const pairs = [['Key_Object', 'Key_Depends_on'], ['Label', 'Depends on'], ['Object type', 'Depends on type'], ['Kind', 'Depends on kind'], ['Table', 'Depends on table'],
-      ['Status', 'Depends on status'], ['Status order', 'Depends on status order']];
+    const pairs = ROLE_PAIRS;
     return ['let', '    Source = ' + t.role + ',', '    Picked = Table.SelectColumns(Source, {' + pairs.map(p => '"' + p[0] + '"').join(', ') + '}),',
       '    Renamed = Table.RenameColumns(Picked, {' + pairs.map(p => `{"${p[0]}", "${p[1]}"}`).join(', ') + '})', 'in', '    Renamed'].join('\n');
   }
   const lines = ['let', `    Source = LoadCsv("${t.file}"),`];
   let last = 'Source';
-  if (t.filter) { lines.push(`    Kept = Table.SelectRows(${last}, ${t.filter}),`); last = 'Kept'; }
+  if (t.filter) { lines.push(`    Kept = Table.SelectRows(${last}, each [${t.filter.column}] <> ${JSON.stringify(t.filter.not)}),`); last = 'Kept'; }
   lines.push(`    Picked = Table.SelectColumns(${last}, ${pick}),`, `    Typed = Table.TransformColumnTypes(Picked, ${types}, "en-US")` + (t.unknown || t.distinct ? ',' : ''));
   last = 'Typed';
   if (t.distinct) { lines.push(`    Once = Table.Distinct(${last}, {"${t.distinct}"})`); last = 'Once'; }
   if (t.unknown) {
     // the row for findings about the model as a whole
-    const none = { Key_Object: '-1', 'Status order': '9', 'Object type': '"Model"', Kind: '"model"', Name: '"(whole model)"', Label: '"(whole model)"', Status: '"(none)"' };
-    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (none[c.name] || '""')).join(', ') + ']';
+    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (c.name in NONE_ROW ? JSON.stringify(NONE_ROW[c.name]) : '""')).join(', ') + ']';
     lines.push(`    WithNone = Table.InsertRows(${last}, 0, {${rec}})`);
     last = 'WithNone';
   }
@@ -227,7 +235,7 @@ function source(t) {
   return lines.join('\n');
 }
 
-function tableTmdl(t) {
+function tableTmdl(t, directLake) {
   const out = [];
   if (t.description) out.push('/// ' + t.description);
   out.push('table ' + q(t.name));
@@ -245,29 +253,39 @@ function tableTmdl(t) {
     if (c.dataType === 'date') out.push('\t\tformatString: yyyy-mm-dd');
     else if (c.format) out.push('\t\tformatString: ' + c.format);
     else if (c.dataType === 'int64') out.push('\t\tformatString: 0');
-    out.push('\t\tsummarizeBy: none', '\t\tsourceColumn: ' + c.name);
+    out.push('\t\tsummarizeBy: none', '\t\tsourceColumn: ' + (directLake ? deltaColumn(c.name) : c.name));
     if (c.sortBy) out.push('\t\tsortByColumn: ' + q(c.sortBy));
     out.push('');
     if (c.dataType === 'date') out.push('\t\tannotation UnderlyingDateTimeDataType = Date', '');
   }
-  out.push('\tpartition ' + q(t.name) + ' = m', '\t\tmode: import', '\t\tsource =', block(source(t), 4), '', '\tannotation PBI_ResultType = Table', '');
+  if (directLake) out.push('\tpartition ' + q(t.name) + ' = entity', '\t\tmode: directLake', '\t\tsource', '\t\t\tentityName: ' + deltaTable(t.name), '\t\t\tschemaName: dbo', '\t\t\texpressionSource: DatabaseQuery', '');
+  else out.push('\tpartition ' + q(t.name) + ' = m', '\t\tmode: import', '\t\tsource =', block(source(t), 4), '', '\tannotation PBI_ResultType = Table', '');
   return out.join('\n');
 }
 
 /** The folder with the runs: a path on disk, or the https address of a folder in OneLake (a Fabric Lakehouse) or Azure Data Lake. */
 const isUrl = s => /^https:\/\//i.test(String(s));
 
-function modelFiles(dataFolder) {
+/** directLake: {server, database} of the SQL analytics endpoint of the Lakehouse with the smo_ tables */
+function modelFiles(dataFolder, directLake) {
   const defs = tableDefs(), sm = NAME + '.SemanticModel/';
   const files = [];
   const add = (p, text) => files.push({ path: p, text: typeof text === 'string' ? text : JSON.stringify(text, null, 2) + '\n' });
   add(sm + '.platform', { $schema: 'https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json', metadata: { type: 'SemanticModel', displayName: NAME }, config: { version: '2.0', logicalId: uuid('model') } });
   add(sm + 'definition.pbism', { $schema: 'https://developer.microsoft.com/json-schemas/fabric/item/semanticModel/definitionProperties/1.0.0/schema.json', version: '4.2', settings: {} });
-  add(sm + 'definition/database.tmdl', 'database\n\tcompatibilityLevel: 1600\n');
-  const order = ['ExportFolder', 'LoadCsv'].concat(defs.map(t => t.name));
+  add(sm + 'definition/database.tmdl', 'database\n\tcompatibilityLevel: ' + (directLake ? 1604 : 1600) + '\n');
+  const order = (directLake ? ['DatabaseQuery'] : ['ExportFolder', 'LoadCsv']).concat(defs.map(t => t.name));
   add(sm + 'definition/model.tmdl', ['model Model', '\tculture: en-US', '\tdefaultPowerBIDataSourceVersion: powerBI_V3', '\tsourceQueryCulture: en-US', '\tdiscourageImplicitMeasures',
     '\tdataAccessOptions', '\t\tlegacyRedirects', '\t\treturnErrorValuesAsNull', '', 'annotation __PBI_TimeIntelligenceEnabled = 0', '',
     'annotation PBI_QueryOrder = ' + JSON.stringify(order), '', ...defs.map(t => 'ref table ' + q(t.name)), ''].join('\n'));
+  if (directLake) {
+    add(sm + 'definition/expressions.tmdl', ['/// The SQL analytics endpoint of the Lakehouse that holds the smo_ tables the notebook writes.',
+      'expression DatabaseQuery =', block(['let', '    database = Sql.Database(' + JSON.stringify(directLake.server) + ', ' + JSON.stringify(directLake.database) + ')', 'in', '    database'].join('\n'), 2), '',
+      '\tannotation PBI_IncludeFutureArtifacts = False', ''].join('\n'));
+    add(sm + 'definition/relationships.tmdl', RELATIONSHIPS.map(([f, k, d]) => ['relationship ' + uuid('rel|' + f + '|' + k), `\tfromColumn: ${f}.${k}`, `\ttoColumn: ${d}.${k}`, ''].join('\n')).join('\n'));
+    for (const t of defs) add(sm + 'definition/tables/' + t.name + '.tmdl', tableTmdl(t, true));
+    return files;
+  }
   // where the runs are: a folder on disk, a folder in OneLake, or (the template in the repository) left to the user
   const kind = !dataFolder ? 'any' : isUrl(dataFolder) ? 'url' : 'folder';
   const EXAMPLE = 'such as C:\\SMO\\data, or a Lakehouse folder in OneLake, such as https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data';
@@ -388,6 +406,23 @@ function reportFiles() {
   return files;
 }
 
+/** The star schema as tables in the Lakehouse, for the notebook: which file each table comes from, its columns and types,
+ * and the few steps Power Query does in the import report (a filter, unique rows, the row -1, the role, the dates). */
+function lakehouseTables() {
+  return tableDefs().map(t => ({
+    name: t.name, table: deltaTable(t.name), file: t.file || null, from: t.role || null, dates: !!t.dateTable,
+    columns: t.cols.map(c => ({ name: c.name, column: deltaColumn(c.name), type: c.dataType })),
+    exclude: t.filter || null, distinct: t.distinct || null, none: t.unknown ? NONE_ROW : null,
+    rename: t.role ? ROLE_PAIRS : null,
+  }));
+}
+
+/** The Direct Lake model and the report on it, for the notebook to create in Fabric (no .platform files: those are
+ * for Git). The report refers to its model with definition.pbir, which the notebook writes once the model exists. */
+function directLakeFiles(server, database) {
+  return modelFiles('', { server, database }).concat(reportFiles()).filter(f => !/(^|\/)\.platform$/.test(f.path) && !/definition\.pbir$/.test(f.path));
+}
+
 /** Every file of the Power BI project, for a data folder (an absolute path, or an https address in OneLake). Without
  * one it is the template in the repository: the user fills in the parameter ExportFolder. */
 function projectFiles(dataFolder) {
@@ -479,5 +514,5 @@ function exportProject(folder, proj, source, version, opts) {
   return writeRun(folder, tables, version, opts);
 }
 
-return { runTables, withRun, validTables, projectFiles, writeRun, writeReport, exportProject, ruleKey, NAME };
+return { runTables, withRun, validTables, projectFiles, writeRun, writeReport, exportProject, ruleKey, lakehouseTables, directLakeFiles, deltaColumn, NAME };
 });
