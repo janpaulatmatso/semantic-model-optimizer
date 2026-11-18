@@ -13,7 +13,7 @@ expression LoadCsv =
 		        else Folder.Files(ExportFolder),
 		    Files = Table.SelectRows(Source, each [Name] = name),
 		    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),
-		    Combined = if List.IsEmpty(Tables) then #table(columns, {}) else Table.Combine(Tables)
+		    Combined = if List.IsEmpty(Tables) then #table(columns, {}) else Table.SelectColumns(Table.Combine(Tables), columns, MissingField.UseNull)
 		in
 		    Table.TransformColumns(Combined, {}, each if _ = "" then null else _)
 

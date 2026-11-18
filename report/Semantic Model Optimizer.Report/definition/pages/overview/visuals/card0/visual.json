@@ -6,7 +6,7 @@
     "y": 144,
     "z": 5000,
     "height": 84,
-    "width": 167,
+    "width": 166,
     "tabOrder": 5000
   },
   "visual": {
@@ -41,6 +41,19 @@
               "expr": {
                 "Literal": {
                   "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Measures'"
                 }
               }
             }

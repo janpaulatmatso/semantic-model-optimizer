@@ -1,0 +1,143 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "list",
+  "position": {
+    "x": 492,
+    "y": 144,
+    "z": 6000,
+    "height": 556,
+    "width": 768,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Report"
+                }
+              },
+              "queryRef": "Dim_Visual.Report",
+              "nativeQueryRef": "Report"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Page"
+                }
+              },
+              "queryRef": "Dim_Visual.Page",
+              "nativeQueryRef": "Page"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Visual"
+                    }
+                  },
+                  "Property": "Visual"
+                }
+              },
+              "queryRef": "Dim_Visual.Visual",
+              "nativeQueryRef": "Visual"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dim_Rule"
+                    }
+                  },
+                  "Property": "Rule"
+                }
+              },
+              "queryRef": "Dim_Rule.Rule",
+              "nativeQueryRef": "Rule"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Finding"
+                    }
+                  },
+                  "Property": "Detail"
+                }
+              },
+              "queryRef": "Fact_Finding.Detail",
+              "nativeQueryRef": "Detail"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Fact_Finding"
+                    }
+                  },
+                  "Property": "Findings"
+                }
+              },
+              "queryRef": "Fact_Finding.Findings",
+              "nativeQueryRef": "Findings"
+            }
+          ]
+        }
+      }
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Findings in the reports'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Findings in the reports'"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

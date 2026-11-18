@@ -438,17 +438,51 @@
     }
   }
 
+  // ---------------------------------------------------------------- The layout of a visual (for the report design checks)
+
+  const litValue = p => (p && p.expr && p.expr.Literal ? p.expr.Literal.Value : undefined);
+  const propOf = (objs, obj, prop) => {
+    const o = objs && Array.isArray(objs[obj]) ? objs[obj][0] : null;
+    return o && o.properties ? o.properties[prop] : undefined;
+  };
+  /** a true/false setting of a visual: true, false, or null when it is not set (the theme decides) */
+  function flagOf(objs, obj, prop) {
+    const v = litValue(propOf(objs, obj, prop));
+    if (v === true || v === 'true') return true;
+    if (v === false || v === 'false') return false;
+    return null;
+  }
+  function textSet(objs, obj, prop) {
+    const p = propOf(objs, obj, prop);
+    if (p == null) return false;
+    const v = litValue(p);
+    return typeof v === 'string' ? v.replace(/^'|'$/g, '').trim() !== '' : true;
+  }
+  const numOr = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+  /** position, settings and fields per role of a visual */
+  function visualLayout(base, vco, objs, roles) {
+    return Object.assign(base, {
+      border: flagOf(vco, 'border', 'show'), shadow: flagOf(vco, 'dropShadow', 'show'), titleShown: flagOf(vco, 'title', 'show'),
+      altText: textSet(vco, 'general', 'altText'),
+      gridlines: flagOf(objs, 'valueAxis', 'gridlineShow') === true || flagOf(objs, 'categoryAxis', 'gridlineShow') === true,
+      labels: flagOf(objs, 'labels', 'show'), valueAxis: flagOf(objs, 'valueAxis', 'show'), roles,
+    });
+  }
+  const refsOf = (n, aliases) => { const out = []; walkRefs(n, aliases, r => out.push(r)); return out; };
+
   /** PBIR (definition/ folder with separate files) */
   function parsePbirReport(name, root, files) {
-    const rep = { name, root, format: 'PBIR', pages: [], uses: [], measures: [], visualCount: 0 };
+    const rep = { name, root, format: 'PBIR', pages: [], uses: [], measures: [], visualCount: 0, layout: [] };
     const rel = p => p.slice(root.length + 1);
-    const pageNames = {};
+    const pageNames = {}, layoutOf = {};
     for (const f of files) {
       const m = /^definition\/pages\/([^/]+)\/page\.json$/i.exec(rel(f.path));
       if (m) {
         const j = tryJson(f.text) || {};
         pageNames[m[1]] = j.displayName || m[1];
         rep.pages.push({ id: m[1], name: pageNames[m[1]], json: j });
+        layoutOf[m[1]] = { name: pageNames[m[1]], width: numOr(j.width, 1280), height: numOr(j.height, 720), visuals: [] };
+        rep.layout.push(layoutOf[m[1]]);
       }
     }
     const add = (ctx) => (r) => rep.uses.push(Object.assign({}, r, ctx));
@@ -475,6 +509,17 @@
         if (j.filterConfig) walkRefs(j.filterConfig, {}, add(Object.assign({ role: 'filter' }, ctx)));
         const rest = Object.assign({}, j, { visual: Object.assign({}, v, { query: undefined }), filterConfig: undefined });
         walkRefs(rest, {}, add(Object.assign({ role: 'formatting' }, ctx)));
+        if (layoutOf[m[1]]) {
+          const pos = j.position || {}, roles = {};
+          for (const role in q.queryState || {}) {
+            const prs = q.queryState[role] && q.queryState[role].projections;
+            roles[role] = (Array.isArray(prs) ? prs : []).map(pr => refsOf(pr && pr.field, {}));
+          }
+          layoutOf[m[1]].visuals.push(visualLayout({
+            id: ctx.visual, type: ctx.visualType, title: ctx.visualTitle, x: numOr(pos.x, 0), y: numOr(pos.y, 0), w: numOr(pos.width, 0), h: numOr(pos.height, 0),
+            tab: numOr(pos.tabOrder, null), hidden: !!j.isHidden, isGroup: !!j.visualGroup,
+          }, v.visualContainerObjects || {}, v.objects || {}, roles));
+        }
       } else if (/^definition\/report\.json$/i.test(r)) {
         walkRefs(tryJson(f.text), {}, add({ page: '', visual: '', visualType: '', role: 'report filter' }));
       } else if (/^definition\/reportExtensions\.json$/i.test(r)) {
@@ -489,7 +534,7 @@
 
   /** Legacy format: a single Layout / report.json with sections[] */
   function parseLegacyReport(name, root, layout) {
-    const rep = { name, root, format: 'Layout', pages: [], uses: [], measures: [], visualCount: 0 };
+    const rep = { name, root, format: 'Layout', pages: [], uses: [], measures: [], visualCount: 0, layout: [] };
     const add = (ctx) => (r) => rep.uses.push(Object.assign({}, r, ctx));
     walkRefs(tryJson(layout.filters), {}, add({ page: '', visual: '', visualType: '', role: 'report filter' }));
     const cfg = tryJson(layout.config) || {};
@@ -500,6 +545,8 @@
     for (const sec of layout.sections || []) {
       const page = sec.displayName || sec.name || '';
       rep.pages.push({ id: sec.name, name: page });
+      const pl = { name: page, width: numOr(sec.width, 1280), height: numOr(sec.height, 720), visuals: [] };
+      rep.layout.push(pl);
       walkRefs(tryJson(sec.filters), {}, add({ page, visual: '', visualType: '', role: 'page filter' }));
       for (const vc of sec.visualContainers || []) {
         rep.visualCount++;
@@ -513,6 +560,15 @@
         const aliases = {};
         for (const f of (sv.prototypeQuery && sv.prototypeQuery.From) || []) if (f.Name != null) aliases[f.Name] = f.Entity;
         walkRefs([sv.objects, sv.vcObjects], aliases, add(Object.assign({ role: 'formatting' }, ctx)));
+        const sel = new Map(), roles = {}, pr = sv.projections || {};
+        for (const s of (sv.prototypeQuery && sv.prototypeQuery.Select) || []) if (s && s.Name != null) sel.set(String(s.Name), s);
+        for (const role in pr) roles[role] = (Array.isArray(pr[role]) ? pr[role] : []).map(p => (p && sel.has(String(p.queryRef)) ? refsOf(sel.get(String(p.queryRef)), aliases) : []));
+        if (!sv.projections && sel.size) roles.fields = [...sel.values()].map(s => refsOf(s, aliases)); // older files: the query has the fields, without roles
+        const lp = (Array.isArray(c.layouts) && c.layouts[0] && c.layouts[0].position) || {};
+        pl.visuals.push(visualLayout({
+          id: ctx.visual, type: ctx.visualType, title: ctx.visualTitle, x: numOr(vc.x, 0), y: numOr(vc.y, 0), w: numOr(vc.width, 0), h: numOr(vc.height, 0),
+          tab: numOr(lp.tabOrder, null), hidden: !!(sv.display && sv.display.mode === 'hidden'), isGroup: !!c.singleVisualGroup,
+        }, sv.vcObjects || {}, sv.objects || {}, roles));
         walkRefs(tryJson(vc.filters), {}, add(Object.assign({ role: 'filter' }, ctx)));
         walkRefs([tryJson(vc.query), tryJson(vc.dataTransforms)], {}, add(Object.assign({ role: 'field' }, ctx)));
       }
@@ -922,7 +978,7 @@
       brokenFormulas: count(n => n.problems.length > 0),
       brokenAffected: count(n => n.broken && !n.problems.length),
     };
-    return { nodes, list: all, broken, stats, resolve };
+    return { nodes, list: all, broken, stats, resolve, layouts: reports.filter(r => r.layout).map(r => ({ report: r.name, pages: r.layout })) };
   }
 
   /** All direct and indirect dependencies (dir='deps') or dependents (dir='usedBy'), by distance. */
@@ -1833,6 +1889,7 @@
       if (auto.length) found.get('auto-date-time').push({ id: null, label: auto.length + ' hidden date tables', detail: 'File › Options › Data Load › Auto date/time' });
       kimballFindings(model, analysis, config, ri, add, found, col, list, design);
     }
+    reportFindings(analysis, found, col, noModel);
     // smo.config.json can switch a rule off or change how heavy it counts
     const rules = RULES.filter(r => setting[r.id] !== 'off' && setting[r.id] !== false)
       .map(r => Object.assign({}, r, { severity: /^(error|warning|info)$/.test(setting[r.id]) ? setting[r.id] : r.severity, items: found.get(r.id) }))
@@ -2097,6 +2154,131 @@
       }
     }
     return d;
+  }
+
+  // ---------------------------------------------------------------- Report design
+
+  RULES.push(
+    { id: 'report-near-aligned', group: 'report', severity: 'info', title: 'Visuals that are almost aligned', help: 'Edges 1 to 8 pixels apart look like a mistake. Align them exactly (Format › Align), or give them the same position under General › Properties.' },
+    { id: 'report-overlap', group: 'report', severity: 'info', title: 'Visuals that overlap', help: 'Two visuals with data cover part of each other. Move or resize them.' },
+    { id: 'report-off-page', group: 'report', severity: 'info', title: 'Visuals outside the page', help: 'Part of the visual is beyond the edge of the page, so it is cut off or needs scrolling.' },
+    { id: 'report-uneven-size', group: 'report', severity: 'info', title: 'Visuals of nearly the same size', help: 'Visuals of the same type side by side whose heights differ by a few pixels (or one above the other whose widths do). Make them the same.' },
+    { id: 'report-uneven-gaps', group: 'report', severity: 'info', title: 'Uneven spacing between visuals', help: 'The gaps between the visuals in a row or column differ by a few pixels. Equal spacing (Format › Distribute) makes the page calmer.' },
+    { id: 'report-busy-page', group: 'report', severity: 'info', title: 'Pages with many visuals', help: 'More than 15 visuals on a page is hard to take in, and each visual is a query that slows the page down. Split the page, or use drill-through and tooltips.' },
+    { id: 'report-pie-gauge', group: 'report', severity: 'info', title: 'Pie, donut and gauge charts', help: 'People compare lengths far better than angles and arcs. A sorted bar chart shows the same more precisely in less room; a gauge works better as a card with its target or a bullet chart.' },
+    { id: 'report-line-text-axis', group: 'report', severity: 'info', title: 'Line charts over text categories', help: 'A line suggests a course between the points, which only means something over time or another ordered scale. Use a bar chart for categories.' },
+    { id: 'report-wide-table', group: 'report', severity: 'info', title: 'Tables with many columns', help: 'A table with more than 10 columns, or a matrix with more than 3 levels of rows or 2 of columns, is hard to read and slow. Show fewer fields, or move the details to a drill-through page or tooltip.' },
+    { id: 'report-clutter', group: 'report', severity: 'info', title: 'Visuals with extra ink', help: 'Borders, shadows, gridlines, and data labels next to a value axis add ink that shows no data. Turn off what the reader does not need.' },
+    { id: 'report-empty-visual', group: 'report', severity: 'info', title: 'Visuals without fields', help: 'The visual has no fields, so it shows nothing. Fill it or remove it.' },
+    { id: 'report-no-title', group: 'report', severity: 'info', title: 'Charts with the title turned off', help: 'On a page with several charts and tables, a title says what each one shows. Turn it on, or put a text box above the chart.' },
+    { id: 'report-alt-text', group: 'report', severity: 'info', title: 'Visuals without alt text', help: 'Screen readers read the alt text of a visual (Format › General › Alt text). Without it, people who cannot see the page do not know what a visual shows.' },
+    { id: 'report-tab-order', group: 'report', severity: 'info', title: 'Tab order that differs from the reading order', help: 'With the keyboard, Tab goes through the visuals in the tab order (View › Selection › Tab order). It should follow the page from the top left to the bottom right.' },
+  );
+  const DECORATION = new Set(['textbox', 'shape', 'basicShape', 'image', 'actionButton', 'pageNavigator', 'bookmarkNavigator']);
+  const CARTESIAN = ['barChart', 'columnChart', 'clusteredBarChart', 'clusteredColumnChart', 'stackedBarChart', 'stackedColumnChart', 'hundredPercentStackedBarChart',
+    'hundredPercentStackedColumnChart', 'lineChart', 'areaChart', 'stackedAreaChart', 'hundredPercentStackedAreaChart', 'lineClusteredColumnComboChart', 'lineStackedColumnComboChart',
+    'ribbonChart', 'waterfallChart'];
+  const CHARTS = new Set(CARTESIAN.concat(['scatterChart', 'pieChart', 'donutChart', 'treemap', 'funnel', 'map', 'filledMap', 'gauge', 'tableEx', 'pivotTable']));
+  const LINES = new Set(['lineChart', 'areaChart', 'stackedAreaChart', 'hundredPercentStackedAreaChart']);
+  const NEAR = 8; // pixels: closer than this and not equal looks like a mistake
+  const pxText = n => String(Math.round(Math.abs(n)));
+
+  /** The layout and the choice of visuals in the reports: alignment, spacing, chart types, clutter, accessibility. */
+  function reportFindings(analysis, found, col, noModel) {
+    for (const rep of analysis.layouts || []) for (const page of rep.pages) {
+      const put = (rule, v, label, detail) => found.get(rule).push({ id: null, label: rep.report + ' › ' + page.name + (label ? ' › ' + label : ''), detail, subject: label,
+        visual: { report: rep.report, page: page.name, visual: v ? v.id : '', visualTitle: v ? v.title : '(whole page)', visualType: v ? v.type : '' } });
+      const name = v => v.title || (v.type || 'visual') + ' at ' + pxText(v.x) + ',' + pxText(v.y);
+      const isData = v => !!v.type && !DECORATION.has(v.type);
+      const all = page.visuals.filter(v => !v.isGroup), shown = all.filter(v => !v.hidden), data = shown.filter(isData);
+      const inside = (a, b) => b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+
+      for (let i = 0; i < shown.length; i++) for (let j = i + 1; j < shown.length; j++) {
+        const a = shown[i], b = shown[j], pair = name(a) + ' and ' + name(b);
+        if (!inside(a, b) && !inside(b, a)) {
+          const near = [];
+          for (const [edge, ea, eb] of [['left', a.x, b.x], ['right', a.x + a.w, b.x + b.w], ['top', a.y, b.y], ['bottom', a.y + a.h, b.y + b.h]]) {
+            const d = Math.abs(ea - eb);
+            if (d >= 1 && d <= NEAR) near.push(edge + ' edges ' + pxText(d) + ' px apart');
+          }
+          if (near.length) put('report-near-aligned', b, pair, near.join(', '));
+        }
+        if (isData(a) && isData(b)) {
+          const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+          if (ox >= 1 && oy >= 1) put('report-overlap', b, pair, 'they overlap by ' + pxText(ox) + ' × ' + pxText(oy) + ' px');
+        }
+        if (a.type === b.type) {
+          const s = [];
+          if (Math.abs(a.y - b.y) <= NEAR) { const d = Math.abs(a.h - b.h); if (d >= 1 && d <= NEAR) s.push('heights differ by ' + pxText(d) + ' px'); }
+          if (Math.abs(a.x - b.x) <= NEAR) { const d = Math.abs(a.w - b.w); if (d >= 1 && d <= NEAR) s.push('widths differ by ' + pxText(d) + ' px'); }
+          if (s.length) put('report-uneven-size', b, pair, s.join(', '));
+        }
+      }
+      for (const v of shown) {
+        const out = [];
+        if (v.x <= -1) out.push('left ' + pxText(v.x) + ' px');
+        if (v.y <= -1) out.push('top ' + pxText(v.y) + ' px');
+        if (v.x + v.w - page.width >= 1) out.push('right ' + pxText(v.x + v.w - page.width) + ' px');
+        if (v.y + v.h - page.height >= 1) out.push('bottom ' + pxText(v.y + v.h - page.height) + ' px');
+        if (out.length) put('report-off-page', v, name(v), 'beyond the page: ' + out.join(', '));
+      }
+      // rows (the same top) and columns (the same left) of three or more visuals
+      for (const [dir, along, len, across] of [['row', 'x', 'w', 'y'], ['column', 'y', 'h', 'x']]) {
+        const order = shown.map((v, i) => i).sort((p, q) => shown[p][across] - shown[q][across] || shown[p][along] - shown[q][along] || p - q);
+        const lines = [];
+        for (const i of order) {
+          const line = lines.find(l => Math.abs(shown[l[0]][across] - shown[i][across]) <= NEAR);
+          if (line) line.push(i); else lines.push([i]);
+        }
+        for (const line of lines) {
+          if (line.length < 3) continue;
+          const s = line.slice().sort((p, q) => shown[p][along] - shown[q][along] || p - q).map(i => shown[i]);
+          const gaps = [];
+          for (let k = 1; k < s.length; k++) { const d = s[k][along] - (s[k - 1][along] + s[k - 1][len]); if (d >= 1 && d <= 60) gaps.push(d); }
+          if (gaps.length < 2) continue;
+          const spread = Math.max(...gaps) - Math.min(...gaps);
+          if (spread >= 1 && spread <= 12) put('report-uneven-gaps', null, '', 'gaps of ' + gaps.map(pxText).join(', ') + ' px in the ' + dir + ' of ' + s.length + ' visuals at ' + across + ' = ' + pxText(s[0][across]));
+        }
+      }
+      if (data.length > 15) put('report-busy-page', null, '', data.length + ' visuals');
+
+      const charts = all.filter(v => CHARTS.has(v.type)).length;
+      for (const v of all) {
+        const count = role => (v.roles[role] || []).length;
+        if (v.type === 'pieChart' || v.type === 'donutChart') put('report-pie-gauge', v, name(v), (v.type === 'pieChart' ? 'a pie' : 'a donut') + ' chart: a sorted bar chart is easier to compare');
+        if (v.type === 'gauge') put('report-pie-gauge', v, name(v), 'a gauge: a card with its target, or a bullet chart, takes less room');
+        if (LINES.has(v.type) && !noModel) {
+          for (const f of v.roles.Category || []) for (const r of f) {
+            if (r.kind !== 'column') continue;
+            const c = col(r.entity, r.property), t = c && analysis.nodes.get('T|' + c.table);
+            if (c && /^string$/i.test(c.dataType || '') && !(t && /^time$/i.test(t.dataCategory || ''))) put('report-line-text-axis', v, name(v), 'the axis is ' + c.table + '[' + c.name + '], a text column');
+          }
+        }
+        if (v.type === 'tableEx' && count('Values') > 10) put('report-wide-table', v, name(v), count('Values') + ' columns');
+        if (v.type === 'pivotTable' && (count('Rows') > 3 || count('Columns') > 2)) put('report-wide-table', v, name(v), count('Rows') + ' levels of rows, ' + count('Columns') + ' of columns');
+        const junk = [];
+        if (v.border === true) junk.push('a border');
+        if (v.shadow === true) junk.push('a shadow');
+        if (v.gridlines) junk.push('gridlines');
+        if (v.labels === true && v.valueAxis !== false && CARTESIAN.includes(v.type)) junk.push('data labels next to a value axis');
+        if (junk.length >= 2) put('report-clutter', v, name(v), junk.join(', '));
+        if (isData(v) && !Object.keys(v.roles).some(r => v.roles[r].length)) put('report-empty-visual', v, name(v), 'no fields');
+        if (CHARTS.has(v.type) && v.titleShown === false && charts > 1) put('report-no-title', v, name(v), 'the title is turned off');
+      }
+      const noAlt = data.filter(v => !v.altText).length;
+      if (noAlt) put('report-alt-text', null, '', noAlt + ' of ' + data.length + ' visuals have no alt text');
+      // the tab order against the reading order: rows from the top, each from the left
+      if (data.length > 1 && data.every(v => v.tab != null) && new Set(data.map(v => v.tab)).size === data.length) {
+        const byY = data.map((v, i) => i).sort((p, q) => data[p].y - data[q].y || data[p].x - data[q].x || p - q);
+        const band = [];
+        let start = null, k = -1;
+        for (const i of byY) { if (start === null || data[i].y - start > NEAR) { start = data[i].y; k++; } band[i] = k; }
+        const reading = data.map((v, i) => i).sort((p, q) => band[p] - band[q] || data[p].x - data[q].x || p - q);
+        const tab = data.map((v, i) => i).sort((p, q) => data[p].tab - data[q].tab);
+        const at = reading.findIndex((i, n) => i !== tab[n]);
+        if (at >= 0) put('report-tab-order', data[tab[at]], name(data[tab[at]]), 'Tab goes to ' + name(data[tab[at]]) + ' before ' + name(data[reading[at]]));
+      }
+    }
   }
 
   // ---------------------------------------------------------------- Kimball dimensional modelling

@@ -263,9 +263,10 @@ table Fact_Object
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("objects.csv", {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
+				    Source = LoadCsv("objects.csv", {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size", "Object type"}),
 				    Kept = Table.SelectRows(Source, each [Object type] <> "Missing"),
-				    Picked = Table.SelectColumns(Kept, {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
+				    Keyed = Table.ReplaceValue(Kept, null, "-1", Replacer.ReplaceValue, {"Key_Run", "Key_Date", "Key_Object"}),
+				    Picked = Table.SelectColumns(Keyed, {"Key_Run", "Key_Date", "Key_Object", "Report uses", "Depends on", "Used by", "Rows", "Distinct values", "Size"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Report uses", Int64.Type}, {"Depends on", Int64.Type}, {"Used by", Int64.Type}, {"Rows", Int64.Type}, {"Distinct values", Int64.Type}, {"Size", Int64.Type}}, "en-US")
 				in
 				    Typed

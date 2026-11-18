@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
   "name": "filter5",
   "position": {
-    "x": 1022,
+    "x": 1020,
     "y": 62,
     "z": 5000,
     "height": 70,
-    "width": 238,
+    "width": 240,
     "tabOrder": 5000
   },
   "visual": {
@@ -73,6 +73,19 @@
               }
             },
             "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Depends on'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
               "expr": {
                 "Literal": {
                   "Value": "'Depends on'"

@@ -6,7 +6,7 @@
     "y": 62,
     "z": 1000,
     "height": 70,
-    "width": 197,
+    "width": 196,
     "tabOrder": 1000
   },
   "visual": {
@@ -73,6 +73,19 @@
               }
             },
             "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Model'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
               "expr": {
                 "Literal": {
                   "Value": "'Model'"

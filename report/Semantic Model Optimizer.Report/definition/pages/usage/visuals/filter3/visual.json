@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
   "name": "filter3",
   "position": {
-    "x": 437,
+    "x": 436,
     "y": 62,
     "z": 3000,
     "height": 70,
-    "width": 197,
+    "width": 196,
     "tabOrder": 3000
   },
   "visual": {
@@ -73,6 +73,19 @@
               }
             },
             "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Table'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
               "expr": {
                 "Literal": {
                   "Value": "'Table'"

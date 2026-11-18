@@ -23,6 +23,7 @@ const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model
 const STATUS_ORDER = { 'In report': 1, 'Used indirectly': 2, 'Model only': 3, Unused: 4, 'Not in model': 5, 'Model not loaded': 6, '(none)': 9 };
 const SEVERITY = { error: 'Error', warning: 'Warning', info: 'Note' };
 const SEVERITY_ORDER = { Error: 1, Warning: 2, Note: 3 };
+const GROUP = { kimball: 'Kimball', report: 'Report design' };
 const STEP = 10000000; // keys: run number × STEP + row number
 
 const yn = b => (b ? 'Yes' : 'No');
@@ -85,11 +86,11 @@ function runTables(analysis, checks, info) {
   for (const n of list) for (const d of n.deps) if (key.has(d)) dependencies.rows.push([run, dk, key.get(n.id), key.get(d), n.depKinds[d] || 'formula']);
 
   const rules = { head: ['Key_Rule', 'Rule id', 'Rule', 'Group', 'Severity', 'Severity order', 'Help'], rows: [] };
-  const findings = { head: ['Key_Run', 'Key_Date', 'Key_Object', 'Key_Rule', 'Detail'], rows: [] };
+  const findings = { head: ['Key_Run', 'Key_Date', 'Key_Object', 'Key_Rule', 'Key_Visual', 'Detail'], rows: [] };
   for (const r of (checks && checks.rules) || []) {
     const sev = SEVERITY[r.severity] || cap(r.severity);
-    rules.rows.push([ruleKey(r.id), r.id, r.title, r.group === 'kimball' ? 'Kimball' : 'General', sev, SEVERITY_ORDER[sev] || 9, r.help || '']);
-    for (const it of r.items) findings.rows.push([run, dk, (it.id && key.get(it.id)) || -1, ruleKey(r.id), [it.id ? '' : it.label, it.detail].filter(Boolean).join(' — ')]);
+    rules.rows.push([ruleKey(r.id), r.id, r.title, GROUP[r.group] || 'General', sev, SEVERITY_ORDER[sev] || 9, r.help || '']);
+    for (const it of r.items) findings.rows.push([run, dk, (it.id && key.get(it.id)) || -1, ruleKey(r.id), it.visual ? visualKey(it.visual) : -1, [it.id ? '' : it.visual ? it.subject : it.label, it.detail].filter(Boolean).join(' — ')]);
   }
 
   // the enterprise data warehouse bus matrix: each business process (fact table) with the dimensions it reaches
@@ -151,6 +152,7 @@ const DESCRIPTIONS = {
   'Fact_Object[Distinct values]': 'Distinct values in the column. Only when the run had sizes.',
   'Fact_Dependency[Dependency kind]': 'How the one refers to the other: formula, sort-by column, or the expression of a calculated table.',
   'Fact_Finding[Detail]': 'What the rule found, in words: the reference, relationship or value it is about.',
+  'Fact_Finding[Key_Visual]': 'The visual a report design finding is about. Relates to Dim_Visual; -1 for findings that are not about a visual.',
   'Fact_Bus[Key_Object]': 'The business process: a fact table, in this run. Relates to Dim_Object.',
   'Fact_Bus[Mark]': 'X related, X×3 three relationships to the same dimension (role-playing), ○ only through an inactive relationship, · reached through another dimension.',
   'Fact_Bus[Relationships]': 'How many relationships the fact table has to the dimension; 0 when it is reached through another dimension.',
@@ -188,12 +190,12 @@ const DESCRIPTIONS = {
   'Dim_Dimension[Dimension description]': 'The description of the dimension table in the model.',
   'Dim_Visual[Report]': 'The report.',
   'Dim_Visual[Page]': 'The page of the report.',
-  'Dim_Visual[Visual]': 'The title of the visual, or its type when it has no title.',
+  'Dim_Visual[Visual]': 'The title of the visual, or its type when it has no title; (whole page) for a finding about a page.',
   'Dim_Visual[Visual type]': 'The kind of visual, such as tableEx, barChart or slicer.',
   'Dim_Visual[Visual id]': 'The name of the visual in the report definition.',
   'Dim_Rule[Rule id]': 'The id of the rule, as used in smo.config.json.',
   'Dim_Rule[Rule]': 'The name of the rule.',
-  'Dim_Rule[Group]': 'General (best practices) or Kimball (dimensional modelling).',
+  'Dim_Rule[Group]': 'General (best practices), Kimball (dimensional modelling) or Report design (layout and choice of visuals).',
   'Dim_Rule[Severity]': 'Error, Warning or Note.',
   'Dim_Rule[Severity order]': 'Sorts Severity.',
   'Dim_Rule[Help]': 'Why the rule matters and what to do about it.',
@@ -238,7 +240,7 @@ function tableList() {
         Ms('Dependencies', latest(count('Fact_Dependency')), null, 'Direct references from one object to another.'),
       ]),
     facts('Fact_Finding', 'One row per finding of a rule, per run.', 'findings.csv',
-      [key('Key_Object'), key('Key_Rule'), C('Detail', 'string')], [
+      [key('Key_Object'), key('Key_Rule'), key('Key_Visual'), C('Detail', 'string')], [
         Ms('Findings', latest(count('Fact_Finding')), null, 'Findings of the best-practice and Kimball checks.'),
         Ms('Errors', zero(latest(count('Fact_Finding', 'Dim_Rule[Severity] = "Error"'))), null, 'Findings that break the model or a report.'),
         Ms('Warnings', zero(latest(count('Fact_Finding', 'Dim_Rule[Severity] = "Warning"'))), null, 'Findings that are probably wrong or costly.'),
@@ -257,13 +259,13 @@ function tableList() {
         C('Tool version', 'string'), C('Reports', 'int64'), C('Visuals', 'int64', { hidden: true }), C('Has sizes', 'string')] },
     { name: 'Dim_Date', description: 'One row per day from the first to the last run.', dateTable: true,
       cols: [key('Key_Date'), C('Date', 'date'), C('Year', 'int64'), C('Month', 'string')] },
-    { name: 'Dim_Object', description: 'One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.', file: 'objects.csv', cols: OBJECT_COLS, unknown: true },
+    { name: 'Dim_Object', description: 'One row per object per run, plus the row -1 (whole model) for findings about the model as a whole.', file: 'objects.csv', cols: OBJECT_COLS, unknown: NONE_ROW },
     { name: 'Dim_Dimension', description: 'Dim_Object in the role "dimension": the dimension tables of the bus matrix.', role: 'Dim_Object', rename: DIMENSION_PAIRS,
       cols: [key('Key_Dimension'), C('Dimension', 'string'), C('Dimension description', 'string')] },
     { name: 'Dim_Dependency', description: 'Dim_Object in the role "depends on": the object the other one refers to.', role: 'Dim_Object', rename: ROLE_PAIRS,
       cols: [key('Key_Depends_on'), C('Depends on', 'string'), C('Depends on type', 'string'), C('Depends on kind', 'string'), C('Depends on table', 'string'),
         C('Depends on status', 'string', { sortBy: 'Depends on status order' }), C('Depends on status order', 'int64', { hidden: true })] },
-    { name: 'Dim_Visual', description: 'One row per visual of a report, per run.', file: 'visuals.csv',
+    { name: 'Dim_Visual', description: 'One row per visual of a report, per run, plus the row -1 (none) for findings that are not about a visual.', file: 'visuals.csv', unknown: NO_VISUAL,
       cols: [key('Key_Visual'), C('Report', 'string'), C('Page', 'string'), C('Visual', 'string'), C('Visual type', 'string'), C('Visual id', 'string', { hidden: true })] },
     { name: 'Dim_Rule', description: 'One row per rule of the checks.', file: 'rules.csv', distinct: 'Key_Rule',
       cols: [key('Key_Rule'), C('Rule id', 'string', { hidden: true }), C('Rule', 'string'), C('Group', 'string'), C('Severity', 'string', { sortBy: 'Severity order' }),
@@ -275,7 +277,7 @@ const RELATIONSHIPS = [
   ['Fact_Object', 'Key_Run', 'Dim_Run'], ['Fact_Object', 'Key_Date', 'Dim_Date'], ['Fact_Object', 'Key_Object', 'Dim_Object'],
   ['Fact_Usage', 'Key_Run', 'Dim_Run'], ['Fact_Usage', 'Key_Date', 'Dim_Date'], ['Fact_Usage', 'Key_Object', 'Dim_Object'], ['Fact_Usage', 'Key_Visual', 'Dim_Visual'],
   ['Fact_Dependency', 'Key_Run', 'Dim_Run'], ['Fact_Dependency', 'Key_Date', 'Dim_Date'], ['Fact_Dependency', 'Key_Object', 'Dim_Object'], ['Fact_Dependency', 'Key_Depends_on', 'Dim_Dependency'],
-  ['Fact_Finding', 'Key_Run', 'Dim_Run'], ['Fact_Finding', 'Key_Date', 'Dim_Date'], ['Fact_Finding', 'Key_Object', 'Dim_Object'], ['Fact_Finding', 'Key_Rule', 'Dim_Rule'],
+  ['Fact_Finding', 'Key_Run', 'Dim_Run'], ['Fact_Finding', 'Key_Date', 'Dim_Date'], ['Fact_Finding', 'Key_Object', 'Dim_Object'], ['Fact_Finding', 'Key_Rule', 'Dim_Rule'], ['Fact_Finding', 'Key_Visual', 'Dim_Visual'],
   ['Fact_Bus', 'Key_Run', 'Dim_Run'], ['Fact_Bus', 'Key_Date', 'Dim_Date'], ['Fact_Bus', 'Key_Object', 'Dim_Object'], ['Fact_Bus', 'Key_Dimension', 'Dim_Dimension'],
 ];
 
@@ -287,6 +289,8 @@ const ROLE_PAIRS = [['Key_Object', 'Key_Depends_on'], ['Label', 'Depends on'], [
 const DIMENSION_PAIRS = [['Key_Object', 'Key_Dimension'], ['Name', 'Dimension'], ['Description', 'Dimension description']];
 /** the row -1 of Dim_Object, for findings about the model as a whole; other columns are empty */
 const NONE_ROW = { Key_Object: -1, 'Status order': 9, 'Object type': 'Model', Kind: 'model', Name: '(whole model)', Label: '(whole model)', Status: '(none)' };
+/** the row -1 of Dim_Visual, for findings that are not about a visual */
+const NO_VISUAL = { Key_Visual: -1, Report: '(none)', Page: '(none)', Visual: '(none)' };
 /** a column name as a column of a Delta table in the Lakehouse: lower case, no spaces (Direct Lake reads these) */
 const deltaColumn = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 /** the name of a table in the Lakehouse */
@@ -309,15 +313,19 @@ function source(t) {
     return ['let', '    Source = ' + t.role + ',', '    Picked = Table.SelectColumns(Source, {' + pairs.map(p => '"' + p[0] + '"').join(', ') + '}),',
       '    Renamed = Table.RenameColumns(Picked, {' + pairs.map(p => `{"${p[0]}", "${p[1]}"}`).join(', ') + '})', 'in', '    Renamed'].join('\n');
   }
-  const lines = ['let', `    Source = LoadCsv("${t.file}", ${pick}),`];
+  // the columns to read: an older run without one of them (such as Key_Visual) gives nulls there
+  const need = '{' + t.cols.map(c => c.name).concat(t.filter && !t.cols.some(c => c.name === t.filter.column) ? [t.filter.column] : []).map(n => '"' + n + '"').join(', ') + '}';
+  const lines = ['let', `    Source = LoadCsv("${t.file}", ${need}),`];
   let last = 'Source';
   if (t.filter) { lines.push(`    Kept = Table.SelectRows(${last}, each [${t.filter.column}] <> ${JSON.stringify(t.filter.not)}),`); last = 'Kept'; }
+  const keys = t.name.startsWith('Fact_') ? t.cols.filter(c => c.key).map(c => '"' + c.name + '"') : [];
+  if (keys.length) { lines.push(`    Keyed = Table.ReplaceValue(${last}, null, "-1", Replacer.ReplaceValue, {${keys.join(', ')}}),`); last = 'Keyed'; }
   lines.push(`    Picked = Table.SelectColumns(${last}, ${pick}),`, `    Typed = Table.TransformColumnTypes(Picked, ${types}, "en-US")` + (t.unknown || t.distinct ? ',' : ''));
   last = 'Typed';
   if (t.distinct) { lines.push(`    Once = Table.Distinct(${last}, {"${t.distinct}"})`); last = 'Once'; }
   if (t.unknown) {
     // the row for findings about the model as a whole
-    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (c.name in NONE_ROW ? JSON.stringify(NONE_ROW[c.name]) : '""')).join(', ') + ']';
+    const rec = '[' + t.cols.map(c => `#"${c.name}" = ` + (c.name in t.unknown ? JSON.stringify(t.unknown[c.name]) : '""')).join(', ') + ']';
     lines.push(`    WithNone = Table.InsertRows(${last}, 0, {${rec}})`);
     last = 'WithNone';
   }
@@ -400,7 +408,7 @@ function modelFiles(dataFolder, directLake) {
       ...source,
       '    Files = Table.SelectRows(Source, each [Name] = name),',
       '    Tables = List.Transform(Files[Content], each Table.PromoteHeaders(Csv.Document(_, [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv]), [PromoteAllScalars = true])),',
-      '    Combined = if List.IsEmpty(Tables) then #table(columns, {}) else Table.Combine(Tables)',
+      '    Combined = if List.IsEmpty(Tables) then #table(columns, {}) else Table.SelectColumns(Table.Combine(Tables), columns, MissingField.UseNull)',
       'in',
       '    Table.TransformColumns(Combined, {}, each if _ = "" then null else _)'].join('\n'), 2), '',
     '\tannotation PBI_ResultType = Function', ''].join('\n'));
@@ -435,7 +443,11 @@ function visual(id, type, x, y, w, h, roles, title, extra) {
     if (extra.objects) v.objects = extra.objects;
   }
   // a card already shows the name of its measure
-  v.visualContainerObjects = { title: [{ properties: type === 'card' ? { show: lit('false') } : { show: lit('true'), text: lit("'" + title.replace(/'/g, "''") + "'") } }] };
+  const text = lit("'" + title.replace(/'/g, "''") + "'");
+  v.visualContainerObjects = {
+    title: [{ properties: type === 'card' ? { show: lit('false') } : { show: lit('true'), text } }],
+    general: [{ properties: { altText: text } }], // what a screen reader says
+  };
   v.drillFilterOtherVisuals = true;
   return { $schema: SCHEMA + 'visualContainer/2.4.0/schema.json', name: id, position: { x, y, z: 0, height: h, width: w, tabOrder: 0 }, visual: v };
 }
@@ -475,6 +487,16 @@ function note(id, x, y, w, h, lines) {
   };
 }
 
+/** A filter on a page that keeps one value of a column: {column: [table, column], value} */
+function pageFilter(page, f) {
+  const [entity, property] = f.column;
+  return {
+    name: 'only' + page, field: { Column: { Expression: { SourceRef: { Entity: entity } }, Property: property } }, type: 'Categorical', isHiddenInViewMode: true,
+    filter: { Version: 2, From: [{ Name: 'f', Entity: entity, Type: 0 }],
+      Where: [{ Condition: { In: { Expressions: [{ Column: { Expression: { SourceRef: { Source: 'f' } }, Property: property } }], Values: [[{ Literal: { Value: "'" + f.value.replace(/'/g, "''") + "'" } }]] } } }] },
+  };
+}
+
 /** The header bar of a page: the name of the tool, and the page. */
 function header(page) {
   const run = (value, style) => ({ value, textStyle: Object.assign({ fontFamily: 'Segoe UI', fontSize: '14pt', color: '#FFFFFF' }, style || {}) });
@@ -495,22 +517,26 @@ function header(page) {
 
 const PAGE_W = 1280, PAGE_H = 720, HEADER_H = 48, MARGIN = 20, GAP = 12, FILTER_H = 70;
 const FILTER_Y = HEADER_H + 14, TOP = FILTER_Y + FILTER_H + GAP;
+/** n boxes in a row of this width from the left margin: whole pixels, equal gaps, the last one takes what is left → [[x, width]] */
+function grid(n, width) {
+  const w = Math.floor((width - (n - 1) * GAP) / n);
+  return Array.from({ length: n }, (_, i) => [MARGIN + i * (w + GAP), i === n - 1 ? width - i * (w + GAP) : w]);
+}
 /** The filters of a page: dropdowns in one row under the header. filters: [[title, table, column]] */
 function filterRow(filters) {
-  const w = (PAGE_W - 2 * MARGIN - (filters.length - 1) * GAP) / filters.length;
-  return filters.map(([title, t, c], i) => slicer('filter' + (i + 1), Math.round(MARGIN + i * (w + GAP)), FILTER_Y, Math.round(w), FILTER_H, Cl(t, c), title));
+  return grid(filters.length, PAGE_W - 2 * MARGIN).map(([x, w], i) => slicer('filter' + (i + 1), x, FILTER_Y, w, FILTER_H, Cl(filters[i][1], filters[i][2]), filters[i][0]));
 }
 
 function pages() {
   const O = 'Dim_Object', F = 'Fact_Object', U = 'Fact_Usage', V = 'Dim_Visual', D = 'Dim_Dependency';
   const fMODEL = ['Model', 'Dim_Run', 'Model'], fTYPE = ['Object type', O, 'Object type'], fTABLE = ['Table', O, 'Table'], fFIELD = ['Measure or column', O, 'Label'];
   const full = PAGE_W - 2 * MARGIN, body = PAGE_H - TOP - MARGIN;
-  const cardW = (full - 6 * GAP) / 7, cardH = 84;
+  const cardH = 84, cardGrid = grid(7, full), cardW = cardGrid[0][1];
   const cards = [['Measures', F], ['Unused measures', F], ['Columns', F], ['Unused columns', F], ['Broken formulas', F], ['Errors', 'Fact_Finding'], ['Warnings', 'Fact_Finding']]
-    .map(([p, t], i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), cardH, { Values: [M(t, p)] }, p));
+    .map(([p, t], i) => visual('card' + i, 'card', cardGrid[i][0], TOP, cardGrid[i][1], cardH, { Values: [M(t, p)] }, p));
   const half = (full - GAP) / 2, chartY = TOP + cardH + GAP, chartH = 236, rulesY = chartY + chartH + GAP;
   const unused = M(F, 'Unused measures'), unusedCols = M(F, 'Unused columns'), errors = M('Fact_Finding', 'Errors'), findings = M('Fact_Finding', 'Findings');
-  const page = (name, displayName, visuals) => ({ name, displayName, visuals: [header(displayName)].concat(visuals) });
+  const page = (name, displayName, visuals, filter) => ({ name, displayName, visuals: [header(displayName)].concat(visuals), filter });
   return [
     page('overview', 'Overview', [
       ...filterRow([fMODEL, fTYPE, fTABLE, ['Date', 'Dim_Date', 'Date']]),
@@ -536,12 +562,20 @@ function pages() {
     // the enterprise data warehouse bus matrix (Kimball): business processes down, the dimensions they reach across
     page('bus', 'Bus matrix', [
       ...filterRow([fMODEL, ['Business process', O, 'Name'], ['Dimension', 'Dim_Dimension', 'Dimension'], ['Conformed', 'Fact_Bus', 'Conformed']]),
-      ...['Business processes', 'Bus dimensions', 'Conformed dimensions'].map((p, i) => visual('card' + i, 'card', Math.round(MARGIN + i * (cardW + GAP)), TOP, Math.round(cardW), cardH, { Values: [M('Fact_Bus', p)] }, p)),
-      note('legend', Math.round(MARGIN + 3 * (cardW + GAP)), TOP, Math.round(full - 3 * (cardW + GAP)), cardH, [
+      ...['Business processes', 'Bus dimensions', 'Conformed dimensions'].map((p, i) => visual('card' + i, 'card', cardGrid[i][0], TOP, cardW, cardH, { Values: [M('Fact_Bus', p)] }, p)),
+      note('legend', cardGrid[3][0], TOP, full - 3 * (cardW + GAP), cardH, [
         [['X', true], [' related    '], ['X×2', true], [' twice (role-playing)    '], ['○', true], [' only inactive    '], ['·', true], [' through another dimension']],
         [['Business process: a fact table. Conformed: used by more than one business process.']],
       ]),
       matrix('matrix', MARGIN, TOP + cardH + GAP, full, PAGE_H - TOP - cardH - GAP - MARGIN, [Cl('Dim_Run', 'Model'), Cl(O, 'Name')], [Cl('Dim_Dimension', 'Dimension')], [M('Fact_Bus', 'Bus mark')], 'Business processes and their dimensions')]),
+    // the report design checks: alignment, spacing, choice of visual, clutter, accessibility
+    page('design', 'Report design', [
+      ...filterRow([fMODEL, ['Report', V, 'Report'], ['Page', V, 'Page'], ['Rule', 'Dim_Rule', 'Rule']]),
+      visual('rules', 'clusteredBarChart', MARGIN, TOP, 460, body, { Category: [Cl('Dim_Rule', 'Rule')], Y: [findings] }, 'Findings by rule',
+        { sort: [[findings, 'Descending']], objects: { dataPoint: [{ properties: fill(COLOR.blue) }], labels: [{ properties: { show: lit('true') } }], valueAxis: [{ properties: { show: lit('false') } }],
+          categoryAxis: [{ properties: { maxMarginFactor: lit('60L') } }] } }), // room for the names of the rules
+      table('list', MARGIN + 460 + GAP, TOP, full - 460 - GAP, body, [Cl(V, 'Report'), Cl(V, 'Page'), Cl(V, 'Visual'), Cl('Dim_Rule', 'Rule'), Cl('Fact_Finding', 'Detail'), M('Fact_Finding', 'Findings')], 'Findings in the reports')],
+      { column: ['Dim_Rule', 'Group'], value: 'Report design' }),
     page('lineage', 'Lineage', [
       ...filterRow([fMODEL, fTYPE, fTABLE, ['Object', O, 'Label'], ['Depends on', D, 'Depends on']]),
       table('list', MARGIN, TOP, full, body, [Cl(O, 'Label'), Cl(O, 'Kind'), Cl(O, 'Status'), Cl(D, 'Depends on'), Cl(D, 'Depends on kind'), Cl(D, 'Depends on status'), M('Fact_Dependency', 'Dependencies')], 'What depends on what')]),
@@ -616,8 +650,9 @@ function reportFiles() {
   const ps = pages();
   add(rp + 'definition/pages/pages.json', { $schema: SCHEMA + 'pagesMetadata/1.1.0/schema.json', pageOrder: ps.map(p => p.name), activePageName: ps[0].name });
   for (const p of ps) {
-    add(rp + `definition/pages/${p.name}/page.json`, { $schema: SCHEMA + 'page/2.1.0/schema.json', name: p.name, displayName: p.displayName, displayOption: 'FitToPage', height: PAGE_H, width: PAGE_W,
-      objects: { background: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } }, transparency: lit('0D') } }], outspace: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } } } }] } });
+    add(rp + `definition/pages/${p.name}/page.json`, Object.assign({ $schema: SCHEMA + 'page/2.1.0/schema.json', name: p.name, displayName: p.displayName, displayOption: 'FitToPage', height: PAGE_H, width: PAGE_W,
+      objects: { background: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } }, transparency: lit('0D') } }], outspace: [{ properties: { color: { solid: { color: lit("'" + PAGE + "'") } } } }] } },
+      p.filter ? { filterConfig: { filters: [pageFilter(p.name, p.filter)] } } : {}));
     p.visuals.forEach((v, i) => { v.position.z = i * 1000; v.position.tabOrder = i * 1000; add(rp + `definition/pages/${p.name}/visuals/${v.name}/visual.json`, v); });
   }
   return files;
@@ -628,8 +663,8 @@ function reportFiles() {
 function lakehouseTables() {
   return tableDefs().map(t => ({
     name: t.name, table: deltaTable(t.name), file: t.file || null, from: t.role || null, dates: !!t.dateTable,
-    columns: t.cols.map(c => ({ name: c.name, column: deltaColumn(c.name), type: c.dataType })),
-    exclude: t.filter || null, distinct: t.distinct || null, none: t.unknown ? NONE_ROW : null,
+    columns: t.cols.map(c => ({ name: c.name, column: deltaColumn(c.name), type: c.dataType, key: !!c.key })),
+    exclude: t.filter || null, distinct: t.distinct || null, none: t.unknown || null,
     rename: t.rename || null,
   }));
 }

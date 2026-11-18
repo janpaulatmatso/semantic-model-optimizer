@@ -96,6 +96,15 @@ table Fact_Finding
 		summarizeBy: none
 		sourceColumn: Key_Rule
 
+	/// The visual a report design finding is about. Relates to Dim_Visual; -1 for findings that are not about a visual.
+	column Key_Visual
+		dataType: int64
+		isHidden
+		isNullable: false
+		formatString: 0
+		summarizeBy: none
+		sourceColumn: Key_Visual
+
 	/// What the rule found, in words: the reference, relationship or value it is about.
 	column Detail
 		dataType: string
@@ -106,9 +115,10 @@ table Fact_Finding
 		mode: import
 		source =
 				let
-				    Source = LoadCsv("findings.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Detail"}),
-				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Detail"}),
-				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Rule", Int64.Type}, {"Detail", type text}}, "en-US")
+				    Source = LoadCsv("findings.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Key_Visual", "Detail"}),
+				    Keyed = Table.ReplaceValue(Source, null, "-1", Replacer.ReplaceValue, {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Key_Visual"}),
+				    Picked = Table.SelectColumns(Keyed, {"Key_Run", "Key_Date", "Key_Object", "Key_Rule", "Key_Visual", "Detail"}),
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Rule", Int64.Type}, {"Key_Visual", Int64.Type}, {"Detail", type text}}, "en-US")
 				in
 				    Typed
 

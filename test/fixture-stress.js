@@ -551,6 +551,50 @@ const legacy = {
   ],
 };
 
+// a report that breaks every report design rule, in PBIR and in the older format
+const box = (x, y, width, height, tabOrder) => (tabOrder == null ? { x, y, z: 0, width, height } : { x, y, z: 0, width, height, tabOrder });
+const on = v => ({ show: lit(v) });
+const vis = (name, type, position, roles, more) => ({
+  name, position, visual: Object.assign({ visualType: type, query: { queryState: Object.fromEntries(Object.entries(roles).map(([r, fs]) => [r, { projections: fs }])) } }, more || {}),
+});
+const alt = text => ({ general: [{ properties: { altText: lit("'" + text + "'") } }] });
+const naam = field('Column', 'Dim_Klant', 'Naam'), omzet = field('Measure', 'Feit_Verkoop', 'Omzet');
+const design = {
+  'definition.pbir': { version: '4.0', datasetReference: { byPath: { path: '../Model.SemanticModel' } } },
+  'definition/pages/d1/page.json': { name: 'd1', displayName: 'Indeling', width: 1280, height: 720 },
+  'definition/pages/d1/visuals/a/visual.json': vis('a', 'barChart', box(20, 20, 300, 200, 1000), { Category: [naam], Y: [omzet] },
+    { visualContainerObjects: Object.assign({ border: [{ properties: on('true') }], dropShadow: [{ properties: on(true) }], title: [{ properties: { text: lit("'Omzet'") } }] }, alt('Omzet per klant')) }),
+  'definition/pages/d1/visuals/b/visual.json': vis('b', 'barChart', box(323, 20, 300, 204, 2000), { Category: [naam], Y: [omzet] }, { visualContainerObjects: alt('') }),
+  'definition/pages/d1/visuals/c/visual.json': vis('c', 'barChart', box(635, 20, 300, 200, 3000), { Category: [naam], Y: [omzet] },
+    { objects: { labels: [{ properties: on('true') }], valueAxis: [{ properties: { gridlineShow: lit('true') } }] } }),
+  'definition/pages/d1/visuals/d/visual.json': vis('d', 'lineChart', box(20, 240, 600, 200, 0), { Category: [naam, level('Dim_Datum', 'Kalender', 'Maand')], Y: [omzet] },
+    { visualContainerObjects: { title: [{ properties: on('false') }] } }),
+  'definition/pages/d1/visuals/e/visual.json': vis('e', 'pieChart', box(600, 230, 300, 200, 4000), { Category: [naam], Y: [omzet] }),
+  'definition/pages/d1/visuals/f/visual.json': vis('f', 'gauge', box(1200, 600, 120, 150, 5000), { Y: [omzet] }),
+  'definition/pages/d1/visuals/g/visual.json': vis('g', 'tableEx', box(20, 460, 500, 200, 6000), { Values: Array.from({ length: 11 }, () => naam) }),
+  'definition/pages/d1/visuals/h/visual.json': vis('h', 'pivotTable', box(540, 460, 300, 200, 7000), { Rows: [naam, naam, naam, naam], Values: [omzet] }),
+  'definition/pages/d1/visuals/i/visual.json': vis('i', 'card', box(900, 460, 100, 100, 8000), {}),
+  'definition/pages/d1/visuals/k/visual.json': Object.assign(vis('k', 'donutChart', box(900, 20, 200, 200, 9000), { Y: [omzet] }), { isHidden: true }),
+  'definition/pages/d1/visuals/t/visual.json': vis('t', 'textbox', box(0, 0, 1280, 18), {}),
+  'definition/pages/d2/page.json': { name: 'd2', displayName: 'Vol' },
+};
+for (let i = 0; i < 16; i++) {
+  design[`definition/pages/d2/visuals/k${i}/visual.json`] = vis('k' + i, 'card', box(20 + (i % 8) * 80, 20 + Math.floor(i / 8) * 100, 70, 80), { Values: [omzet] }, { visualContainerObjects: alt('Omzet') });
+}
+const legacyDesign = {
+  config: '{}',
+  sections: [{ name: 'o1', displayName: 'Oud ontwerp', width: 1280, height: 720, visualContainers: [
+    { x: 20, y: 20, z: 0, width: 400, height: 300, config: JSON.stringify({ name: 'l1', layouts: [{ position: { tabOrder: 2 } }], singleVisual: {
+      visualType: 'lineChart', projections: { Category: [{ queryRef: 'k.Naam' }], Y: [{ queryRef: 'Sum(f.Bedrag)' }] },
+      prototypeQuery: { From: [{ Name: 'k', Entity: 'Dim_Klant' }, { Name: 'f', Entity: 'Feit_Verkoop' }], Select: [Object.assign(alias('Column', 'k', 'Naam'), { Name: 'k.Naam' }),
+        { Aggregation: { Expression: alias('Column', 'f', 'Bedrag'), Function: 0 }, Name: 'Sum(f.Bedrag)' }] },
+      objects: { labels: [{ properties: on('true') }], categoryAxis: [{ properties: { gridlineShow: lit('true') } }] },
+      vcObjects: { dropShadow: [{ properties: on('true') }] } } }) },
+    { x: 425, y: 22, z: 1, width: 400, height: 300, config: JSON.stringify({ name: 'l2', layouts: [{ position: { tabOrder: 1 } }], singleVisual: { visualType: 'donutChart', display: { mode: 'hidden' } } }) },
+    { x: 425, y: 22, z: 2, width: 400, height: 300, config: JSON.stringify({ name: 'l3', layouts: [{ position: { tabOrder: 3 } }], singleVisual: { visualType: 'clusteredColumnChart', projections: {} } }) },
+  ] }],
+};
+
 /** Writes the project and returns its folder. */
 function makeStress() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-stress-'));
@@ -560,6 +604,8 @@ function makeStress() {
   for (const [rel, text] of Object.entries(pbir('Kopie'))) w('kopie/Verkoop.Report/' + rel, text);
   w('Oud.Report/report.json', legacy);
   w('Élan.Report/report.json', Object.assign({}, legacy, { config: '{}' }));
+  for (const [rel, text] of Object.entries(design)) w('Ontwerp.Report/' + rel, text);
+  w('Ontwerp oud.Report/report.json', legacyDesign);
   return path.join(root, 'Stress');
 }
 

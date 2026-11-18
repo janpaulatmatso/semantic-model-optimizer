@@ -69,6 +69,29 @@ The **Checks** tab lists what the tool finds against a set of best-practice rule
 
 The findings are also a sheet in the Excel export.
 
+### Report design
+
+The reports are checked too, from their definition (PBIR and the older report.json), in the app, on the command line and in the Fabric notebook. These rules are notes: what is deliberate is up to you, and each one can be switched off in `smo.config.json`. Choose *Report design* in the rule filter of the Checks tab to see only these.
+
+| Rule | What it finds |
+|---|---|
+| Visuals that are almost aligned | Edges 1 to 8 pixels apart (`report-near-aligned`) |
+| Visuals that overlap | Two visuals with data covering part of each other (`report-overlap`) |
+| Visuals outside the page | A visual that sticks out beyond the page (`report-off-page`) |
+| Visuals of nearly the same size | Visuals of the same type in a row whose heights differ by a few pixels, or in a column whose widths do (`report-uneven-size`) |
+| Uneven spacing between visuals | A row or column of three or more visuals whose gaps differ by a few pixels (`report-uneven-gaps`) |
+| Pages with many visuals | More than 15 visuals on a page (`report-busy-page`) |
+| Pie, donut and gauge charts | A sorted bar chart, or a card with its target, reads better (`report-pie-gauge`) |
+| Line charts over text categories | A line over a text column that is not in the date table (`report-line-text-axis`) |
+| Tables with many columns | A table with more than 10 columns, a matrix with more than 3 levels of rows or 2 of columns (`report-wide-table`) |
+| Visuals with extra ink | Two or more of: a border, a shadow, gridlines, data labels next to a value axis (`report-clutter`) |
+| Visuals without fields | A chart, table, card or slicer without fields (`report-empty-visual`) |
+| Charts with the title turned off | On a page with more than one chart or table (`report-no-title`) |
+| Visuals without alt text | Per page: how many visuals a screen reader cannot describe (`report-alt-text`) |
+| Tab order that differs from the reading order | The keyboard goes through the visuals in another order than top left to bottom right (`report-tab-order`) |
+
+What the theme sets (a border on every visual, for example) is not seen: only what a visual sets itself. Text boxes, shapes, images and buttons count for the layout rules, not for the others.
+
 ### Fixing findings
 
 Three rules have a button that repairs every finding at once (project loaded by path, TMDL):
@@ -90,7 +113,7 @@ Put a `smo.config.json` in the project folder to switch a rule off or change how
 }
 ```
 
-The rule ids are the ones `node cli.js <path> --rules` works with: `broken-formula`, `broken-reference`, `many-to-many`, `bidirectional`, `key-visible`, `calc-column-as-measure`, `duplicate-measure`, `measure-no-format`, `measure-no-description`, `report-only-measure`, `unqualified-column`, `qualified-measure`, `inactive-relationship`, `auto-date-time`, `double-data-type`.
+The rule ids are the ones `node cli.js <path> --rules` works with: `broken-formula`, `broken-reference`, `many-to-many`, `bidirectional`, `key-visible`, `calc-column-as-measure`, `duplicate-measure`, `measure-no-format`, `measure-no-description`, `report-only-measure`, `unqualified-column`, `qualified-measure`, `inactive-relationship`, `auto-date-time`, `double-data-type`, and the report design rules above.
 
 ## Values: what the measures return
 
@@ -205,13 +228,14 @@ Every export adds a run to `C:\SMO\data\run-000001`, `run-000002`, … The first
 
 **The report on its own.** The folder [`report/`](report/) in this repository (and `SemanticModelOptimizer-Report.zip` with every release) holds the same report without any data folder, address or sign-in. Open `Semantic Model Optimizer.pbip`, choose *Transform data › Edit parameters*, fill in **ExportFolder** with the data folder of your exports (`C:\SMO\data`) or the Lakehouse folder of the Fabric notebook (`https://onelake.dfs.fabric.microsoft.com/<workspace>/<lakehouse>.Lakehouse/Files/SemanticModelOptimizer/data`), sign in when Power BI asks, and choose **Refresh**. Left empty, the refresh says what to fill in.
 
-The report has six pages:
+The report has seven pages:
 
 - **Overview:** measures, columns, unused ones, broken formulas, errors and warnings; objects by status; the trend over time; findings per rule.
 - **Objects:** every table, column and measure with its status, the reports and visuals that use it, dependents and size.
 - **Where used:** pick a measure or column (in the filters, or click it in the list on the left) and see every report, page and visual that uses it, and in which role.
 - **Findings:** every finding of the checks, filtered by severity, group, rule and table.
 - **Bus matrix:** the enterprise data warehouse bus matrix of every model: business processes (fact tables) down, the dimensions they reach across, with the same marks as the documentation (`X`, `X×2` role-playing, `○` only inactive, `·` through another dimension), and how many dimensions are conformed.
+- **Report design:** the findings of the report design rules per report, page and visual.
 - **Lineage:** what depends on what.
 
 The filters of every page are dropdowns in one row across the top.

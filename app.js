@@ -716,7 +716,7 @@
   const FIXABLE = { 'key-visible': 'Hide these columns', 'measure-no-format': 'Set a number format', 'duplicate-measure': 'Point duplicates to one measure' };
   function renderChecks() {
     const all = state.checks, g = state.checkGroup || '';
-    const rules = all.rules.filter(x => !g || (g === 'kimball') === (x.group === 'kimball'));
+    const rules = all.rules.filter(x => !g || (x.group || 'general') === g);
     const c = { error: 0, warning: 0, info: 0 };
     for (const x of rules) c[x.severity] += x.items.length;
     const r = { rules, counts: c, total: c.error + c.warning + c.info };

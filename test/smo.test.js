@@ -431,7 +431,7 @@ test('Power BI export: a star schema per run, and a report that passes its own c
   assert.ok(fs.existsSync(pbip));
   const { p, m, a } = await load(out);
   assert.equal(m.model.tables.length, 12);
-  assert.equal(m.model.relationships.length, 19);
+  assert.equal(m.model.relationships.length, 20);
   assert.equal(a.stats.broken, 0);
   assert.equal(a.list.filter(n => n.broken).length, 0);
   const checks = SMO.checkRules(m.model, a, p.config, null, p.design);
@@ -829,9 +829,10 @@ test('Lakehouse tables: the star schema the notebook writes, complete and with e
   assert.equal(star.Dim_Run.rows.length, 3);
   assert.equal(new Set(col('Dim_Rule', 'Key_Rule')).size, star.Dim_Rule.rows.length, 'one row per rule');
   assert.deepEqual(col('Dim_Dependency', 'Key_Depends_on'), col('Dim_Object', 'Key_Object'));
+  assert.ok(col('Fact_Finding', 'Key_Visual').some(k => k > 0) && col('Fact_Finding', 'Key_Visual').includes(-1), 'report design findings have their visual, the others -1');
   // every key in a fact table has its row in the dimension
   const keys = { Key_Run: ['Dim_Run', 'Key_Run'], Key_Date: ['Dim_Date', 'Key_Date'], Key_Object: ['Dim_Object', 'Key_Object'], Key_Visual: ['Dim_Visual', 'Key_Visual'],
-    Key_Rule: ['Dim_Rule', 'Key_Rule'], Key_Depends_on: ['Dim_Dependency', 'Key_Depends_on'] };
+    Key_Rule: ['Dim_Rule', 'Key_Rule'], Key_Depends_on: ['Dim_Dependency', 'Key_Depends_on'], Key_Dimension: ['Dim_Dimension', 'Key_Dimension'] };
   for (const f of defs.filter(d => d.name.startsWith('Fact_'))) {
     for (const c of f.columns.filter(c => keys[c.name])) {
       const have = new Set(col(...keys[c.name]));

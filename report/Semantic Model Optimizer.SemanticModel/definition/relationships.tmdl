@@ -58,6 +58,10 @@ relationship 8c7161da-f90a-49c4-84a7-53de69e098aa
 	fromColumn: Fact_Finding.Key_Rule
 	toColumn: Dim_Rule.Key_Rule
 
+relationship 0ea04dc8-b0e3-436e-8ebc-88dc779828b8
+	fromColumn: Fact_Finding.Key_Visual
+	toColumn: Dim_Visual.Key_Visual
+
 relationship 5b12f026-b15a-4148-8724-ee9ad39e1816
 	fromColumn: Fact_Bus.Key_Run
 	toColumn: Dim_Run.Key_Run

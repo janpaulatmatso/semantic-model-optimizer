@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
   "name": "card4",
   "position": {
-    "x": 735,
+    "x": 732,
     "y": 144,
     "z": 9000,
     "height": 84,
-    "width": 167,
+    "width": 166,
     "tabOrder": 9000
   },
   "visual": {
@@ -41,6 +41,19 @@
               "expr": {
                 "Literal": {
                   "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Broken formulas'"
                 }
               }
             }

@@ -2,11 +2,11 @@
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
   "name": "card5",
   "position": {
-    "x": 914,
+    "x": 910,
     "y": 144,
     "z": 10000,
     "height": 84,
-    "width": 167,
+    "width": 166,
     "tabOrder": 10000
   },
   "visual": {
@@ -41,6 +41,19 @@
               "expr": {
                 "Literal": {
                   "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "altText": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Errors'"
                 }
               }
             }

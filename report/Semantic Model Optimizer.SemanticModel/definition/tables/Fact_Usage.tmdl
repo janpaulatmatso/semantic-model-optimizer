@@ -81,7 +81,8 @@ table Fact_Usage
 		source =
 				let
 				    Source = LoadCsv("usage.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
-				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
+				    Keyed = Table.ReplaceValue(Source, null, "-1", Replacer.ReplaceValue, {"Key_Run", "Key_Date", "Key_Object", "Key_Visual"}),
+				    Picked = Table.SelectColumns(Keyed, {"Key_Run", "Key_Date", "Key_Object", "Key_Visual", "Role"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Visual", Int64.Type}, {"Role", type text}}, "en-US")
 				in
 				    Typed

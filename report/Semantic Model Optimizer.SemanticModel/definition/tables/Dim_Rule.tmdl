@@ -22,7 +22,7 @@ table Dim_Rule
 		summarizeBy: none
 		sourceColumn: Rule
 
-	/// General (best practices) or Kimball (dimensional modelling).
+	/// General (best practices), Kimball (dimensional modelling) or Report design (layout and choice of visuals).
 	column Group
 		dataType: string
 		summarizeBy: none

@@ -134,7 +134,8 @@ table Fact_Bus
 		source =
 				let
 				    Source = LoadCsv("bus.csv", {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension", "Mark", "Relationships", "Active", "Through", "Conformed"}),
-				    Picked = Table.SelectColumns(Source, {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension", "Mark", "Relationships", "Active", "Through", "Conformed"}),
+				    Keyed = Table.ReplaceValue(Source, null, "-1", Replacer.ReplaceValue, {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension"}),
+				    Picked = Table.SelectColumns(Keyed, {"Key_Run", "Key_Date", "Key_Object", "Key_Dimension", "Mark", "Relationships", "Active", "Through", "Conformed"}),
 				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Run", Int64.Type}, {"Key_Date", Int64.Type}, {"Key_Object", Int64.Type}, {"Key_Dimension", Int64.Type}, {"Mark", type text}, {"Relationships", Int64.Type}, {"Active", type text}, {"Through", type text}, {"Conformed", type text}}, "en-US")
 				in
 				    Typed

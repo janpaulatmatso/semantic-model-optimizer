@@ -1,4 +1,4 @@
-/// One row per visual of a report, per run.
+/// One row per visual of a report, per run, plus the row -1 (none) for findings that are not about a visual.
 table Dim_Visual
 
 	/// The visual in this run. Relates to Dim_Visual.
@@ -21,7 +21,7 @@ table Dim_Visual
 		summarizeBy: none
 		sourceColumn: Page
 
-	/// The title of the visual, or its type when it has no title.
+	/// The title of the visual, or its type when it has no title; (whole page) for a finding about a page.
 	column Visual
 		dataType: string
 		summarizeBy: none
@@ -46,8 +46,9 @@ table Dim_Visual
 				let
 				    Source = LoadCsv("visuals.csv", {"Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"}),
 				    Picked = Table.SelectColumns(Source, {"Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"}),
-				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Visual", Int64.Type}, {"Report", type text}, {"Page", type text}, {"Visual", type text}, {"Visual type", type text}, {"Visual id", type text}}, "en-US")
+				    Typed = Table.TransformColumnTypes(Picked, {{"Key_Visual", Int64.Type}, {"Report", type text}, {"Page", type text}, {"Visual", type text}, {"Visual type", type text}, {"Visual id", type text}}, "en-US"),
+				    WithNone = Table.InsertRows(Typed, 0, {[#"Key_Visual" = -1, #"Report" = "(none)", #"Page" = "(none)", #"Visual" = "(none)", #"Visual type" = "", #"Visual id" = ""]})
 				in
-				    Typed
+				    WithNone
 
 	annotation PBI_ResultType = Table
