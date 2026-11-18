@@ -25,7 +25,9 @@ function unpack() {
 }
 
 let args = process.argv.slice(1);
-if (args[0] && path.resolve(args[0]).toLowerCase() === process.execPath.toLowerCase()) args = args.slice(1);
+// the program's own path comes first; started through an alias (Store package) it is the alias path, so compare names
+const self = p => { const r = path.resolve(p).toLowerCase(); return r === process.execPath.toLowerCase() || path.basename(r) === path.basename(process.execPath).toLowerCase(); };
+if (args[0] && self(args[0])) args = args.slice(1);
 const cmd = (args[0] || '').toLowerCase();
 const PORT = Number(process.env.PORT || 5273);
 process.env.SMO_EXE = '1';
