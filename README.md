@@ -240,11 +240,15 @@ The notebook [`fabric/SemanticModelOptimizer.ipynb`](fabric/SemanticModelOptimiz
 2. Add a Lakehouse to the notebook (*Lakehouse* in the explorer › *Add*).
 3. Set `WORKSPACES` in the first cell (`"*"` for every workspace you can open), run all cells, and schedule the notebook (*Run › Schedule*).
 
-Each run downloads Node.js (checked against the checksum nodejs.org publishes) and the tool from its GitHub release, runs `--scan` with your own Fabric sign-in, and writes the runs to *Files/SemanticModelOptimizer* in the Lakehouse. The last cell prints a table per model, and the command for the report.
+**The whole tool is in the notebook, in Python.** It downloads nothing and installs nothing: no Node.js, no package, no request to GitHub. It uses the Python standard library and calls only the Power BI and Fabric REST APIs, with your own Fabric sign-in, read-only. What you import or paste is exactly what runs, so you can review it, and it only changes when you replace it. Each run writes one run per model to *Files/SemanticModelOptimizer* in the Lakehouse and shows a table per model.
 
-**The report**, once: run the printed command on your computer (`SemanticModelOptimizer-cli.exe cli --export C:\SMO-Fabric --report-only --report-source https://onelake.dfs.fabric.microsoft.com/…`). The report then reads the Lakehouse through OneLake instead of a folder. Open it in Power BI Desktop, sign in with your organisational account, **Refresh**, and **Publish** it. In the service, set the data source credentials (OAuth2) of the semantic model and schedule its refresh after the notebook. No gateway is needed.
+The notebook reads what the definitions hold: models in TMDL and reports (PBIR and the older report.json), with usage, lineage, the best-practice checks and the Kimball rules. It does not read the data, so the checks that need rows or sizes (referential integrity, constant columns) and the ones that need your own files (`smo.config.json`, a design in YAML) are for the desktop tool.
 
-The notebook needs internet access to nodejs.org and github.com. Where a workspace blocks outbound traffic, run the scan in a pipeline instead and write the runs to OneLake.
+**The report**, once: run the command the last cell prints on your computer (`SemanticModelOptimizer-cli.exe cli --export C:\SMO-Fabric --report-only --report-source https://onelake.dfs.fabric.microsoft.com/…`). The report then reads the Lakehouse through OneLake instead of a folder. Open it in Power BI Desktop, sign in with your organisational account, **Refresh**, and **Publish** it. In the service, set the data source credentials (OAuth2) of the semantic model and schedule its refresh after the notebook. No gateway is needed.
+
+### One tool in two languages
+
+The notebook is a port of the analysis (`core.js`, `powerbi.js`, `workspace.js`) to Python: [`fabric/smo.py`](fabric/smo.py). `node build-fabric.js` builds the notebook and the one-cell file from it, and writes the list of rules from `core.js` into it. The tests run both versions on the same models and compare the CSV files line by line, and they fail when the notebook is not rebuilt or when it would call anything but Power BI. So a rule that changes in the JavaScript has to change in `fabric/smo.py` too, and a release never ships the two apart.
 
 ## Lineage
 

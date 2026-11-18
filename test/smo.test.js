@@ -521,19 +521,122 @@ test('Fabric: every model of a workspace with its reports, one run each, read fr
   const expr = fs.readFileSync(path.join(out, 'Semantic Model Optimizer.SemanticModel/definition/expressions.tmdl'), 'utf8');
   assert.ok(expr.includes(JSON.stringify(source)) && expr.includes('AzureStorage.DataLake(ExportFolder'));
   assert.ok(!expr.includes('Folder.Files'));
+});
 
-  // the notebook: valid, and it uses options the command line has
-  const nb = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fabric', 'SemanticModelOptimizer.ipynb'), 'utf8'));
-  const src = nb.cells.filter(c => c.cell_type === 'code').map(c => c.source.join('')).join('\n');
-  const cli = fs.readFileSync(path.join(__dirname, '..', 'cli.js'), 'utf8');
-  const opts = [...src.matchAll(/"(--[a-z-]+)"/g)].map(m => m[1]).filter(o => o !== '--version'); // --version is asked of Node
-  assert.ok(opts.includes('--scan') && opts.includes('--report-source'));
-  for (const o of opts) assert.ok(cli.includes("'" + o + "'"), o + ' is an option of cli.js');
-  assert.match(src, /SHASUMS256/);
-  // the version for one cell: the same code, in the same order
-  const one = fs.readFileSync(path.join(__dirname, '..', 'fabric', 'SemanticModelOptimizer.py'), 'utf8').replace(/\r\n/g, '\n');
-  const cellsCode = nb.cells.filter(c => c.cell_type === 'code').map(c => c.source.join('').replace(/\r\n/g, '\n'));
-  assert.ok(one.endsWith('\n' + cellsCode.join('\n\n') + '\n'), 'fabric/SemanticModelOptimizer.py has the code of the notebook');
+// ---------------------------------------------------------------- the Python port for Fabric (fabric/smo.py)
+
+const PY = (() => {
+  for (const cmd of ['python', 'python3', 'py']) { const r = spawnSync(cmd, ['-c', 'import sys; print(sys.version_info >= (3, 10))'], { encoding: 'utf8' }); if (r.status === 0 && /True/.test(r.stdout)) return cmd; }
+  return null;
+})();
+/** Runs test/fabric_cli.py; skips the test where Python is missing (never in the pipeline). */
+function py(t, args) {
+  if (!PY) { if (process.env.CI) assert.fail('Python 3.10 or later is needed for the Fabric tests'); t.skip('Python not found'); return null; }
+  const r = spawnSync(PY, [path.join(__dirname, 'fabric_cli.py')].concat(args), { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test('Fabric notebook: the Python port gives the same CSV files as the JavaScript', async t => {
+  const os = require('os');
+  const P = require('../powerbi.js');
+  const { makeStress } = require('./fixture-stress.js');
+  const stress = (await loadPath(makeStress())).files.map(f => ({ path: f.path, text: f.text }));
+  const cases = {
+    demo: (await loadPath(makeProject())).files.map(f => ({ path: f.path, text: f.text })),
+    stress,
+    'no date table': stress.map(f => ({ path: f.path, text: f.text.replace(/\tdataCategory: Time\r?\n/, '') })),
+    'reports without their model': stress.filter(f => !/\.tmdl$/.test(f.path)),
+  };
+  const hit = new Set();
+  for (const [name, files] of Object.entries(cases)) {
+    const proj = SMO.loadProject(files), m = proj.models[0];
+    const a = SMO.applyStats(SMO.analyze(m.model, proj.reports, { noModel: !!m.missing }), null);
+    const checks = SMO.checkRules(m.model, a, null, null, null);
+    for (const r of checks.rules) hit.add(r.id);
+    const tables = P.runTables(a, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'Model', source: 'Source', version: '9.9.9', reports: proj.reports.length, visuals: a.stats.visuals });
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-py-'));
+    fs.writeFileSync(path.join(tmp, 'files.json'), JSON.stringify(files));
+    const out = py(t, ['tables', path.join(tmp, 'files.json'), path.join(tmp, 'out'), '2026-01-02 03:04:05', 'Model', 'Source', '9.9.9']);
+    if (!out) return;
+    assert.deepEqual(out.reports, proj.reports.map(r => r.name), name);
+    assert.deepEqual(out.counts, checks.counts, name);
+    for (const table of Object.keys(tables)) {
+      const js = X.toCsv(tables[table]).split('\r\n'), python = fs.readFileSync(path.join(tmp, 'out', table + '.csv'), 'utf8').split('\r\n');
+      for (let i = 0; i < Math.max(js.length, python.length); i++) assert.equal(python[i], js[i], `${name}: ${table}.csv line ${i + 1}`);
+    }
+  }
+  // every rule that needs no more than the definitions is covered by these projects
+  const needsMore = /^(constant-column|naming-convention|ri-(?!not-checked)|kd-|spec-)/;
+  assert.deepEqual(SMO.RULES.map(r => r.id).filter(id => !needsMore.test(id) && !hit.has(id)), []);
+});
+
+test('Fabric notebook: Python sorts names the way JavaScript does', t => {
+  const os = require('os');
+  const names = ['Feit_Verkoop', 'feit_klein', 'Dim Product', 'Dim_Klant', 'Dim-Klant', 'Dim.Klant', 'DimKlant', 'dimklant', 'Éclair', 'éclair', 'eclair', 'Eclair', 'Zeta', 'alfa', 'Alfa 2', 'Alfa 10',
+    'Sales (2)', 'Sales', 'sales', 'SALES', '2024 Budget', '10 Top', '_hidden', '#Measures', 'Straße', 'Strasse', 'Østfold', 'Ostfold', 'naïve', 'naive', 'Naive', 'a', 'A', 'b', 'ab', 'a b', 'a_b', 'résumé', 'resume', 'Resumé', '', ' x', 'x ', 'Über', 'Uber', 'ĳs', 'ijs', 'Çà', 'Ca', 'ñandú', 'nandu', 'Its', '100%', '100 %', 'Q&A', 'Q A'];
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'smo-sort-')), 'names.json');
+  fs.writeFileSync(f, JSON.stringify(names));
+  const out = py(t, ['sort', f]);
+  if (out) assert.deepEqual(out, names.slice().sort((a, b) => a.localeCompare(b)));
+});
+
+test('Fabric notebook: a scan in Python, with the Power BI API replaced', t => {
+  const os = require('os');
+  const dir = makeProject();
+  const parts = sub => {
+    const out = [], walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else out.push({ path: path.relative(path.join(dir, sub), f).replace(/\\/g, '/'), payload: fs.readFileSync(f).toString('base64'), payloadType: 'InlineBase64' }); } };
+    walk(path.join(dir, sub));
+    return out;
+  };
+  const pbi = 'https://api.powerbi.com/v1.0/myorg', fab = 'https://api.fabric.microsoft.com/v1';
+  const ok = body => ({ status: 200, body });
+  const responses = {
+    ['GET ' + pbi + '/groups?$top=5000']: ok({ value: [{ id: 'w1', name: 'Sales' }, { id: 'w2', name: 'Other' }] }),
+    ['GET ' + pbi + '/groups/w1/datasets']: ok({ value: [{ id: 'd1', name: 'Demo' }, { id: 'd2', name: 'Broken' }, { id: 'd3', name: 'Usage Metrics Report' }] }),
+    ['GET ' + pbi + '/groups/w1/reports']: ok({ value: [{ id: 'r1', name: 'Demo', datasetId: 'D1', reportType: 'PowerBIReport' }, { id: 'r2', name: 'Paper', datasetId: 'd1', reportType: 'PaginatedReport' }, { id: 'r3', name: 'Locked', datasetId: 'd1' }] }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels/d1/getDefinition?format=TMDL']: ok({ definition: { parts: parts('Demo.SemanticModel') } }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels/d2/getDefinition?format=TMDL']: { status: 400, body: { error: { message: 'Not supported' } } },
+    ['POST ' + fab + '/workspaces/w1/reports/r1/getDefinition']: { status: 202, headers: { location: 'https://wabi-west-europe-redirect.analysis.windows.net/v1/operations/op1', 'retry-after': '5' }, body: '' },
+    'GET https://wabi-west-europe-redirect.analysis.windows.net/v1/operations/op1': ok({ status: 'Succeeded' }),
+    'GET https://wabi-west-europe-redirect.analysis.windows.net/v1/operations/op1/result': ok({ definition: { parts: parts('Demo.Report') } }),
+    ['POST ' + fab + '/workspaces/w1/reports/r3/getDefinition']: { status: 403, body: { message: 'No access' } },
+  };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-pyscan-'));
+  fs.writeFileSync(path.join(tmp, 'responses.json'), JSON.stringify(responses));
+  const out = py(t, ['scan', path.join(tmp, 'responses.json'), path.join(tmp, 'lake'), ' sales ']);
+  if (!out) return;
+  assert.deepEqual(out.result.models, [{ Model: 'Sales / Demo', Measures: 5, 'Unused measures': 3, Columns: 14, 'Unused columns': 4, 'Broken formulas': 0, Errors: 0, Warnings: out.result.models[0].Warnings }]);
+  assert.match(out.log.join('\n'), /Sales \/ Demo: run 1, 1 report\n {2}! report Locked: Power BI answered 403 .*No access\. You need access/);
+  assert.match(out.result.warnings.join('\n'), /Sales \/ Broken: Power BI answered 400 for \/v1\/workspaces\/w1\/semanticModels\/d2\/getDefinition\?format=TMDL: Not supported\./);
+  assert.ok(!out.calls.some(c => /\/w2\/|\/r2\/|\/d3\//.test(c)), 'only the chosen workspace, no paginated reports, no usage metrics model');
+  assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000001/objects.csv'), 'utf8'), /"\[Twice\]","Unused"/);
+  assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000001/runs.csv'), 'utf8'), /"1","2026-01-02 03:04:05","2026-01-02","Sales \/ Demo","Sales \/ Demo","dev","1","2","No"/);
+  assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000001/usage.csv'), 'utf8'), /Values/); // the report was read with the model
+});
+
+test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
+  const B = require('../build-fabric.js');
+  const dir = path.join(__dirname, '..', 'fabric');
+  const read = f => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n');
+  const out = B.outputs('dev');
+  for (const f of Object.keys(out)) assert.ok(read(f) === out[f], 'fabric/' + f + ' is not up to date: run node build-fabric.js');
+  // the notebook and the one-cell file hold the same code
+  const nb = JSON.parse(out['SemanticModelOptimizer.ipynb']);
+  const cells = nb.cells.filter(c => c.cell_type === 'code').map(c => c.source.join(''));
+  const one = out['SemanticModelOptimizer.py'];
+  let at = 0;
+  for (const c of cells) { const i = one.indexOf(c, at); assert.ok(i >= at, 'a cell of the notebook is missing from the one-cell file'); at = i + c.length; }
+  assert.equal(nb.cells[1].metadata.tags[0], 'parameters');
+  // every rule of the tool is in it, with the same text
+  for (const r of SMO.RULES) assert.ok(one.includes(JSON.stringify(r.title)) && one.includes(JSON.stringify(r.help)), r.id);
+  // nothing is downloaded, installed or started: one place goes online, and only to Power BI and Fabric
+  assert.equal((one.match(/urlopen\(/g) || []).length, 1);
+  assert.match(one, /Refused to call/);
+  for (const bad of ['subprocess', 'os.system', 'pip install', '%pip', 'nodejs.org', 'raw.githubusercontent', 'tarfile', 'exec(', 'eval(', '__import__', 'socket'])
+    assert.ok(!one.includes(bad), 'the notebook should not use ' + bad);
+  const hosts = [...one.matchAll(/https:\/\/([a-z0-9.-]+)/g)].map(m => m[1]).filter((h, i, a) => a.indexOf(h) === i).sort();
+  assert.deepEqual(hosts, ['api.fabric.microsoft.com', 'api.powerbi.com', 'github.com', 'onelake.dfs.fabric.microsoft.com']); // github.com: the link to the manual
 });
 
 test('thin report: the live connection tells where the model lives', () => {

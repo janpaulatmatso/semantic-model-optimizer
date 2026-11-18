@@ -32,6 +32,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5   # the Fabric notebook is Python; its results are compared with the JavaScript
+        with:
+          python-version: '3.11'
       - run: node --test test/smo.test.js
 
   release:
@@ -89,6 +92,14 @@ jobs:
         env:
           SMO_VERSION: ${{ steps.version.outputs.tag }}
         run: node build-exe.js
+
+      - name: Build the Fabric notebook
+        if: steps.changed.outputs.release == 'yes'
+        env:
+          SMO_VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          node build-fabric.js
+          grep -q "VERSION = \"${SMO_VERSION#v}\"" fabric/SemanticModelOptimizer.py
 
       - name: Check the executable
         if: steps.changed.outputs.release == 'yes'
@@ -252,7 +263,7 @@ jobs:
             echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`.'
             echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
             echo '- Power BI report of the results: `SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO`, then open `C:\SMO\Semantic Model Optimizer.pbip` and choose *Refresh*. Every export adds a run, so the report shows the trend. Every model in your workspaces: `--scan "<workspace>" --export C:\SMO`.'
-            echo '- In Microsoft Fabric: import `SemanticModelOptimizer.ipynb` as a notebook, add a Lakehouse and schedule it; see the README.'
+            echo '- In Microsoft Fabric: import `SemanticModelOptimizer.ipynb` as a notebook (or paste `SemanticModelOptimizer.py` into one cell), add a Lakehouse and schedule it. The whole tool is in the notebook, in Python: it downloads nothing. See the README.'
             echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
             echo '## Check the files'
@@ -267,4 +278,4 @@ jobs:
             echo 'The files have no code-signing certificate, so Windows SmartScreen may warn the first time (choose *More info* › *Run anyway*).'
             echo 'Rather not run a program at all? Use the web version: https://janpaulatmatso.github.io/semantic-model-optimizer/'
           } > notes.md
-          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt fabric/SemanticModelOptimizer.ipynb --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
+          gh release create "$TAG" dist/SemanticModelOptimizer-Setup.exe dist/SemanticModelOptimizer.exe dist/SemanticModelOptimizer-cli.exe dist/SHA256SUMS.txt fabric/SemanticModelOptimizer.ipynb fabric/SemanticModelOptimizer.py --target "${{ github.sha }}" --title "Semantic Model Optimizer ${TAG#v}" --notes-file notes.md --latest
