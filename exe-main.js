@@ -55,7 +55,8 @@ const request = (method, p, headers) => new Promise(resolve => {
     for (let i = 0; i < 60 && (await request('GET', '/api/ping')) !== 200; i++) await new Promise(r => setTimeout(r, 150));
   }
   const [server, database] = cmd === 'open' ? args.slice(1) : [];
-  const url = `http://127.0.0.1:${PORT}/` + (server ? `?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database || '')}` : '');
+  // from the Power BI button the server is always passed; it is empty or remote for a thin report (live connection)
+  const url = `http://127.0.0.1:${PORT}/` + (cmd === 'open' ? `?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database || '')}` : '');
   const how = __smoRequire('./appwindow.js').openWindow(url);
   console.log('Semantic Model Optimizer is open ' + (how === 'app' ? 'in its own window' : 'in your browser') + ': ' + url + '\nIt stops by itself a few minutes after you close it, or with: ' + path.basename(process.execPath) + ' stop');
 })().catch(e => { console.error(e.message); process.exit(2); });

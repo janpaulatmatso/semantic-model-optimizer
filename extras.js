@@ -437,8 +437,11 @@
   /** Opened from the External Tools ribbon of Power BI Desktop: ?server=localhost:port&database=… */
   async function openFromDesktop(server, database) {
     const port = (/:(\d+)$/.exec(server) || [])[1];
-    let inst = null;
-    try { inst = ((await fetch('api/desktop').then(x => x.json())).instances || []).find(i => String(i.port) === port); } catch (e) { /* not available */ }
+    let inst = null, open = { instances: [], files: [] };
+    try { open = await fetch('api/desktop').then(x => x.json()); inst = (open.instances || []).find(i => String(i.port) === port); } catch (e) { /* not available */ }
+    // a thin report (live connection to Analysis Services or a workspace) has no model in Power BI Desktop:
+    // load the report from the open file, then its model from the server it points to
+    if (!/^(localhost|127\.0\.0\.1):\d+$/i.test(server)) return openThinReport(server, database, (open.files || []).filter(f => f.file && !f.hasModel));
     if (inst && /\.pbip$/i.test(inst.file || '')) {
       // a Power BI project: load its folder, so reports count and everything can be edited
       $('pathInput').value = inst.file.replace(/[\\/][^\\/]+$/, '');
@@ -454,6 +457,33 @@
     msg('Opened from Power BI Desktop: model ' + r.name + '. This file is a .pbix, so the report in it cannot be read here; add reports with "+ Add report", or save the file as a Power BI project (.pbip).');
   }
   App.openFromDesktop = openFromDesktop;
+
+  const sameServer = (a, b) => String(a || '').trim().replace(/\/+$/, '').toLowerCase() === String(b || '').trim().replace(/\/+$/, '').toLowerCase();
+  async function openThinReport(server, database, candidates) {
+    // which open file is the report? the one whose live connection points to this server and model
+    const found = [];
+    for (const f of candidates) {
+      const target = /\.pbip$/i.test(f.file) ? f.file.replace(/[\\/][^\\/]+$/, '') : f.file;
+      try {
+        const l = await fetch('api/load?path=' + encodeURIComponent(target)).then(x => x.json());
+        if (l.error) continue;
+        const conns = SMO.loadProject(l.files).reports.map(r => r.connection).filter(Boolean);
+        const hit = conns.some(c => (!server || sameServer(c.server, server)) && (!database || !c.database || c.database.toLowerCase() === database.toLowerCase()));
+        found.push({ target, hit, conn: conns[0] });
+      } catch (e) { /* skip this file */ }
+    }
+    const pick = found.filter(f => f.hit).length ? found.filter(f => f.hit) : found.length === 1 ? found : [];
+    if (pick.length) {
+      $('pathInput').value = pick.map(f => f.target).join(';');
+      await App.loadFromPath($('pathInput').value);
+      $('msgs').innerHTML = '';
+    }
+    const c = (pick[0] && pick[0].conn) || {};
+    const srv = server || c.server, db = database || c.database;
+    if (!srv) return msg(pick.length ? 'Report loaded, but it is not clear where its model lives. Load the model with Server.' : 'Opened from Power BI Desktop, but no model and no saved report were found. Save the report first, or load it with Open folder.', true);
+    if (!pick.length) msg('The report that is open in Power BI Desktop could not be found on disk (save it first, or add it with "+ Add report"). Loading its model from ' + srv + '.');
+    await App.loadServerModel(srv, db);
+  }
 
   // ------------------------------------------------------------ values: what the measures return, before and after
 
@@ -575,7 +605,7 @@
   App.onRun.push(showViews);
 
   // opened from Power BI Desktop
-  { const q = new URLSearchParams(location.search), srv = q.get('server'); if (srv) setTimeout(() => openFromDesktop(srv, q.get('database') || ''), 400); }
+  { const q = new URLSearchParams(location.search); if (q.has('server')) setTimeout(() => openFromDesktop(q.get('server') || '', q.get('database') || ''), 400); }
 
   // ------------------------------------------------------------ Kimball: rule filter and the referential integrity check
 

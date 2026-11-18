@@ -10,7 +10,8 @@ const { spawn } = require('child_process');
 
 const PORT = Number(process.env.PORT || 5273);
 const [server, database] = process.argv.slice(2);
-const url = `http://127.0.0.1:${PORT}/` + (server ? `?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database || '')}` : '');
+// from the Power BI button the server is always passed (empty or remote for a thin report with a live connection)
+const url = `http://127.0.0.1:${PORT}/` + (server !== undefined ? `?server=${encodeURIComponent(server)}&database=${encodeURIComponent(database || '')}` : '');
 
 const ping = () => new Promise(resolve => {
   const req = http.get({ host: '127.0.0.1', port: PORT, path: '/api/ping', timeout: 800 }, res => { res.resume(); resolve(res.statusCode === 200); });

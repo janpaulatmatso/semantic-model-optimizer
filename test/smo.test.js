@@ -384,3 +384,21 @@ test('command line: --check passes on a sound model and fails on a broken one', 
   assert.match(bad.stdout, /::error title=Broken formulas::\[Twice\]/);
   assert.equal(spawnSync(process.execPath, [cli, path.join(dir, 'nope'), '--check'], { encoding: 'utf8' }).status, 2);
 });
+
+test('thin report: the live connection tells where the model lives', () => {
+  const pbir = conn => JSON.stringify({ version: '4.0', datasetReference: { byConnection: { connectionString: conn } } });
+  const page = { path: 'Sales.Report/definition/pages/p1/page.json', text: JSON.stringify({ name: 'p1', displayName: 'Page 1' }) };
+  const p = SMO.loadProject([{ path: 'Sales.Report/definition.pbir', text: pbir('Data Source=asazure://westeurope.asazure.windows.net/srv;Initial Catalog="Sales Model"') }, page]);
+  assert.ok(p.models[0].missing);
+  assert.deepEqual(p.reports[0].connection, { server: 'asazure://westeurope.asazure.windows.net/srv', database: 'Sales Model', kind: 'aas' });
+  // a .pbix keeps it in the Connections file
+  const pbix = SMO.loadProject([
+    { path: 'Thin.pbix/Connections', text: JSON.stringify({ Version: 3, Connections: [{ ConnectionString: 'Provider=MSOLAP;Data Source=powerbi://api.powerbi.com/v1.0/myorg/Finance;Initial Catalog=Ledger', ConnectionType: 'analysisServicesDatabase' }] }) },
+    { path: 'Thin.pbix/Report/Layout', text: JSON.stringify({ sections: [] }) },
+  ]);
+  assert.equal(pbix.reports[0].connection.kind, 'powerbi');
+  assert.equal(pbix.reports[0].connection.database, 'Ledger');
+  assert.equal(SMO.parseConnection(pbir('Data Source=pbiazure://api.powerbi.com;Initial Catalog=abc')).kind, 'service');
+  assert.equal(SMO.parseConnection(JSON.stringify({ datasetReference: { byPath: { path: '../Sales.SemanticModel' } } })), null);
+  assert.ok(SMO.zipWants('Connections'));
+});

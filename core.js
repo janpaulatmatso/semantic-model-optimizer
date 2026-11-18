@@ -540,9 +540,34 @@
     return /\.(tmdl|bim|json|pbir|ya?ml)$/i.test(p) || /(^|\/)(Layout|DataModelSchema)$/.test(p) || /(^|\/)[^/]*bus[ -]?matri[xc][^/]*\.md$/i.test(p);
   }
 
+  /**
+   * Where a thin report gets its model: the live connection in definition.pbir (Power BI project) or in the
+   * Connections file of a .pbix. → {server, database, kind} with kind 'aas', 'powerbi' (XMLA endpoint),
+   * 'service' (a semantic model in the Power BI service, not reachable over XMLA by this name) or 'ssas'; null for a model on disk.
+   */
+  function parseConnection(text) {
+    const j = tryJson(text);
+    if (!j || typeof j !== 'object') return null;
+    const ref = j.datasetReference || {};
+    let cs = '';
+    if (ref.byConnection) cs = ref.byConnection.connectionString || '';
+    else if (Array.isArray(j.Connections) && j.Connections.length) cs = j.Connections[0].ConnectionString || '';
+    if (!cs || ref.byPath) return null;
+    const get = key => {
+      const m = new RegExp('(?:^|;)\\s*' + key + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^;]*))', 'i').exec(cs);
+      return m ? String(m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]).trim() : '';
+    };
+    const server = get('Data Source') || get('Server') || get('Location');
+    if (!server) return null;
+    const database = get('Initial Catalog') || get('Database') || (ref.byConnection && ref.byConnection.pbiModelDatabaseName) || '';
+    const kind = /^asazure:\/\//i.test(server) ? 'aas' : /^powerbi:\/\//i.test(server) ? 'powerbi' : /^pbiazure:\/\//i.test(server) || /^sobe_/i.test(server) ? 'service' : 'ssas';
+    return { server, database, kind };
+  }
+
   /** files: [{path, text}] → {models: [{name, root, model}], reports: [...], warnings: []} */
   function loadProject(files) {
     const warnings = [];
+    const connections = new Map(); // folder → live connection of the report in it
     const modelGroups = new Map(), pbirGroups = new Map();
     const models = [], reports = [];
     let stats = null, config = null, performance = [];
@@ -555,6 +580,9 @@
         const rootDir = i >= 0 ? p.slice(0, i) : dirName(p);
         if (!modelGroups.has(rootDir)) modelGroups.set(rootDir, []);
         modelGroups.get(rootDir).push(f);
+      } else if (/\.pbir$/i.test(p) || b === 'Connections') {
+        const c = parseConnection(f.text);
+        if (c) connections.set(dirName(p), c);
       } else if (/\.json$/i.test(p) && f.text.includes('"Visual Container Lifecycle"')) {
         const j = tryJson(f.text);
         if (j) performance = performance.concat(parsePerformance(j, b));
@@ -594,6 +622,10 @@
       if (model.tables.length) models.push({ name: niceName(rootDir), root: rootDir, model, format: 'tmdl' });
     }
     for (const [rootDir, fs] of pbirGroups) reports.push(parsePbirReport(niceName(rootDir), rootDir, fs));
+    for (const r of reports) {
+      const c = connections.get(r.root) || connections.get(dirName(r.root));
+      if (c) r.connection = c;
+    }
     models.sort((a, b) => a.name.localeCompare(b.name));
     reports.sort((a, b) => a.name.localeCompare(b.name) || a.root.localeCompare(b.root));
     // keep two reports with the same name apart
@@ -959,7 +991,7 @@
 
   /** Which files from a pbix/pbit/vpax zip do we want to read? */
   function zipWants(n) {
-    return n === 'Report/Layout' || n === 'DataModelSchema' || n === 'DaxVpaView.json' || /^model\.bim$/i.test(n) ||
+    return n === 'Report/Layout' || n === 'DataModelSchema' || n === 'DaxVpaView.json' || n === 'Connections' || /^model\.bim$/i.test(n) ||
       (/^Report\/definition\//.test(n) && /\.json$/i.test(n));
   }
 
@@ -2340,6 +2372,6 @@
     scanTmdl, editTmdlObject, renameRefsTmdl, renameInReport, tmdlName,
     zipWants, statsFromVpax, applyStats, removeFromTmdl,
     parseTmdlTree, addTmdlToModel, emptyModel, modelFromBim, daxRefs, walkRefs,
-    loadProject, analyze, layers, readZipTexts, wantsFile, decodeText,
+    loadProject, analyze, layers, readZipTexts, wantsFile, decodeText, parseConnection,
   };
 });

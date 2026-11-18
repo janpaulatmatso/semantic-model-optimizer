@@ -93,6 +93,32 @@
     state.selected = null; state.table = ''; state.q = ''; $('q').value = '';
     $('empty').hidden = true; $('app').hidden = false;
     run();
+    if (noModel) offerServerModel(project.reports);
+  }
+
+  /** Thin reports whose model lives on a server (Azure Analysis Services, a workspace): offer to load that model. */
+  function offerServerModel(reports) {
+    const all = reports.map(r => r.connection).filter(Boolean);
+    const c = all.find(x => x.kind !== 'service');
+    if (!c) {
+      if (all.length) msg('This report is connected live to a semantic model in the Power BI service. To see its formulas, load that model too: with Server › workspace (powerbi://api.powerbi.com/v1.0/myorg/<workspace>, needs Premium, PPU or Fabric) or as a Power BI project (.pbip).');
+      return;
+    }
+    if (!location.protocol.startsWith('http')) {
+      return msg('This report gets its model live from ' + (c.database || 'a model') + ' on ' + c.server + '. Start the tool as the app (or with node serve.js) and choose Server to load that model, so you see its formulas and what the report uses.');
+    }
+    const d = document.createElement('div');
+    d.className = 'msg';
+    d.innerHTML = `This report gets its model live from <b>${esc(c.database || '?')}</b> on <b>${esc(c.server)}</b>. The formulas are there, not in the report. <button type="button" class="primary">Load that model</button> <span class="muted">A sign-in window may open. Reading the definition needs admin rights on the model.</span>`;
+    d.querySelector('button').onclick = () => loadServerModel(c.server, c.database);
+    $('msgs').appendChild(d);
+  }
+  /** Loads the model of a thin report from its server; without a database name it opens the Server panel to pick one. */
+  async function loadServerModel(server, database) {
+    $('xmlaServer').value = server;
+    if (database) return xmlaLoad(server, database, database);
+    $('xmlaPanel').hidden = false;
+    $('xmlaForm').requestSubmit();
   }
 
   /** Reloads a project and keeps the model choice, disabled reports and selection. */
@@ -231,15 +257,19 @@
   async function xmlaLoad(server, database, name) {
     document.body.style.cursor = 'progress';
     $('xmlaInfo').textContent = 'Reading the model…';
+    // started from a message (panel closed): show progress and errors there
+    const quiet = $('xmlaPanel').hidden;
+    const note = text => { $('xmlaInfo').textContent = text; if (quiet) msg(text, true); };
+    if (quiet) msg('Reading ' + (database || 'the model') + ' from ' + server + '… a sign-in window may open.');
     try {
       const r = await xmlaCall({ server, database, name });
-      if (r.error) { $('xmlaInfo').textContent = r.error; return; }
+      if (r.error) return note(r.error);
       $('xmlaPanel').hidden = true;
       setProject(r.files, r.warnings || []);
       state.xmla = { server, database };
       $('btnDesktop').textContent = 'Sizes from server';
       msg('Model ' + r.name + ' loaded from ' + server + '. It is read-only here: editing and deleting need the model as files.');
-    } catch (e) { $('xmlaInfo').textContent = 'Connecting failed: ' + e.message; }
+    } catch (e) { note('Connecting failed: ' + e.message); }
     finally { document.body.style.cursor = ''; }
   }
   $('btnXmla').onclick = async () => {
@@ -1241,7 +1271,7 @@
   }
 
   // what extras.js builds on
-  Object.assign(App, { reloadKeep, renderDetail, renderGrid, state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath });
+  Object.assign(App, { reloadKeep, renderDetail, renderGrid, state, $, esc, msg, select, label, STATUS, run, canWrite, apiPost, reloadFromDisk, setView, setProject, filtered, int, mb, exportData, store, loadFromPath, xmlaLoad, loadServerModel });
   window.dispatchEvent(new Event('smo-ready'));
 
   // test hook: load a project from the address bar (?path=...) when serve.js is running

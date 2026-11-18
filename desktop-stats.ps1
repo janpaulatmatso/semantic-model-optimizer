@@ -27,7 +27,18 @@ function Get-Instances {
   }
 }
 
-if ($List) { Out-Json @{ instances = @(Get-Instances) }; exit 0 }
+# every open Power BI Desktop window with its file, also the thin reports that have no model of their own (live connection)
+function Get-OpenFiles {
+  foreach ($p in (Get-CimInstance Win32_Process -Filter "Name='PBIDesktop.exe'")) {
+    $file = ''; $cl = [string]$p.CommandLine
+    if ($cl -match '"([^"]+\.(pbip|pbix|pbit))"') { $file = $Matches[1] } elseif ($cl -match '\s(\S+\.(pbip|pbix|pbit))\s*$') { $file = $Matches[1] }
+    $hasModel = [bool](Get-CimInstance Win32_Process -Filter "Name='msmdsrv.exe' AND ParentProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue)
+    $title = (Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue).MainWindowTitle -replace '\s+-\s+Power BI Desktop.*$', ''
+    [pscustomobject]@{ pid = [int]$p.ProcessId; file = $file; name = $title; hasModel = $hasModel }
+  }
+}
+
+if ($List) { Out-Json @{ instances = @(Get-Instances); files = @(Get-OpenFiles) }; exit 0 }
 
 $remote = $env:SMO_XMLA_CONN
 $instances = @()
