@@ -625,6 +625,77 @@ test('Fabric notebook: a scan in Python, with the Power BI API replaced', t => {
   assert.match(fs.readFileSync(path.join(tmp, 'lake/data/run-000001/usage.csv'), 'utf8'), /Values/); // the report was read with the model
 });
 
+test('Fabric notebook: a report on Azure Analysis Services is checked with the model on that server', t => {
+  const os = require('os');
+  const P = require('../powerbi.js');
+  // recorded from a real server: the answers to the schema queries, and what xmla-model.ps1 made of the same model
+  const xmla = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'aas-xmla.json'), 'utf8'));
+  const bim = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'aas-model.json'), 'utf8'));
+  const src = e => ({ Expression: { SourceRef: { Entity: e } } });
+  const field = (kind, e, p) => ({ field: { [kind]: Object.assign(src(e), { Property: p }) }, queryRef: e + '.' + p });
+  const report = {
+    'definition/pages/p1/page.json': { name: 'p1', displayName: 'Klanten' },
+    'definition/pages/p1/visuals/v1/visual.json': { name: 'v1', visual: { visualType: 'tableEx', query: { queryState: { Values: { projections: [
+      field('Column', 'Dim_Klant', 'Naam'), field('Measure', 'Feit_Verkoop', 'Omzet'), field('Measure', 'Feit_Verkoop', 'Aantal klanten'), field('Column', 'Dim_Klant', 'Verdwenen'),
+      { field: { HierarchyLevel: { Expression: { Hierarchy: Object.assign(src('Dim_Datum'), { Hierarchy: 'Kalender' }) }, Level: 'Maand' } } }] } } } } },
+    'definition/reportExtensions.json': { name: 'extension', entities: [{ name: 'Feit_Verkoop', measures: [{ name: 'Aantal klanten', expression: 'COUNTROWS ( Dim_Klant ) + [Omzet (verzonden)]' }] }] },
+  };
+  const b64 = s => Buffer.from(s).toString('base64');
+  const parts = Object.entries(report).map(([p, j]) => ({ path: p, payload: b64(JSON.stringify(j)), payloadType: 'InlineBase64' }));
+  const pbi = 'https://api.powerbi.com/v1.0/myorg', fab = 'https://api.fabric.microsoft.com/v1', cluster = 'https://cluster1.asazure.windows.net/webapi/xmla';
+  const ok = body => ({ status: 200, body });
+  const workspace = {
+    ['GET ' + pbi + '/groups?$top=5000']: ok({ value: [{ id: 'w1', name: 'Sales' }] }),
+    ['GET ' + pbi + '/groups/w1/datasets']: ok({ value: [{ id: 'd1', name: 'Live report' }] }),
+    ['GET ' + pbi + '/groups/w1/reports']: ok({ value: [{ id: 'r1', name: 'Klanten', datasetId: 'd1' }] }),
+    ['POST ' + fab + '/workspaces/w1/semanticModels/d1/getDefinition?format=TMDL']: ok({ definition: { parts: [{ path: 'definition/model.tmdl', payload: b64('model Model\n\tculture: nl-NL\n') }] } }),
+    ['POST ' + fab + '/workspaces/w1/reports/r1/getDefinition']: ok({ definition: { parts } }),
+    ['GET ' + pbi + '/groups/w1/datasets/d1/datasources']: ok({ value: [{ datasourceType: 'AnalysisServices', connectionDetails: { server: 'asazure://westeurope.asazure.windows.net/testserver', database: 'smo test' } }] }),
+  };
+  const aas = {
+    'POST https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token': ok({ token_type: 'Bearer', access_token: 'aas-token' }),
+    'POST https://westeurope.asazure.windows.net/webapi/clusterResolve': ok({ clusterFQDN: 'cluster1.asazure.windows.net', coreServerName: 'testserver' }),
+  };
+  for (const [name, body] of Object.entries(xmla)) aas['POST ' + cluster + ' #' + name] = { status: 200, body };
+  const run = (responses, folder) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-aas-'));
+    fs.writeFileSync(path.join(tmp, 'responses.json'), JSON.stringify(responses));
+    return { out: py(t, ['scan', path.join(tmp, 'responses.json'), path.join(tmp, folder), 'Sales']), dir: path.join(tmp, folder, 'data', 'run-000001') };
+  };
+
+  // with a service principal: the model comes from the server, and the report is checked against it
+  const a = run(Object.assign({}, workspace, aas), 'with');
+  if (!a.out) return;
+  assert.match(a.out.log.join('\n'), /Sales \/ Live report: live connection to asazure:\/\/westeurope\.asazure\.windows\.net\/testserver \/ smo test, checked with that model\nAAS testserver \/ SMO Test: run 1, 1 report/);
+  assert.ok(!JSON.stringify(a.out).includes('s3cret'), 'the secret is not printed');
+  assert.equal(a.out.result.failed, 0);
+  assert.equal(a.out.calls.filter(c => c.includes('#')).length, 13);
+  // the same result as the desktop tool gets from the same model through xmla-model.ps1
+  const files = [{ path: 'server/SMO Test/model.bim', text: JSON.stringify(bim) }]
+    .concat(Object.entries(report).map(([p, j]) => ({ path: 'fabric/Sales/Live report/Klanten.Report/' + p, text: JSON.stringify(j) })));
+  const proj = SMO.loadProject(files), m = proj.models[0];
+  const an = SMO.applyStats(SMO.analyze(m.model, proj.reports), null);
+  const checks = SMO.checkRules(m.model, an, null, null, null);
+  const tables = P.runTables(an, checks, { run: 1, now: new Date(2026, 0, 2, 3, 4, 5), model: 'AAS testserver / SMO Test', source: 'asazure://westeurope.asazure.windows.net/testserver / SMO Test', version: 'dev', reports: 1, visuals: an.stats.visuals });
+  assert.equal(an.nodes.get('M|Feit_Verkoop|Omzet').status, 'direct');
+  assert.equal(an.nodes.get('C|Dim_Datum|Maand').status, 'direct');
+  assert.equal(an.nodes.get('M|Feit_Verkoop|Omzet (verzonden)').status, 'indirect');
+  assert.equal(an.broken.length, 1);
+  assert.ok(!checks.rules.some(r => r.id === 'no-date-table'), 'the date table keeps its mark');
+  for (const table of Object.keys(tables)) {
+    const js = X.toCsv(tables[table]).split('\r\n'), python = fs.readFileSync(path.join(a.dir, table + '.csv'), 'utf8').split('\r\n');
+    for (let i = 0; i < Math.max(js.length, python.length); i++) assert.equal(python[i], js[i], `${table}.csv line ${i + 1}`);
+  }
+
+  // without one: the report is still listed, and its fields say that the model was not read
+  const b = run(workspace, 'without');
+  assert.match(b.out.log.join('\n'), /Sales \/ Live report: live connection to asazure:[^\n]*; that model is not read \(fill in the AAS settings\)\nSales \/ Live report: run 1, 1 report/);
+  assert.ok(!b.out.calls.some(c => /asazure|login\.microsoftonline/.test(c.split(' ')[1])));
+  const objects = fs.readFileSync(path.join(b.dir, 'objects.csv'), 'utf8');
+  assert.match(objects, /"Missing","column","Dim_Klant","Naam","Dim_Klant\[Naam\]","Model not loaded","6","No","No"/);
+  assert.ok(!objects.includes('"Not in model"'));
+});
+
 test('Fabric notebook: built from the Python port, complete, and it calls nothing but Power BI', () => {
   const B = require('../build-fabric.js');
   const dir = path.join(__dirname, '..', 'fabric');
@@ -646,7 +717,8 @@ test('Fabric notebook: built from the Python port, complete, and it calls nothin
   for (const bad of ['subprocess', 'os.system', 'pip install', '%pip', 'nodejs.org', 'raw.githubusercontent', 'tarfile', 'exec(', 'eval(', '__import__', 'socket'])
     assert.ok(!one.includes(bad), 'the notebook should not use ' + bad);
   const hosts = [...one.matchAll(/https:\/\/([a-z0-9.-]+)/g)].map(m => m[1]).filter((h, i, a) => a.indexOf(h) === i).sort();
-  assert.deepEqual(hosts, ['api.fabric.microsoft.com', 'api.powerbi.com', 'github.com', 'onelake.dfs.fabric.microsoft.com']); // github.com: the link to the manual
+  // github.com: the link to the manual; login.microsoftonline.com: the sign-in of the service principal for Analysis Services
+  assert.deepEqual(hosts, ['api.fabric.microsoft.com', 'api.powerbi.com', 'github.com', 'login.microsoftonline.com', 'onelake.dfs.fabric.microsoft.com']);
 });
 
 test('thin report: the live connection tells where the model lives', () => {

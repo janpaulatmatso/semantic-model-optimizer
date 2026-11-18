@@ -29,18 +29,26 @@ elif mode == "scan":
     responses = json.load(open(sys.argv[2], encoding="utf-8"))
     calls = []
 
-    def fake(method, url, token):
-        calls.append(method + " " + url)
-        assert token == "test-token"
-        r = responses.get(method + " " + url)
+    def fake(method, url, token=None, body=None, headers=None):
+        key = method + " " + url
+        if body and b"<Envelope" in body:  # an XMLA request: which schema table it asks for
+            text = body.decode("utf-8")
+            key += " #" + (text.split("TMSCHEMA_")[1].split("<")[0] if "TMSCHEMA_" in text else "DBSCHEMA_CATALOGS")
+        calls.append(key)
+        if "login.microsoftonline.com" in url:
+            assert token is None and b"client_secret=s3cret" in body and b"asazure.windows.net" in body
+        else:
+            assert token == ("aas-token" if "asazure.windows.net" in url else "test-token"), key
+        r = responses.get(key)
         if r is None:
-            raise Exception("unexpected call " + method + " " + url)
+            raise Exception("unexpected call " + key)
         return r["status"], r.get("headers") or {}, r["body"] if isinstance(r["body"], str) else json.dumps(r["body"])
 
     smo.http = fake
     smo.sleep = lambda s: None
     lines = []
-    result = smo.scan(sys.argv[4], sys.argv[3], "test-token", now=datetime.datetime(2026, 1, 2, 3, 4, 5), log=lines.append)
+    aas = smo.aasToken("tenant-id", "client-id", "s3cret") if any("login.microsoftonline.com" in k for k in responses) else None
+    result = smo.scan(sys.argv[4], sys.argv[3], "test-token", now=datetime.datetime(2026, 1, 2, 3, 4, 5), log=lines.append, aas_token=aas)
     print(json.dumps({"result": result, "log": lines, "calls": calls}))
 elif mode == "sort":
     print(json.dumps(sorted(json.load(open(sys.argv[2], encoding="utf-8")), key=smo.loc_key)))

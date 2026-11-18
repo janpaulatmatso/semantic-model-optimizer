@@ -1,0 +1,479 @@
+{
+ "model": {
+  "tables": [
+   {
+    "name": "Feit_Verkoop",
+    "description": "Eén rij per orderregel.",
+    "isHidden": false,
+    "dataCategory": "",
+    "columns": [
+     {
+      "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+      "type": "rowNumber",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "",
+      "isNullable": false,
+      "displayFolder": ""
+     },
+     {
+      "name": "DK_Datum",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[DK_Datum]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "DK_Verzenddatum",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[DK_Verzenddatum]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "DK_Klant",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[DK_Klant]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Bedrag",
+      "type": "calculatedTableColumn",
+      "dataType": "decimal",
+      "isHidden": false,
+      "description": "Bedrag exclusief btw.",
+      "expression": "",
+      "sourceColumn": "[Bedrag]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Opmerking",
+      "type": "calculatedTableColumn",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Opmerking]",
+      "isNullable": true,
+      "displayFolder": "Tekst"
+     },
+     {
+      "name": "Bedrag x2",
+      "type": "calculated",
+      "dataType": "decimal",
+      "isHidden": false,
+      "description": "",
+      "expression": "Feit_Verkoop[Bedrag] * 2",
+      "sourceColumn": "",
+      "isNullable": true,
+      "displayFolder": ""
+     }
+    ],
+    "measures": [
+     {
+      "name": "Omzet",
+      "expression": "SUM ( Feit_Verkoop[Bedrag] )",
+      "description": "Omzet exclusief btw.",
+      "isHidden": false,
+      "formatString": "#,0",
+      "displayFolder": ""
+     },
+     {
+      "name": "Omzet (verzonden)",
+      "expression": "CALCULATE (\n    [Omzet],\n    USERELATIONSHIP ( Feit_Verkoop[DK_Verzenddatum], Dim_Datum[DK_Datum] )\n)",
+      "description": "",
+      "isHidden": false,
+      "formatString": "#,0",
+      "displayFolder": "Rollen"
+     },
+     {
+      "name": "Dubbel",
+      "expression": "SUM(Feit_Verkoop[Bedrag])",
+      "description": "",
+      "isHidden": false,
+      "formatString": "",
+      "displayFolder": ""
+     },
+     {
+      "name": "Kapot",
+      "expression": "[Bestaat niet] + 1",
+      "description": "",
+      "isHidden": true,
+      "formatString": "",
+      "displayFolder": ""
+     },
+     {
+      "name": "Via kapot",
+      "expression": "[Kapot] * 2",
+      "description": "",
+      "isHidden": false,
+      "formatString": "",
+      "displayFolder": ""
+     },
+     {
+      "name": "Marge via kolom",
+      "expression": "SUM ( Feit_Verkoop[Bedrag x2] ) / [Omzet]",
+      "description": "",
+      "isHidden": false,
+      "formatString": "0.0%",
+      "displayFolder": ""
+     }
+    ],
+    "partitions": [
+     {
+      "name": "Feit_Verkoop",
+      "mode": "import",
+      "source": {
+       "type": "calculated",
+       "expression": "DATATABLE ( \"DK_Datum\", INTEGER, \"DK_Verzenddatum\", INTEGER, \"DK_Klant\", INTEGER, \"Bedrag\", CURRENCY, \"Opmerking\", STRING, { { 20250105, 20250107, 1, 100, \"x\" }, { 20250210, 20250212, 2, 250, \"y\" } } )"
+      }
+     }
+    ],
+    "hierarchies": []
+   },
+   {
+    "name": "Dim_Datum",
+    "description": "",
+    "isHidden": false,
+    "dataCategory": "Time",
+    "columns": [
+     {
+      "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+      "type": "rowNumber",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "",
+      "isNullable": false,
+      "displayFolder": ""
+     },
+     {
+      "name": "Date",
+      "type": "calculatedTableColumn",
+      "dataType": "dateTime",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Date]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "DK_Datum",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[DK_Datum]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Jaar",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Jaar]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Maandnr",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Maandnr]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Maand",
+      "type": "calculatedTableColumn",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Maand]",
+      "isNullable": true,
+      "displayFolder": "",
+      "sortByColumn": "Maandnr"
+     }
+    ],
+    "measures": [],
+    "partitions": [
+     {
+      "name": "Dim_Datum",
+      "mode": "import",
+      "source": {
+       "type": "calculated",
+       "expression": "ADDCOLUMNS ( CALENDAR ( DATE ( 2025, 1, 1 ), DATE ( 2025, 12, 31 ) ), \"DK_Datum\", YEAR ( [Date] ) * 10000 + MONTH ( [Date] ) * 100 + DAY ( [Date] ), \"Jaar\", YEAR ( [Date] ), \"Maandnr\", MONTH ( [Date] ), \"Maand\", FORMAT ( [Date], \"MMMM\" ) )"
+      }
+     }
+    ],
+    "hierarchies": [
+     {
+      "name": "Kalender",
+      "levels": [
+       {
+        "name": "Jaar",
+        "column": "Jaar"
+       },
+       {
+        "name": "Maand",
+        "column": "Maand"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "name": "Dim_Klant",
+    "description": "Klanten.",
+    "isHidden": false,
+    "dataCategory": "",
+    "columns": [
+     {
+      "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+      "type": "rowNumber",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "",
+      "isNullable": false,
+      "displayFolder": ""
+     },
+     {
+      "name": "DK_Klant",
+      "type": "calculatedTableColumn",
+      "dataType": "int64",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[DK_Klant]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Naam",
+      "type": "calculatedTableColumn",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Naam]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "Regio",
+      "type": "calculatedTableColumn",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[Regio]",
+      "isNullable": true,
+      "displayFolder": ""
+     },
+     {
+      "name": "E-mail",
+      "type": "calculatedTableColumn",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "[E-mail]",
+      "isNullable": true,
+      "displayFolder": ""
+     }
+    ],
+    "measures": [],
+    "partitions": [
+     {
+      "name": "Dim_Klant",
+      "mode": "import",
+      "source": {
+       "type": "calculated",
+       "expression": "DATATABLE ( \"DK_Klant\", INTEGER, \"Naam\", STRING, \"Regio\", STRING, \"E-mail\", STRING, { { 1, \"Jansen\", \"Noord\", \"a@example.com\" }, { 2, \"De Vries\", \"Zuid\", \"b@example.com\" } } )"
+      }
+     }
+    ],
+    "hierarchies": []
+   },
+   {
+    "name": "Brug",
+    "description": "",
+    "isHidden": false,
+    "dataCategory": "",
+    "columns": [
+     {
+      "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+      "type": "rowNumber",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "",
+      "isNullable": false,
+      "displayFolder": ""
+     },
+     {
+      "name": "Klant",
+      "type": "data",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "Klant",
+      "isNullable": true,
+      "displayFolder": ""
+     }
+    ],
+    "measures": [],
+    "partitions": [
+     {
+      "name": "Brug",
+      "mode": "import",
+      "source": {
+       "type": "m",
+       "expression": "let\n    Source = #table(type table [Klant = text], {{\"Jansen\"}}),\n    Kept = Table.SelectColumns(Source, {\"Klant\"})\nin\n    Kept"
+      }
+     }
+    ],
+    "hierarchies": []
+   },
+   {
+    "name": "Tijd",
+    "description": "",
+    "isHidden": false,
+    "dataCategory": "",
+    "columns": [
+     {
+      "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+      "type": "rowNumber",
+      "dataType": "int64",
+      "isHidden": true,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "",
+      "isNullable": false,
+      "displayFolder": ""
+     },
+     {
+      "name": "Berekening",
+      "type": "data",
+      "dataType": "string",
+      "isHidden": false,
+      "description": "",
+      "expression": "",
+      "sourceColumn": "Name",
+      "isNullable": true,
+      "displayFolder": ""
+     }
+    ],
+    "measures": [],
+    "partitions": [
+     {
+      "name": "Tijd",
+      "mode": "import",
+      "source": {
+       "type": "calculationGroup",
+       "expression": ""
+      }
+     }
+    ],
+    "hierarchies": [],
+    "calculationGroup": {
+     "calculationItems": [
+      {
+       "name": "Huidig",
+       "expression": "SELECTEDMEASURE ()"
+      },
+      {
+       "name": "YTD",
+       "expression": "CALCULATE ( SELECTEDMEASURE (), DATESYTD ( Dim_Datum[Date] ) )"
+      }
+     ]
+    }
+   }
+  ],
+  "relationships": [
+   {
+    "name": "r1",
+    "fromTable": "Feit_Verkoop",
+    "fromColumn": "DK_Datum",
+    "toTable": "Dim_Datum",
+    "toColumn": "DK_Datum",
+    "isActive": true,
+    "relyOnReferentialIntegrity": false,
+    "fromCardinality": "many",
+    "toCardinality": "one",
+    "crossFilteringBehavior": "oneDirection"
+   },
+   {
+    "name": "r2",
+    "fromTable": "Feit_Verkoop",
+    "fromColumn": "DK_Verzenddatum",
+    "toTable": "Dim_Datum",
+    "toColumn": "DK_Datum",
+    "isActive": false,
+    "relyOnReferentialIntegrity": false,
+    "fromCardinality": "many",
+    "toCardinality": "one",
+    "crossFilteringBehavior": "oneDirection"
+   },
+   {
+    "name": "r3",
+    "fromTable": "Feit_Verkoop",
+    "fromColumn": "DK_Klant",
+    "toTable": "Dim_Klant",
+    "toColumn": "DK_Klant",
+    "isActive": true,
+    "relyOnReferentialIntegrity": false,
+    "fromCardinality": "many",
+    "toCardinality": "one",
+    "crossFilteringBehavior": "oneDirection"
+   }
+  ],
+  "roles": [
+   {
+    "name": "Regio Noord",
+    "tablePermissions": [
+     {
+      "name": "Dim_Klant",
+      "filterExpression": "[Regio] = \"Noord\""
+     }
+    ]
+   }
+  ],
+  "expressions": [
+   {
+    "name": "Server",
+    "expression": "\"srv01\" meta [IsParameterQuery=true, Type=\"Text\", IsParameterQueryRequired=true]"
+   }
+  ]
+ }
+}

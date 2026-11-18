@@ -9,6 +9,15 @@ WORKSPACES = "*"
 # Folder under Files in the default Lakehouse
 FOLDER = "SemanticModelOptimizer"
 
+# Azure Analysis Services (optional). Reports that are connected live to a model on Azure Analysis Services are
+# checked with that model when you fill these in. A notebook cannot sign in to Analysis Services as you, so it needs
+# an app registration (service principal) that is administrator of the server, with its client secret in a Key Vault
+# that you can read.
+AAS_TENANT = ""        # tenant id (Directory ID)
+AAS_CLIENT_ID = ""     # application (client) id of the app registration
+AAS_KEY_VAULT = ""     # address of the Key Vault, such as https://<name>.vault.azure.net/
+AAS_SECRET_NAME = ""   # name of the secret in the Key Vault that holds the client secret
+
 # ====================================================================================================
 # The tool. Nothing to set below this line.
 # ====================================================================================================
@@ -31,7 +40,9 @@ import sys
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree
 
 VERSION = "dev"
 
@@ -1440,7 +1451,7 @@ def kimballFindings(model, analysis, add, found, col, lst):
 # ---------------------------------------------------------------- The tables of one run (powerbi.js)
 
 STATUS = {"direct": "In report", "indirect": "Used indirectly", "model": "Model only", "unused": "Unused"}
-STATUS_ORDER = {"In report": 1, "Used indirectly": 2, "Model only": 3, "Unused": 4, "Not in model": 5, "(none)": 9}
+STATUS_ORDER = {"In report": 1, "Used indirectly": 2, "Model only": 3, "Unused": 4, "Not in model": 5, "Model not loaded": 6, "(none)": 9}
 SEVERITY = {"error": "Error", "warning": "Warning", "info": "Note"}
 SEVERITY_ORDER = {"Error": 1, "Warning": 2, "Note": 3}
 STEP = 10000000  # keys: run number × STEP + row number
@@ -1492,7 +1503,9 @@ def runTables(analysis, checks, run, now, model, source="", version="", reports=
         objects["rows"].append([run, dk, k, n["id"], cap(n["type"]), n["kind"], "" if n["type"] == "function" else n["table"], n["name"], label(n), status, STATUS_ORDER[status],
                                 yn(n["hidden"]), yn(n["broken"]), n.get("dataType") or "", n.get("displayFolder") or "", n["description"] or "", n["expression"] or "", n.get("report") or "",
                                 len(n["reportUses"]), len(n["deps"]), len(n["usedBy"]), "", "", ""])
-    # fields that reports use but the model does not have
+    # fields that reports use but the model does not have; or, for reports whose model could not be read, every field
+    noModel = analysis["stats"]["noModel"]
+    gone = "Model not loaded" if noModel else "Not in model"
     missing = {}
     for u in analysis["broken"]:
         id_ = "X|" + jstr(u["table"]) + "|" + jstr(u["name"])
@@ -1500,8 +1513,8 @@ def runTables(analysis, checks, run, now, model, source="", version="", reports=
             continue
         k = run * STEP + len(objects["rows"]) + 1
         missing[id_] = k
-        objects["rows"].append([run, dk, k, id_, "Missing", "missing " + (u["kind"] or "field"), u["table"], u["name"], jstr(u["table"]) + "[" + jstr(u["name"]) + "]", "Not in model", STATUS_ORDER["Not in model"],
-                                "No", "Yes", "", "", "", "", "", "", "", "", "", "", ""])
+        objects["rows"].append([run, dk, k, id_, "Missing", (u["kind"] or "field") if noModel else "missing " + (u["kind"] or "field"), u["table"], u["name"], jstr(u["table"]) + "[" + jstr(u["name"]) + "]", gone, STATUS_ORDER[gone],
+                                "No", "No" if noModel else "Yes", "", "", "", "", "", "", "", "", "", "", ""])
 
     visuals_t = {"head": ["Key_Visual", "Report", "Page", "Visual", "Visual type", "Visual id"], "rows": []}
     vkey = {}
@@ -1583,14 +1596,19 @@ def summary(name, analysis, checks):
 sleep = time.sleep
 PBI = "https://api.powerbi.com/v1.0/myorg"
 FABRIC = "https://api.fabric.microsoft.com/v1"
+_ALLOWED = re.compile(r"https://(api\.powerbi\.com|api\.fabric\.microsoft\.com|login\.microsoftonline\.com|[a-z0-9.-]+\.(fabric\.microsoft\.com|powerbi\.com|analysis\.windows\.net|asazure\.windows\.net))/")
 
 
-def http(method, url, token):
-    """One call to the Power BI or Fabric REST API. → (status, headers, body as text). The only place that goes online."""
-    if not (url.startswith(PBI + "/") or url.startswith(FABRIC + "/") or re.match(r"https://[a-z0-9.-]+\.(fabric\.microsoft\.com|powerbi\.com|analysis\.windows\.net)/", url)):
-        raise Exception("Refused to call " + url + ": not a Power BI or Fabric address.")
-    req = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None,
-                                 headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+def http(method, url, token=None, body=None, headers=None):
+    """One call over HTTPS. → (status, headers, body as text). The only place that goes online, and only to the
+    Power BI and Fabric REST APIs, Azure Analysis Services and the Microsoft sign-in for a service principal."""
+    if not _ALLOWED.match(url):
+        raise Exception("Refused to call " + url + ": not a Power BI, Fabric or Analysis Services address.")
+    h = {"Content-Type": "application/json"}
+    if token:
+        h["Authorization"] = "Bearer " + token
+    h.update(headers or {})
+    req = urllib.request.Request(url, method=method, data=body if body is not None else (b"" if method == "POST" else None), headers=h)
     try:
         with urllib.request.urlopen(req, timeout=300) as res:
             return res.status, {k.lower(): v for k, v in res.headers.items()}, res.read().decode("utf-8", "replace")
@@ -1651,6 +1669,257 @@ def partsToFiles(definition, root):
     return out
 
 
+# ---------------------------------------------------------------- Azure Analysis Services (xmla-model.ps1)
+
+AAS_RESOURCE = "https://*.asazure.windows.net"
+_AAS_SERVER = re.compile(r"asazure://([a-z0-9-]+)\.asazure\.windows\.net/([^:/?;]+)", I)
+_XA = "urn:schemas-microsoft-com:xml-analysis"
+
+
+def aasToken(tenant, clientId, secret):
+    """A token for Azure Analysis Services for a service principal (an app registration with a client secret).
+    A Fabric notebook cannot get this token as the signed-in user, so reading AAS needs an app of its own."""
+    body = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": clientId, "client_secret": secret, "scope": AAS_RESOURCE + "/.default"}).encode("utf-8")
+    status, _, text = http("POST", "https://login.microsoftonline.com/" + urllib.parse.quote(trim(tenant)) + "/oauth2/v2.0/token", None, body, {"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        j = json.loads(text)
+    except ValueError:
+        j = {}
+    if status != 200 or not j.get("access_token"):
+        why = jstr(j.get("error_description") or j.get("error") or "no answer").split("\n")[0]
+        raise Exception("Could not sign in to Azure Analysis Services as the service principal (" + str(status) + "): " + trim(why))
+    return j["access_token"]
+
+
+def aasConnect(server, token):
+    """asazure://<region>.asazure.windows.net/<server> → a connection: where its XMLA endpoint is, and the token."""
+    m = _AAS_SERVER.match(trim(server))
+    if not m:
+        raise Exception("Not an Azure Analysis Services server: " + server)
+    region, name = m.group(1).lower(), m.group(2)
+    status, _, text = http("POST", "https://" + region + ".asazure.windows.net/webapi/clusterResolve", token, json.dumps({"serverName": name, "premiumPublicXmlaEndpoint": True}).encode("utf-8"))
+    try:
+        j = json.loads(text)
+    except ValueError:
+        j = {}
+    if status != 200 or not j.get("clusterFQDN"):
+        raise Exception("Azure Analysis Services answered " + str(status) + " for server " + name + (": " + jstr(j.get("message")) if j.get("message") else "."))
+    return {"url": "https://" + j["clusterFQDN"] + "/webapi/xmla", "server": name, "token": token}
+
+
+def _xmlText(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def aasRows(conn, kind, inner, catalog=""):
+    """One XMLA request (Discover or Execute) → the rows of the answer, each a dict of column → text."""
+    env = ('<Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"><Body><' + kind + ' xmlns="' + _XA + '">' + inner +
+           "<Properties><PropertyList><Format>Tabular</Format>" + ("<Catalog>" + _xmlText(catalog) + "</Catalog>" if catalog else "") +
+           "</PropertyList></Properties></" + kind + "></Body></Envelope>")
+    status, _, text = http("POST", conn["url"], conn["token"], env.encode("utf-8"), {
+        "Content-Type": "text/xml", "x-ms-xmlaserver": conn["server"], "x-ms-xmlacaps-negotiation-flags": "0,0,0,0,0",
+        "SOAPAction": '"' + _XA + ":" + kind + '"', "User-Agent": "XmlaClient"})
+    if status != 200:
+        detail = text
+        try:
+            detail = jstr(json.loads(text).get("message") or text)
+        except ValueError:
+            pass
+        raise Exception("Azure Analysis Services answered " + str(status) + ": " + trim(detail)[:300])
+    root = xml.etree.ElementTree.fromstring(text)
+    for e in root.iter():
+        tag = e.tag.split("}")[-1]
+        if tag == "Fault":
+            raise Exception(trim(" ".join(x for x in e.itertext() if trim(x)))[:300])
+        if tag == "Error" and e.get("Description"):
+            raise Exception(e.get("Description")[:300])
+    return [{c.tag.split("}")[-1]: (c.text or "") for c in r} for r in root.iter("{urn:schemas-microsoft-com:xml-analysis:rowset}row")]
+
+
+def aasQuery(conn, sql, catalog):
+    return aasRows(conn, "Execute", "<Command><Statement>" + _xmlText(sql) + "</Statement></Command>", catalog)
+
+
+def aasCatalogs(conn):
+    return [r.get("CATALOG_NAME") for r in aasRows(conn, "Discover", "<RequestType>DBSCHEMA_CATALOGS</RequestType><Restrictions><RestrictionList/></Restrictions>")]
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bool(v):
+    return v == "true"
+
+
+_DATA_TYPES = {2: "string", 6: "int64", 8: "double", 9: "dateTime", 10: "decimal", 11: "boolean", 17: "binary", 20: "variant"}
+_PART_TYPES = {1: "query", 2: "calculated", 4: "m", 5: "entity", 6: "policyRange", 7: "calculationGroup"}
+_MODES = {0: "import", 1: "directQuery", 2: "default", 3: "push", 4: "dual", 5: "directLake"}
+
+
+def aasBim(conn, database):
+    """The definition of a model on the server, in model.bim shape. Reads the schema tables of the model; that needs
+    admin permission on the server or the database."""
+    def query(name):
+        return aasQuery(conn, "SELECT * FROM $SYSTEM.TMSCHEMA_" + name, database)
+
+    def tryQuery(name):
+        try:
+            return query(name)
+        except Exception:  # an older server does not have every schema table
+            return []
+
+    try:
+        tRows = query("TABLES")
+    except Exception as e:
+        raise Exception("Could not read the model definition. Reading it needs admin permission on the server or the model. Server said: " + str(e))
+    tables, colName = {}, {}
+    for t in tRows:
+        tables[t.get("ID")] = {"name": t.get("Name") or "", "description": t.get("Description") or "", "isHidden": _bool(t.get("IsHidden")), "dataCategory": t.get("DataCategory") or "",
+                               "columns": [], "measures": [], "partitions": [], "hierarchies": []}
+    sortBy = []
+    for col in query("COLUMNS"):
+        t = tables.get(col.get("TableID"))
+        if t is None:
+            continue
+        name = col.get("ExplicitName") or col.get("InferredName") or ""
+        colName[col.get("ID")] = name
+        kind = {2: "calculated", 3: "rowNumber", 4: "calculatedTableColumn"}.get(_int(col.get("Type")), "data")
+        c = {"name": name, "type": kind, "dataType": _DATA_TYPES.get(_int(col.get("ExplicitDataType"))) or _DATA_TYPES.get(_int(col.get("InferredDataType"))), "isHidden": _bool(col.get("IsHidden")),
+             "description": col.get("Description") or "", "expression": col.get("Expression") or "", "sourceColumn": col.get("SourceColumn") or "", "isNullable": _bool(col.get("IsNullable")),
+             "displayFolder": col.get("DisplayFolder") or ""}
+        t["columns"].append(c)
+        sortBy.append((c, col.get("SortByColumnID")))
+    for c, by in sortBy:
+        if by and colName.get(by):
+            c["sortByColumn"] = colName[by]
+    for m in tryQuery("MEASURES"):
+        t = tables.get(m.get("TableID"))
+        if t is not None:
+            t["measures"].append({"name": m.get("Name") or "", "expression": m.get("Expression") or "", "description": m.get("Description") or "", "isHidden": _bool(m.get("IsHidden")),
+                                  "formatString": m.get("FormatString") or "", "displayFolder": m.get("DisplayFolder") or ""})
+    for p in tryQuery("PARTITIONS"):
+        t = tables.get(p.get("TableID"))
+        if t is not None:
+            t["partitions"].append({"name": p.get("Name") or "", "mode": _MODES.get(_int(p.get("Mode"))), "source": {"type": _PART_TYPES.get(_int(p.get("Type")), "none"), "expression": p.get("QueryDefinition") or ""}})
+    hier = {}
+    for h in tryQuery("HIERARCHIES"):
+        t = tables.get(h.get("TableID"))
+        if t is not None:
+            hier[h.get("ID")] = {"name": h.get("Name") or "", "levels": []}
+            t["hierarchies"].append(hier[h.get("ID")])
+    for l in sorted(tryQuery("LEVELS"), key=lambda l: _int(l.get("Ordinal"))):
+        h = hier.get(l.get("HierarchyID"))
+        if h is not None:
+            h["levels"].append({"name": l.get("Name") or "", "column": colName.get(l.get("ColumnID"))})
+    groups = {}
+    for g in tryQuery("CALCULATION_GROUPS"):
+        t = tables.get(g.get("TableID"))
+        if t is not None:
+            t["calculationGroup"] = {"calculationItems": []}
+            groups[g.get("ID")] = t["calculationGroup"]
+    for i in tryQuery("CALCULATION_ITEMS"):
+        g = groups.get(i.get("CalculationGroupID"))
+        if g is not None:
+            g["calculationItems"].append({"name": i.get("Name") or "", "expression": i.get("Expression") or ""})
+    rels = []
+    for r in tryQuery("RELATIONSHIPS"):
+        ft, tt = tables.get(r.get("FromTableID")), tables.get(r.get("ToTableID"))
+        if ft is None or tt is None:
+            continue
+        rels.append({"name": r.get("Name") or "", "fromTable": ft["name"], "fromColumn": colName.get(r.get("FromColumnID")), "toTable": tt["name"], "toColumn": colName.get(r.get("ToColumnID")),
+                     "isActive": _bool(r.get("IsActive")), "relyOnReferentialIntegrity": _bool(r.get("RelyOnReferentialIntegrity")),
+                     "fromCardinality": "one" if _int(r.get("FromCardinality")) == 1 else "many", "toCardinality": "many" if _int(r.get("ToCardinality")) == 2 else "one",
+                     "crossFilteringBehavior": "bothDirections" if _int(r.get("CrossFilteringBehavior")) == 2 else "oneDirection"})
+    roles = {}
+    for r in tryQuery("ROLES"):
+        roles[r.get("ID")] = {"name": r.get("Name") or "", "tablePermissions": []}
+    for p in tryQuery("TABLE_PERMISSIONS"):
+        role, t = roles.get(p.get("RoleID")), tables.get(p.get("TableID"))
+        if role is not None and t is not None:
+            role["tablePermissions"].append({"name": t["name"], "filterExpression": p.get("FilterExpression") or ""})
+    expressions = [{"name": e.get("Name") or "", "expression": e.get("Expression") or ""} for e in tryQuery("EXPRESSIONS")]
+    return {"model": {"tables": list(tables.values()), "relationships": rels, "roles": list(roles.values()), "expressions": expressions}}
+
+
+def modelFromBim(bim):
+    """A model in model.bim shape (TMSL JSON) → the model the analysis works on."""
+    src = bim.get("model") or bim
+    model = emptyModel()
+    for t in src.get("tables") or []:
+        out = {"name": t.get("name"), "description": joinExpr(t.get("description")), "isHidden": truthy(t.get("isHidden")), "dataCategory": t.get("dataCategory") or "",
+               "kind": "table", "expression": "", "sourceType": "", "mode": "", "source": "",
+               "columns": [], "measures": [], "hierarchies": [], "calcItems": []}
+        for p in t.get("partitions") or []:
+            s = p.get("source") or {}
+            out["sourceType"] = out["sourceType"] or s.get("type") or ""
+            out["mode"] = p.get("mode") or out["mode"]
+            if s.get("type") == "calculated":
+                out["kind"] = "calculated table"
+                out["expression"] = joinExpr(s.get("expression"))
+            elif not out["source"]:
+                out["source"] = joinExpr(s.get("expression") or s.get("query"))
+        if truthy(t.get("calculationGroup")):
+            out["kind"] = "calculation group"
+            for it in t["calculationGroup"].get("calculationItems") or []:
+                fsd = it.get("formatStringDefinition")
+                out["calcItems"].append({"name": it.get("name"), "expression": joinExpr(it.get("expression")),
+                                         "extraExpressions": [x for x in (joinExpr(fsd.get("expression")) if truthy(fsd) else None,) if truthy(x)]})
+        for c in t.get("columns") or []:
+            out["columns"].append({"name": c.get("name"), "expression": joinExpr(c.get("expression")), "isCalculated": c.get("type") == "calculated",
+                                   "description": joinExpr(c.get("description")), "isHidden": truthy(c.get("isHidden")), "dataType": c.get("dataType") or "",
+                                   "displayFolder": c.get("displayFolder") or "", "sortByColumn": c.get("sortByColumn") or "",
+                                   "sourceColumn": c.get("sourceColumn") or "", "isSystem": c.get("type") == "rowNumber", "isNullable": c.get("isNullable") is not False})
+        for m in t.get("measures") or []:
+            extra = [m.get("formatStringDefinition") and joinExpr(m["formatStringDefinition"].get("expression")), m.get("detailRowsDefinition") and joinExpr(m["detailRowsDefinition"].get("expression"))]
+            kpi = m.get("kpi")
+            if truthy(kpi):
+                extra += [joinExpr(kpi.get("targetExpression")), joinExpr(kpi.get("statusExpression")), joinExpr(kpi.get("trendExpression"))]
+            out["measures"].append({"name": m.get("name"), "expression": joinExpr(m.get("expression")), "description": joinExpr(m.get("description")),
+                                    "isHidden": truthy(m.get("isHidden")), "displayFolder": m.get("displayFolder") or "", "formatString": m.get("formatString") or "",
+                                    "extraExpressions": [x for x in extra if truthy(x)]})
+        for h in t.get("hierarchies") or []:
+            out["hierarchies"].append({"name": h.get("name"), "levels": [{"name": l.get("name"), "column": l.get("column")} for l in h.get("levels") or []]})
+        model["tables"].append(out)
+    for r in src.get("relationships") or []:
+        model["relationships"].append({"name": r.get("name"), "fromTable": r.get("fromTable"), "fromColumn": r.get("fromColumn"), "toTable": r.get("toTable"), "toColumn": r.get("toColumn"),
+                                       "isActive": r.get("isActive") is not False, "rely": truthy(r.get("relyOnReferentialIntegrity")), "crossFilter": r.get("crossFilteringBehavior") or "",
+                                       "fromCardinality": r.get("fromCardinality") or "many", "toCardinality": r.get("toCardinality") or "one"})
+    for r in src.get("roles") or []:
+        model["roles"].append({"name": r.get("name"), "permissions": [{"table": p.get("name"), "expression": joinExpr(p.get("filterExpression"))} for p in r.get("tablePermissions") or []]})
+    for f in src.get("functions") or []:
+        model["functions"].append({"name": f.get("name"), "expression": joinExpr(f.get("expression"))})
+    for e in src.get("expressions") or []:
+        model["expressions"].append({"name": e.get("name"), "expression": joinExpr(e.get("expression"))})
+    return model
+
+
+def aasModel(server, database, token):
+    """Reads a model from Azure Analysis Services. → (the model, the name of the database as the server spells it)"""
+    conn = aasConnect(server, token)
+    names = aasCatalogs(conn)
+    name = next((n for n in names if lc(n) == lc(database)), None)
+    if name is None:
+        raise Exception('Database "' + jstr(database) + '" not found on ' + server + " (it has: " + ", ".join(jstr(n) for n in names) + ").")
+    return modelFromBim(aasBim(conn, name)), name
+
+
+def liveSource(m, token):
+    """Where a dataset without a model of its own gets its data: {server, database} for Analysis Services, else None."""
+    try:
+        sources = json.loads(call(PBI + "/groups/" + m["workspaceId"] + "/datasets/" + m["id"] + "/datasources", token)[2]).get("value") or []
+    except Exception:
+        return None
+    for s in sources:
+        d = s.get("connectionDetails") or {}
+        if s.get("datasourceType") == "AnalysisServices" and d.get("server"):
+            return {"server": d["server"], "database": d.get("database") or ""}
+    return None
+
+
 def workspaceModels(workspace, token, onModel):
     """Every semantic model in one or more workspaces, each with the reports in those workspaces that use it.
     workspace: a name, an id, several separated by commas, or "*" for every workspace you can open.
@@ -1698,22 +1967,43 @@ def workspaceModels(workspace, token, onModel):
     return warnings
 
 
-def scan(workspaces, folder, token, now=None, log=print):
+def scan(workspaces, folder, token, now=None, log=print, aas_token=None):
     """Checks every semantic model in the workspaces and adds one run per model to <folder>/data.
+    aas_token: a token for Azure Analysis Services (see aasToken). With it, reports that are connected live to a
+    model on Azure Analysis Services are checked against that model: one run per model on the server.
     → {"models": [a summary per model], "warnings": [...], "failed": number}"""
     done, failed = [], [0]
+    live = {}  # models on Azure Analysis Services that reports connect to: (server, database) → what was found
+
+    def export(name, source, proj):
+        analysis, checks = analyzeProject(proj)
+        when = now or datetime.datetime.now()
+        run, _ = writeRun(folder, lambda run: runTables(analysis, checks, run, when, name, source, VERSION, len(proj["reports"]), analysis["stats"]["visuals"]))
+        done.append(summary(name, analysis, checks))
+        return run
+
+    def reports(n):
+        return str(n) + " report" + ("" if n == 1 else "s")
 
     def onModel(m):
         name = jstr(m["workspace"]) + " / " + jstr(m["name"])
         try:
             proj = loadProject(m["files"])
+            if not proj["models"] or proj["models"][0].get("missing"):
+                src = liveSource(m, token)
+                if src and _AAS_SERVER.match(src["server"]):
+                    where = src["server"] + " / " + src["database"]
+                    if aas_token:
+                        entry = live.setdefault((src["server"].lower(), src["database"].lower()), {"server": src["server"], "database": src["database"], "files": [], "reports": 0})
+                        entry["files"] += [f for f in m["files"] if not f["path"].lower().endswith(".tmdl")]
+                        entry["reports"] += len(m["reports"])
+                        log(name + ": live connection to " + where + ", checked with that model")
+                        return
+                    log(name + ": live connection to " + where + "; that model is not read (fill in the AAS settings)")
             if not proj["models"]:
                 raise Exception("no model in its definition")
-            analysis, checks = analyzeProject(proj)
-            when = now or datetime.datetime.now()
-            run, _ = writeRun(folder, lambda run: runTables(analysis, checks, run, when, name, name, VERSION, len(proj["reports"]), analysis["stats"]["visuals"]))
-            done.append(summary(name, analysis, checks))
-            log(name + ": run " + str(run) + ", " + str(len(m["reports"])) + " report" + ("" if len(m["reports"]) == 1 else "s"))
+            run = export(name, name, proj)
+            log(name + ": run " + str(run) + ", " + reports(len(m["reports"])))
             for w in m["warnings"]:
                 log("  ! " + w)
         except Exception as e:
@@ -1721,6 +2011,18 @@ def scan(workspaces, folder, token, now=None, log=print):
             log(name + ": " + str(e))
 
     warnings = workspaceModels(workspaces, token, onModel)
+    for entry in live.values():
+        where = entry["server"] + " / " + entry["database"]
+        try:
+            model, database = aasModel(entry["server"], entry["database"], aas_token)
+            proj = loadProject(entry["files"])
+            name = "AAS " + _AAS_SERVER.match(entry["server"]).group(2) + " / " + database
+            proj["models"] = [{"name": name, "root": "", "model": model, "format": "aas"}]
+            run = export(name, entry["server"] + " / " + database, proj)
+            log(name + ": run " + str(run) + ", " + reports(entry["reports"]))
+        except Exception as e:
+            failed[0] += 1
+            log(where + ": " + str(e))
     for w in warnings:
         log("! " + w)
     log("")
@@ -1743,7 +2045,10 @@ OUT = "/lakehouse/default/Files/" + FOLDER
 SOURCE = "https://onelake.dfs.fabric.microsoft.com/" + workspace_id + "/" + lakehouse_id + "/Files/" + FOLDER + "/data"
 
 token = notebookutils.credentials.getToken("pbi")  # you, as you are signed in to Fabric
-result = scan(WORKSPACES, OUT, token)
+aas = None
+if AAS_CLIENT_ID:  # the service principal for Azure Analysis Services; its secret stays in the Key Vault
+    aas = aasToken(AAS_TENANT, AAS_CLIENT_ID, notebookutils.credentials.getSecret(AAS_KEY_VAULT, AAS_SECRET_NAME))
+result = scan(WORKSPACES, OUT, token, aas_token=aas)
 if not result["models"]:
     raise Exception("No model could be exported (see above).")
 

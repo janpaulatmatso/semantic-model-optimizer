@@ -2,7 +2,8 @@
 /* Builds the Fabric notebook from the Python port (fabric/smo.py):
  *   fabric/SemanticModelOptimizer.ipynb   to import in Fabric
  *   fabric/SemanticModelOptimizer.py      the same code as one cell, to paste into a new notebook
- * The notebook holds the whole tool: it downloads nothing and only calls the Power BI and Fabric REST APIs.
+ * The notebook holds the whole tool: it downloads nothing and only calls the Power BI and Fabric REST APIs (and, when
+ * asked to, Azure Analysis Services).
  * The list of rules in smo.py is written from core.js, so the texts are the same in both.
  *   node build-fabric.js            writes the files (version from SMO_VERSION, else "dev")
  *   node build-fabric.js --check    fails when the files in the repository are not what this script would write */
@@ -28,6 +29,15 @@ WORKSPACES = "*"
 
 # Folder under Files in the default Lakehouse
 FOLDER = "SemanticModelOptimizer"
+
+# Azure Analysis Services (optional). Reports that are connected live to a model on Azure Analysis Services are
+# checked with that model when you fill these in. A notebook cannot sign in to Analysis Services as you, so it needs
+# an app registration (service principal) that is administrator of the server, with its client secret in a Key Vault
+# that you can read.
+AAS_TENANT = ""        # tenant id (Directory ID)
+AAS_CLIENT_ID = ""     # application (client) id of the app registration
+AAS_KEY_VAULT = ""     # address of the Key Vault, such as https://<name>.vault.azure.net/
+AAS_SECRET_NAME = ""   # name of the secret in the Key Vault that holds the client secret
 `;
 const RUN = `
 ctx = notebookutils.runtime.context
@@ -41,7 +51,10 @@ OUT = "/lakehouse/default/Files/" + FOLDER
 SOURCE = "https://onelake.dfs.fabric.microsoft.com/" + workspace_id + "/" + lakehouse_id + "/Files/" + FOLDER + "/data"
 
 token = notebookutils.credentials.getToken("pbi")  # you, as you are signed in to Fabric
-result = scan(WORKSPACES, OUT, token)
+aas = None
+if AAS_CLIENT_ID:  # the service principal for Azure Analysis Services; its secret stays in the Key Vault
+    aas = aasToken(AAS_TENANT, AAS_CLIENT_ID, notebookutils.credentials.getSecret(AAS_KEY_VAULT, AAS_SECRET_NAME))
+result = scan(WORKSPACES, OUT, token, aas_token=aas)
 if not result["models"]:
     raise Exception("No model could be exported (see above).")
 `;
@@ -59,7 +72,7 @@ Reads every semantic model in the workspaces you choose, each with the reports t
 
 **Before the first run:** add a Lakehouse to this notebook (*Lakehouse* in the explorer on the left › *Add*). Then run all cells, and schedule the notebook (*Run* › *Schedule*) to build up history.
 
-The whole tool is in this notebook, in Python: it downloads nothing and installs nothing. It only calls the Power BI and Fabric REST APIs, as you: it reads what you can open and changes nothing in the workspaces. More: https://github.com/janpaulatmatso/semantic-model-optimizer#semantic-model-optimizer-in-fabric
+The whole tool is in this notebook, in Python: it downloads nothing and installs nothing. It only calls the Power BI and Fabric REST APIs, as you: it reads what you can open and changes nothing in the workspaces. With the optional settings for Azure Analysis Services it also reads the models on those servers that your reports are connected to, as a service principal. More: https://github.com/janpaulatmatso/semantic-model-optimizer#semantic-model-optimizer-in-fabric
 `;
 const REPORT_MD = `
 ## The Power BI report

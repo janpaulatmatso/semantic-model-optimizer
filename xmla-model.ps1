@@ -103,7 +103,9 @@ try {
       $role = $roles[[string]$p.RoleID]; $t = $tables[[string]$p.TableID]
       if ($role -and $t) { $role.tablePermissions += [ordered]@{ name = $t.name; filterExpression = [string]$p.FilterExpression } }
     }
-    Out-Json @{ model = [ordered]@{ tables = @($tables.Values); relationships = @($rels); roles = @($roles.Values) } }
+    $exprs = @()
+    foreach ($e in (TryQuery 'SELECT * FROM $SYSTEM.TMSCHEMA_EXPRESSIONS')) { $exprs += [ordered]@{ name = [string]$e.Name; expression = [string]$e.Expression } }
+    Out-Json @{ model = [ordered]@{ tables = @($tables.Values); relationships = @($rels); roles = @($roles.Values); expressions = @($exprs) } }
   } finally { $c.Close() }
 } catch {
   $msg = $_.Exception.Message

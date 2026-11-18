@@ -20,7 +20,7 @@ const { toCsv } = X;
 
 const NAME = 'Semantic Model Optimizer';
 const STATUS = { direct: 'In report', indirect: 'Used indirectly', model: 'Model only', unused: 'Unused' };
-const STATUS_ORDER = { 'In report': 1, 'Used indirectly': 2, 'Model only': 3, Unused: 4, 'Not in model': 5, '(none)': 9 };
+const STATUS_ORDER = { 'In report': 1, 'Used indirectly': 2, 'Model only': 3, Unused: 4, 'Not in model': 5, 'Model not loaded': 6, '(none)': 9 };
 const SEVERITY = { error: 'Error', warning: 'Warning', info: 'Note' };
 const SEVERITY_ORDER = { Error: 1, Warning: 2, Note: 3 };
 const STEP = 10000000; // keys: run number × STEP + row number
@@ -55,15 +55,16 @@ function runTables(analysis, checks, info) {
       yn(n.hidden), yn(n.broken), n.dataType || '', n.displayFolder || '', n.description || '', n.expression || '', n.report || '',
       n.reportUses.length, n.deps.size, n.usedBy.size, n.rows == null ? '' : n.rows, n.cardinality == null ? '' : n.cardinality, n.size == null ? '' : n.size]);
   }
-  // fields that reports use but the model does not have
+  // fields that reports use but the model does not have; or, for reports whose model could not be read, every field
+  const noModel = !!analysis.stats.noModel, gone = noModel ? 'Model not loaded' : 'Not in model';
   const missing = new Map();
   for (const u of analysis.broken || []) {
     const id = 'X|' + u.table + '|' + u.name;
     if (missing.has(id)) continue;
     const k = run * STEP + objects.rows.length + 1;
     missing.set(id, k);
-    objects.rows.push([run, dk, k, id, 'Missing', 'missing ' + (u.kind || 'field'), u.table, u.name, u.table + '[' + u.name + ']', 'Not in model', STATUS_ORDER['Not in model'],
-      'No', 'Yes', '', '', '', '', '', '', '', '', '', '', '']);
+    objects.rows.push([run, dk, k, id, 'Missing', noModel ? u.kind || 'field' : 'missing ' + (u.kind || 'field'), u.table, u.name, u.table + '[' + u.name + ']', gone, STATUS_ORDER[gone],
+      'No', noModel ? 'No' : 'Yes', '', '', '', '', '', '', '', '', '', '', '']);
   }
 
   const visuals = { head: ['Key_Visual', 'Report', 'Page', 'Visual', 'Visual type', 'Visual id'], rows: [] }, vkey = new Map();

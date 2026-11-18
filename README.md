@@ -242,11 +242,26 @@ The notebook [`fabric/SemanticModelOptimizer.ipynb`](fabric/SemanticModelOptimiz
 2. Add a Lakehouse to the notebook (*Lakehouse* in the explorer › *Add*).
 3. Set `WORKSPACES` in the first cell (`"*"` for every workspace you can open), run all cells, and schedule the notebook (*Run › Schedule*).
 
-**The whole tool is in the notebook, in Python.** It downloads nothing and installs nothing: no Node.js, no package, no request to GitHub. It uses the Python standard library and calls only the Power BI and Fabric REST APIs, with your own Fabric sign-in, read-only. What you import or paste is exactly what runs, so you can review it, and it only changes when you replace it. Each run writes one run per model to *Files/SemanticModelOptimizer* in the Lakehouse and shows a table per model.
+**The whole tool is in the notebook, in Python.** It downloads nothing and installs nothing: no Node.js, no package, no request to GitHub. It uses the Python standard library and calls only the Power BI and Fabric REST APIs, with your own Fabric sign-in, read-only (and Azure Analysis Services, when you ask it to: see below). What you import or paste is exactly what runs, so you can review it, and it only changes when you replace it. Each run writes one run per model to *Files/SemanticModelOptimizer* in the Lakehouse and shows a table per model.
 
 The notebook reads what the definitions hold: models in TMDL and reports (PBIR and the older report.json), with usage, lineage, the best-practice checks and the Kimball rules. It does not read the data, so the checks that need rows or sizes (referential integrity, constant columns) and the ones that need your own files (`smo.config.json`, a design in YAML) are for the desktop tool.
 
 **The report**, once: run the command the last cell prints on your computer (`SemanticModelOptimizer-cli.exe cli --export C:\SMO-Fabric --report-only --report-source https://onelake.dfs.fabric.microsoft.com/…`). The report then reads the Lakehouse through OneLake instead of a folder. Open it in Power BI Desktop, sign in with your organisational account, **Refresh**, and **Publish** it. In the service, set the data source credentials (OAuth2) of the semantic model and schedule its refresh after the notebook. No gateway is needed.
+
+### Reports on Azure Analysis Services
+
+A report that is connected live to a model on Azure Analysis Services has no model of its own in the workspace. Power BI does say which server and database it uses, so the notebook can fetch that model from the server (over HTTPS, the schema of the model only) and check the reports against it. It writes one run per model on the server, named `AAS <server> / <database>`, with every report in the scanned workspaces that is connected to it.
+
+A Fabric notebook cannot sign in to Analysis Services as you (Fabric gives a notebook no token for it), so this needs a service principal:
+
+1. An **app registration** in Microsoft Entra ID with a client secret.
+2. That app as **administrator of the Analysis Services server** (Azure portal › the server › *Analysis Services Admins*, or `app:<client id>@<tenant id>`). Reading the definition of a model needs admin rights; a read role is not enough.
+3. The client secret in a **Key Vault**, and for you the role *Key Vault Secrets User* on it, so the notebook can read it as you.
+4. In the first cell of the notebook: `AAS_TENANT`, `AAS_CLIENT_ID`, `AAS_KEY_VAULT` and `AAS_SECRET_NAME`. The secret itself is never in the notebook.
+
+With these filled in the notebook also calls `login.microsoftonline.com` (to sign in the service principal) and `<region>.asazure.windows.net` (the server). If the server has a firewall, it has to let Fabric in. Left empty, nothing changes: such a report is still listed, and its fields get the status *Model not loaded*.
+
+On your own computer the desktop tool reads Analysis Services with your own sign-in: `--server "asazure://<region>.asazure.windows.net/<server>" --database "<model>"`.
 
 ### One tool in two languages
 
