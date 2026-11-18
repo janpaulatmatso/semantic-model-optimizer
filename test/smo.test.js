@@ -438,6 +438,16 @@ test('Power BI export: a star schema per run, and a report that passes its own c
   assert.deepEqual([checks.counts.error, checks.counts.warning], [0, 0], JSON.stringify(checks.rules.filter(r => r.severity !== 'info').map(r => r.title)));
   const expr = fs.readFileSync(path.join(out, 'Semantic Model Optimizer.SemanticModel/definition/expressions.tmdl'), 'utf8');
   assert.ok(expr.includes(JSON.stringify(path.join(out, 'data'))));
+
+  // writing the report again replaces its pages, and takes away visuals of an earlier version
+  const stale = path.join(out, 'Semantic Model Optimizer.Report/definition/pages/overview/visuals/old/visual.json');
+  fs.mkdirSync(path.dirname(stale), { recursive: true });
+  fs.writeFileSync(stale, '{}');
+  const again = spawnSync(process.execPath, [cli, '--export', out, '--report-only'], { encoding: 'utf8' });
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.ok(!fs.existsSync(stale));
+  assert.ok(fs.existsSync(path.join(out, 'Semantic Model Optimizer.Report/definition/pages/usage/visuals/fields/visual.json')));
+  assert.ok(fs.existsSync(path.join(out, 'data/run-000002/objects.csv')), 'the runs stay');
 });
 
 test('Power BI export from the app: the page makes the tables, the server writes them', async () => {

@@ -446,6 +446,8 @@ function writeReport(folder, dataSource, force) {
   const pbip = path.join(folder, NAME + '.pbip');
   const created = force || !fs.existsSync(pbip);
   if (created) {
+    // written again: visuals of an earlier version of the report would stay next to the new ones
+    if (force) fs.rmSync(path.join(folder, NAME + '.Report', 'definition', 'pages'), { recursive: true, force: true });
     for (const f of projectFiles(dataSource || path.join(folder, 'data'))) {
       const target = path.join(folder, f.path);
       if (!force && f.path !== NAME + '.pbip' && fs.existsSync(target)) continue;
