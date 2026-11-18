@@ -10,7 +10,7 @@ Shows which measures and columns of a Power BI model are used in reports and whi
   - **Needs the desktop app:** connecting to Analysis Services, a workspace or Power BI Desktop, sizes from Power BI Desktop, comparing with Git, and suggested descriptions.
 - **No install, offline:** double-click `index.html` and choose *Open folder* (or drag a folder onto the page).
 - **Paste a path:** run `node serve.js` and open http://127.0.0.1:5273. You can then paste the path to the folder.
-- **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--lineage "Measure name"]`
+- **Command line:** `node cli.js <folder> [--check] [--rules] [--csv out.csv] [--json out.json] [--export <folder>] [--lineage "Measure name"]`; `--export` adds the results to a [Power BI report](#a-power-bi-report-of-the-results)
 
 ### Other ways to start
 
@@ -190,6 +190,36 @@ The **Export…** dropdown above the list exports what you see, with the current
 - **PDF:** a printable A4 landscape list with a summary of the model, the active filters and the status in colour.
 
 All three are generated in the browser; nothing is uploaded.
+
+### A Power BI report of the results
+
+```
+node cli.js <folder> --export C:\SMO
+SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO
+SemanticModelOptimizer-cli.exe cli --server localhost:51234 --export C:\SMO      (the model open in Power BI Desktop)
+```
+
+Every export adds a run to `C:\SMO\data\run-000001`, `run-000002`, … The first export also writes **`Semantic Model Optimizer.pbip`**, a ready-made report. Open it in Power BI Desktop and choose **Refresh**. Later exports leave the report alone (your changes stay), so just refresh it. Export several models to the same folder to see them side by side, and export on a schedule (for example in a pipeline) to see the trend.
+
+The report has five pages:
+
+- **Overview:** measures, columns, unused ones, broken formulas, errors and warnings; objects by status; the trend over time; findings per rule.
+- **Objects:** every table, column and measure with its status, uses in reports, dependents and size.
+- **Findings:** every finding of the checks, filtered by severity and group.
+- **Report usage:** which fields every visual of every report uses.
+- **Lineage:** what depends on what.
+
+The model behind it is a star schema, so you can build your own pages:
+
+| Table | One row per |
+|---|---|
+| `Fact_Object` | table, column, measure and function, per run (uses in reports, dependents, rows, size) |
+| `Fact_Usage` | field in a visual or filter |
+| `Fact_Dependency` | object an object refers to directly |
+| `Fact_Finding` | finding of a rule |
+| `Dim_Run`, `Dim_Date`, `Dim_Object`, `Dim_Dependency`, `Dim_Visual`, `Dim_Rule` | run, day, object, object in the role "depends on", visual, rule |
+
+The counts (*Measures*, *Unused columns*, *Errors*, …) take the latest run of each model within the filters, so they never add up runs. Sizes are filled when the run had them: give a `.vpax` (DAX Studio › Advanced › Export Metrics) as an extra path. Moved the folder? Change the parameter *ExportFolder* (Transform data › Edit parameters). The report itself passes the checks of this tool, including the Kimball rules.
 
 ## Lineage
 

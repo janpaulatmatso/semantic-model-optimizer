@@ -13,6 +13,8 @@
  *                        or on a server (with --database); Windows
  *   --kimball            only the Kimball dimensional modelling checks (with --check / --rules)
  *   --workspace <name>   also check every report in this Power BI workspace that uses the model (see README)
+ *   --export <folder>    add this run to a folder for Power BI: CSV files in a star schema, and the first time a
+ *                        ready-made report (Semantic Model Optimizer.pbip) that reads them; run it again for history
  *   --csv / --json <file>, --lineage "Name"
  *
  * Exit codes: 0 fine, 1 the check failed, 2 the tool itself could not run. */
@@ -41,7 +43,7 @@ function xmlaFiles(server, database) {
   const flag = k => { const i = args.indexOf(k); if (i < 0) return false; args.splice(i, 1); return true; };
   const csv = opt('--csv'), json = opt('--json'), lin = opt('--lineage'), format = (opt('--format') || 'text').toLowerCase(), summary = opt('--summary');
   const cmpPath = opt('--compare'), cmpRef = opt('--compare-ref'), server = opt('--server'), database = opt('--database');
-  const workspace = opt('--workspace'), dataset = opt('--dataset');
+  const workspace = opt('--workspace'), dataset = opt('--dataset'), exportTo = opt('--export');
   const check = flag('--check'), strict = flag('--strict'), showRules = flag('--rules'), kimballOnly = flag('--kimball'), riConn = opt('--ri');
   if (!args.length && !server) { console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0].replace(/^#!.*\n\/\* ?/, '').replace(/^ \* ?/gm, '')); process.exit(2); }
 
@@ -179,5 +181,12 @@ function xmlaFiles(server, database) {
   if (json) {
     fs.writeFileSync(json, JSON.stringify(a.list.map(n => Object.assign({}, n, { deps: [...n.deps], usedBy: [...n.usedBy] })), null, 1));
     console.log('JSON written: ' + json);
+  }
+  if (exportTo) {
+    let version = process.env.SMO_VERSION || '';
+    if (!version) try { version = require('./package.json').version; } catch (e) { /* not next to the program */ }
+    const source = server ? server + (database ? ' / ' + database : '') : args.map(p => path.resolve(p)).join('; ');
+    const r = require('./powerbi.js').exportProject(exportTo, proj, source, version);
+    console.log(`\nRun ${r.run} exported for Power BI: ${r.runFolder}` + (r.created ? `\nOpen the report in Power BI Desktop: ${r.pbip}` : `\nRefresh the report to see it: ${r.pbip}`));
   }
 })().catch(e => { console.error(e.message); process.exit(2); });

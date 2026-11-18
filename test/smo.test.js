@@ -385,6 +385,61 @@ test('command line: --check passes on a sound model and fails on a broken one', 
   assert.equal(spawnSync(process.execPath, [cli, path.join(dir, 'nope'), '--check'], { encoding: 'utf8' }).status, 2);
 });
 
+test('Power BI export: a star schema per run, and a report that passes its own checks', async () => {
+  const os = require('os');
+  const dir = makeProject();
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'smo-pbi-'));
+  const cli = path.join(__dirname, '..', 'cli.js');
+  for (const run of [1, 2]) {
+    const r = spawnSync(process.execPath, [cli, dir, '--export', out], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp('Run ' + run + ' exported for Power BI'));
+  }
+  const csv = rel => {
+    const text = fs.readFileSync(path.join(out, 'data', rel), 'utf8').replace(/^﻿/, '');
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) { if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch; }
+      else if (ch === '"') quoted = true;
+      else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n') { row.push(cell.replace(/\r$/, '')); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    row.push(cell); rows.push(row);
+    const head = rows.shift();
+    return rows.map(r => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+  };
+  const objects = csv('run-000002/objects.csv');
+  assert.equal(objects.filter(o => o['Object type'] === 'Measure' && o.Status === 'Unused').length, 3);
+  assert.ok(objects.every(o => o.Key_Run === '2' && Number(o.Key_Object) > 2 * 10000000));
+  assert.equal(new Set(objects.map(o => o.Key_Object)).size, objects.length);
+  const twice = objects.find(o => o.Label === '[Twice]');
+  assert.match(twice.Expression, /\[Total\] \* 2/);
+  const keys = new Set(objects.map(o => o.Key_Object));
+  for (const d of csv('run-000002/dependencies.csv')) assert.ok(keys.has(d.Key_Object) && keys.has(d.Key_Depends_on));
+  const usage = csv('run-000002/usage.csv'), visuals = new Set(csv('run-000002/visuals.csv').map(v => v.Key_Visual));
+  assert.equal(usage.length, 4);
+  assert.ok(usage.every(u => keys.has(u.Key_Object) && visuals.has(u.Key_Visual)));
+  const rules = new Set(csv('run-000002/rules.csv').map(r => r.Key_Rule));
+  assert.ok(csv('run-000002/findings.csv').every(f => rules.has(f.Key_Rule) && (f.Key_Object === '-1' || keys.has(f.Key_Object))));
+  assert.equal(csv('run-000001/runs.csv')[0].Model, 'Demo');
+
+  // the report: written once, and Semantic Model Optimizer finds nothing wrong with it
+  const pbip = path.join(out, 'Semantic Model Optimizer.pbip');
+  assert.ok(fs.existsSync(pbip));
+  const { p, m, a } = await load(out);
+  assert.equal(m.model.tables.length, 10);
+  assert.equal(m.model.relationships.length, 15);
+  assert.equal(a.stats.broken, 0);
+  assert.equal(a.list.filter(n => n.broken).length, 0);
+  const checks = SMO.checkRules(m.model, a, p.config, null, p.design);
+  assert.deepEqual([checks.counts.error, checks.counts.warning], [0, 0], JSON.stringify(checks.rules.filter(r => r.severity !== 'info').map(r => r.title)));
+  const expr = fs.readFileSync(path.join(out, 'Semantic Model Optimizer.SemanticModel/definition/expressions.tmdl'), 'utf8');
+  assert.ok(expr.includes(JSON.stringify(path.join(out, 'data'))));
+});
+
 test('thin report: the live connection tells where the model lives', () => {
   const pbir = conn => JSON.stringify({ version: '4.0', datasetReference: { byConnection: { connectionString: conn } } });
   const page = { path: 'Sales.Report/definition/pages/p1/page.json', text: JSON.stringify({ name: 'p1', displayName: 'Page 1' }) };

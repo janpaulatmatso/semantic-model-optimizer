@@ -99,6 +99,9 @@ jobs:
           grep -qxF "Semantic Model Optimizer ${tag#v}" version.txt
           project=$(node -e "console.log(require('./test/fixture.js').makeProject())")
           "$exe" cli "$project" --check
+          "$exe" cli "$project" --export pbi-export
+          test -f "pbi-export/Semantic Model Optimizer.pbip"
+          test -s pbi-export/data/run-000001/objects.csv
 
       - name: Install Inno Setup
         if: steps.changed.outputs.release == 'yes'
@@ -248,6 +251,7 @@ jobs:
             echo
             echo '- Start the tool from the Start menu, or double-click `SemanticModelOptimizer.exe`.'
             echo '- Command line: `SemanticModelOptimizer-cli.exe cli <folder> --check`'
+            echo '- Power BI report of the results: `SemanticModelOptimizer-cli.exe cli <folder> --export C:\SMO`, then open `C:\SMO\Semantic Model Optimizer.pbip` and choose *Refresh*. Every export adds a run, so the report shows the trend.'
             echo '- Button in Power BI Desktop: tick it in Setup when installing for all users, or run `SemanticModelOptimizer-cli.exe install-tool` in a terminal started as administrator.'
             echo
             echo '## Check the files'
