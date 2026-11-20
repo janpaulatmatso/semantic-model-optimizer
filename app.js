@@ -733,7 +733,7 @@
       (state.analysis.stats.noModel ? ' · the model is not loaded, so only the report could be checked' : '') : 'Nothing found. The model passes every check.';
     const open = state.checksOpen || (state.checksOpen = new Set(r.rules.filter(x => x.severity === 'error').map(x => x.id)));
     $('checksList').innerHTML = r.rules.map(rule => `<details class="rule sev-${rule.severity}" data-rule="${rule.id}"${open.has(rule.id) ? ' open' : ''}>
-      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b>${FIXABLE[rule.id] && canWrite() ? `<button type="button" class="fixbtn" data-fix="${rule.id}">${FIXABLE[rule.id]}</button>` : ''}${rule.id === 'measure-no-description' && canWrite() && state.server ? '<button type="button" class="fixbtn" data-suggest="1">Suggest descriptions</button>' : ''}<span class="cnt">${rule.items.length}</span></summary>
+      <summary><span class="sev">${SEV[rule.severity]}</span><b>${esc(rule.title)}</b>${FIXABLE[rule.id] && canWrite() ? `<button type="button" class="fixbtn" data-fix="${rule.id}">${FIXABLE[rule.id]}</button>` : ''}<span class="cnt">${rule.items.length}</span></summary>
       <p class="muted small">${esc(rule.help)}</p>
       <table class="uses">${rule.items.slice(0, 300).map(it => `<tr><td>${it.id ? `<span class="link" data-id="${esc(it.id)}">${esc(it.label)}</span>` : esc(it.label)}</td><td class="muted">${esc(it.detail)}</td></tr>`).join('')}</table>
       ${rule.items.length > 300 ? `<p class="muted small">… and ${rule.items.length - 300} more. Export to Excel for the full list.</p>` : ''}</details>`).join('');

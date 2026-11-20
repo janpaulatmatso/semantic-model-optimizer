@@ -382,53 +382,6 @@
     });
   };
 
-  // ------------------------------------------------------------ descriptions suggested by Claude
-
-  $('checksList').addEventListener('click', e => {
-    const b = e.target.closest('[data-suggest]');
-    if (!b) return;
-    e.preventDefault(); e.stopPropagation();
-    const rule = state.checks.rules.find(r => r.id === 'measure-no-description');
-    if (!rule) return;
-    const dlg = $('dlg');
-    dlg.innerHTML = `<h2>Suggest descriptions</h2><p>${rule.items.length} measure${rule.items.length === 1 ? '' : 's'} without a description.</p>
-      <ul class="small"><li>The names and DAX of these measures, and the descriptions already in the model as examples, are sent to the Claude API (Anthropic). No data from your tables is sent.</li>
-      <li>It uses the API credentials of the computer the tool runs on, and costs tokens on that account.</li><li>Nothing is saved until you have read the suggestions and chosen which to keep.</li></ul>
-      <div id="sgOut"></div><div class="dlgbtn"><button data-act="cancel">Cancel</button><button class="primary" data-act="ask">Send and suggest</button></div>`;
-    dlg.onclick = async ev => {
-      const act = ev.target.dataset && ev.target.dataset.act;
-      if (!act) return;
-      if (act === 'cancel') return dlg.close();
-      if (act === 'ask') {
-        await busy(async () => {
-          dlg.querySelector('#sgOut').innerHTML = '<p class="muted">Asking… this can take a minute.</p>';
-          const r = await App.apiPost('api/describe', { path: state.loadedPath, modelRoot: model().root, ids: rule.items.map(i => i.id) });
-          if (r.error) { dlg.querySelector('#sgOut').innerHTML = `<p class="warn">${esc(r.error)}</p>`; return; }
-          if (!r.suggestions.length) { dlg.querySelector('#sgOut').innerHTML = '<p class="muted">No suggestions came back.</p>'; return; }
-          dlg.querySelector('#sgOut').innerHTML = `<p class="small muted">Suggested by ${esc(r.model)}. Edit where needed and untick what you do not want.</p>` +
-            r.suggestions.map((s, i) => `<label class="sg"><input type="checkbox" data-i="${i}" checked> <b>${esc(s.name)}</b> <span class="muted small">${esc(s.table)}</span><textarea data-t="${i}" rows="2">${esc(s.description)}</textarea></label>`).join('');
-          dlg._sg = r.suggestions;
-          dlg.querySelector('.dlgbtn').innerHTML = '<button data-act="cancel">Cancel</button><button class="primary" data-act="save">Save selected</button>';
-        });
-      }
-      if (act === 'save') {
-        const picks = [...dlg.querySelectorAll('input[data-i]:checked')].map(c => ({ s: dlg._sg[+c.dataset.i], text: dlg.querySelector(`textarea[data-t="${c.dataset.i}"]`).value.trim() })).filter(x => x.text);
-        dlg.close();
-        await busy(async () => {
-          let ok = 0, err = '';
-          for (const x of picks) {
-            const r = await App.apiPost('api/edit', { path: state.loadedPath, modelRoot: model().root, sel: { type: 'measure', table: x.s.table, name: x.s.name }, changes: { description: x.text } });
-            if (r.error) err = r.error; else ok++;
-          }
-          $('msgs').innerHTML = '';
-          msg(`${ok} description${ok === 1 ? '' : 's'} saved.` + (err ? ' Last error: ' + err : ''), !!err && !ok);
-          await App.reloadFromDisk();
-        });
-      }
-    };
-    dlg.showModal();
-  }, true);
-
   // ------------------------------------------------------------ detail: where the data comes from, and security
 
   const security = () => (state._sec && state._sec.a === state.analysis ? state._sec.v : (state._sec = { a: state.analysis, v: SMO.securityOverview(model().model, state.analysis) }).v);

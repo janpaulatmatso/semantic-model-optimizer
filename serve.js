@@ -12,7 +12,6 @@ const { removeObjects } = require('./remove.js');
 const { editObject } = require('./edit.js');
 const { scanRepo } = require('./scan.js');
 const { compareWithRef } = require('./compare.js');
-const { suggestDescriptions } = require('./describe.js');
 const { workspaceReports, reportViews } = require('./workspace.js');
 const { fixRule, removeTables, renameTable, listBackups, restoreBackup, setFolder } = require('./fix.js');
 
@@ -160,7 +159,6 @@ http.createServer(async (req, res) => {
       '/api/table': j => (j.op === 'rename' ? renameTable(String(j.path), String(j.modelRoot), String(j.table), String(j.name)) : removeTables(String(j.path), String(j.modelRoot), (j.tables || []).map(String))),
       '/api/compare': j => compareWithRef(String(j.path), String(j.modelRoot), String(j.ref || '')),
       '/api/folder': j => setFolder(String(j.path), String(j.modelRoot), j.ids, j.folder),
-      '/api/describe': j => suggestDescriptions(String(j.path), String(j.modelRoot), j.ids),
       '/api/backups': j => listBackups(String(j.path), String(j.modelRoot)),
       '/api/restore': j => restoreBackup(String(j.path), String(j.modelRoot), String(j.stamp)),
     };

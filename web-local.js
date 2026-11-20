@@ -125,7 +125,6 @@ async function load(readBrowserFiles) {
 }
 
 const SERVER_ONLY = {
-  'api/describe': 'Suggesting descriptions needs the desktop app.',
   'api/compare': 'Comparing with Git needs the desktop app.',
 };
 
